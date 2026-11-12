@@ -944,6 +944,206 @@ fn load_project_json_migrates_without_rewriting_the_source_text() {
     assert!(world.enemies.iter().all(|enemy| enemy.asset_id == "pebble"));
 }
 
+#[test]
+fn authored_brick_ignores_an_enemy_name_and_label() {
+    let mut project = project_with(
+        vec![asset("art", "Goomba", AssetKind::Enemy)],
+        vec![cell("art", 4, 10)],
+    );
+    project.blueprint_cutover = true;
+    let brick = gameplay_options()
+        .into_iter()
+        .find(|(label, _)| *label == "Brick")
+        .unwrap()
+        .1;
+    let id = assign_cell(&mut project, "course", 4, 10, brick).unwrap();
+    assert_eq!(project.assets[0].name, "Goomba");
+    assert_eq!(project.assets[0].kind, AssetKind::Enemy);
+    assert_eq!(project.assets[0].rgba_base64, "rgba-art-frame");
+    assert_eq!(
+        project
+            .blueprints
+            .iter()
+            .find(|blueprint| blueprint.id == id)
+            .unwrap()
+            .origin,
+        BlueprintOrigin::Authored
+    );
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.enemies.is_empty());
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Brick);
+    assert!(world.blueprint_faults.is_empty());
+}
+
+#[test]
+fn one_picture_can_be_assigned_two_behaviors() {
+    let mut project = project_with(
+        vec![asset("art", "Shared", AssetKind::Foreground)],
+        vec![cell("art", 2, 8), cell("art", 6, 8)],
+    );
+    project.blueprint_cutover = true;
+    let goomba = enemy_role(LegacyEnemy::Goomba);
+    let brick = fixture_brick();
+    assign_cell(&mut project, "course", 2, 8, goomba).unwrap();
+    assign_cell(&mut project, "course", 6, 8, brick).unwrap();
+    assert_ne!(
+        project.levels[0].cells[0].blueprint_id,
+        project.levels[0].cells[1].blueprint_id
+    );
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert_eq!(world.enemies.len(), 1);
+    assert_eq!(world.enemies[0].kind, Kind::Goomba);
+    assert_eq!(world.enemies[0].cell_x, 2);
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Brick);
+    assert_eq!(world.solids[0].cell_x, 6);
+}
+
+#[test]
+fn assigning_one_placement_leaves_the_other_on_its_blueprint() {
+    let mut project = project_with(
+        vec![asset("art", "Shared", AssetKind::Terrain)],
+        vec![cell("art", 1, 4), cell("art", 2, 4), cell("art", 3, 4)],
+    );
+    let brick = fixture_brick();
+    let first = assign_cell(&mut project, "course", 1, 4, brick.clone()).unwrap();
+    let second = assign_cell(&mut project, "course", 2, 4, brick).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(project.blueprints.len(), 1);
+    let again = assign_cell(&mut project, "course", 3, 4, fixture_brick()).unwrap();
+    assert_eq!(again, first);
+    assert_eq!(project.blueprints.len(), 1);
+    assign_cell(
+        &mut project,
+        "course",
+        1,
+        4,
+        LegacyRole::Goal { warp: None },
+    )
+    .unwrap();
+    assert_eq!(
+        project.levels[0].cells[1].blueprint_id.as_deref(),
+        Some(first.as_str())
+    );
+    assert_eq!(
+        project.levels[0].cells[2].blueprint_id.as_deref(),
+        Some(first.as_str())
+    );
+    assert_ne!(
+        project.levels[0].cells[0].blueprint_id.as_deref(),
+        Some(first.as_str())
+    );
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert_eq!(world.goals.len(), 1);
+    assert_eq!(world.solids.len(), 2);
+}
+
+#[test]
+fn decoration_assignment_does_not_inherit_a_name() {
+    let mut project = project_with(
+        vec![asset("art", "Brick Goomba", AssetKind::Enemy)],
+        vec![cell("art", 5, 5)],
+    );
+    project.blueprint_cutover = true;
+    assign_cell(&mut project, "course", 5, 5, LegacyRole::Inert).unwrap();
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.enemies.is_empty());
+    assert!(world.solids.is_empty());
+    assert!(world.hazards.is_empty());
+    assert_eq!(
+        gameplay_label(&project.blueprints[0].legacy_role),
+        "Decoration"
+    );
+}
+
+#[test]
+fn pipe_assignment_is_solid_and_a_warp_mouth() {
+    let mut project = project_with(
+        vec![asset("art", "Flower", AssetKind::Item)],
+        vec![cell("art", 3, 9)],
+    );
+    let pipe = gameplay_options()
+        .into_iter()
+        .find(|(label, _)| *label == "Pipe down")
+        .unwrap()
+        .1;
+    assign_cell(&mut project, "course", 3, 9, pipe).unwrap();
+    assert_eq!(project.assets[0].kind, AssetKind::Item);
+    assert_eq!(project.assets[0].name, "Flower");
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.items.is_empty());
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Solid);
+    assert_eq!(world.hazards.len(), 1);
+    assert_eq!(world.hazards[0].kind, HazardKind::PipeDown);
+}
+
+#[test]
+fn authored_assignment_round_trips_and_reuses_a_migrated_role() {
+    let mut project = project_with(
+        vec![asset("brick", "Brick", AssetKind::Terrain)],
+        vec![cell("brick", 1, 1), cell("brick", 4, 1)],
+    );
+    ensure_legacy_blueprints(&mut project);
+    let before = project.blueprints.len();
+    let legacy_id = project.levels[0].cells[0].blueprint_id.clone().unwrap();
+    let id = assign_cell(&mut project, "course", 4, 1, fixture_brick()).unwrap();
+    assert_eq!(id, legacy_id);
+    assert_eq!(project.blueprints.len(), before);
+    assert_eq!(
+        project
+            .blueprints
+            .iter()
+            .find(|blueprint| blueprint.id == id)
+            .unwrap()
+            .origin,
+        BlueprintOrigin::LegacyInfer
+    );
+    let saved = serde_json::to_string(&project).unwrap();
+    let loaded = load_project_json(&saved).unwrap();
+    assert_eq!(loaded.blueprints, project.blueprints);
+    assert_eq!(cell_refs(&loaded), cell_refs(&project));
+    let world = World::from_level(&loaded, &loaded.levels[0], CharacterId::Mario);
+    assert_eq!(world.solids.len(), 2);
+    assert!(world
+        .solids
+        .iter()
+        .all(|solid| solid.block == BlockKind::Brick));
+}
+
+#[test]
+fn assign_cell_rejects_an_empty_coordinate_without_writing() {
+    let mut project = project_with(
+        vec![asset("art", "Goomba", AssetKind::Enemy)],
+        vec![cell("art", 1, 1)],
+    );
+    let before = project.clone();
+    let error = assign_cell(
+        &mut project,
+        "course",
+        9,
+        9,
+        enemy_role(LegacyEnemy::Goomba),
+    );
+    assert_eq!(error, Err("no part at 9,9".into()));
+    assert_eq!(project.blueprints, before.blueprints);
+    assert_eq!(cell_refs(&project), cell_refs(&before));
+    assert!(enemy_from_archetype(&EnemyArchetype::Walker).is_none());
+    assert_eq!(
+        enemy_from_archetype(&EnemyArchetype::BulletBill),
+        Some(LegacyEnemy::Blaster)
+    );
+}
+
+fn fixture_brick() -> LegacyRole {
+    gameplay_options()
+        .into_iter()
+        .find(|(label, _)| *label == "Brick")
+        .unwrap()
+        .1
+}
+
 fn actor_keys(world: &World) -> Vec<String> {
     let mut keys = Vec::new();
     for solid in &world.solids {
