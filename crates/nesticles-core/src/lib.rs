@@ -1,6 +1,9 @@
 //! Shared Nesticles workshop: project files, tile codecs, audio, physics, and tools.
 //! The native editor and the browser player both call into this crate.
 
+#[cfg(test)]
+mod play_tests;
+
 pub mod audio;
 pub mod classify;
 pub mod codec;
