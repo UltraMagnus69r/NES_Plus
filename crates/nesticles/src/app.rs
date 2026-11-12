@@ -1398,30 +1398,41 @@ impl NestApp {
                 let local = pos - rect.min;
                 let (x, y) = pointer_cell(local.x, local.y);
                 let erase = ui.input(|i| i.pointer.secondary_down());
-                if self.edit_placement && !erase {
-                    if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-                        let occupied = self.project.levels[self.level_sel]
-                            .cells
-                            .iter()
-                            .any(|placed| placed.x == x && placed.y == y);
-                        if occupied {
-                            self.placement_pick = Some((x, y));
-                        } else {
-                            self.placement_pick = None;
-                            self.status = format!("No part at {x},{y}.");
+                match course_pointer(
+                    self.edit_placement,
+                    self.terrain_engaged(),
+                    self.paint_start,
+                    self.paint_asset.is_some(),
+                    erase,
+                ) {
+                    CoursePointer::Edit => {
+                        if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+                            let occupied = self.project.levels[self.level_sel]
+                                .cells
+                                .iter()
+                                .any(|placed| placed.x == x && placed.y == y);
+                            if occupied {
+                                self.placement_pick = Some((x, y));
+                            } else {
+                                self.placement_pick = None;
+                                self.status = format!("No part at {x},{y}.");
+                            }
                         }
                     }
-                } else if self.paint_start && !erase {
-                    if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-                        self.project.levels[self.level_sel].player.x = x as f32;
-                        self.project.levels[self.level_sel].player.y = y as f32;
+                    CoursePointer::Terrain => self.terrain_pointer(x, y, &response, erase),
+                    CoursePointer::MoveSpawn => {
+                        if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+                            self.project.levels[self.level_sel].player.x = x as f32;
+                            self.project.levels[self.level_sel].player.y = y as f32;
+                        }
                     }
-                } else if self.terrain_engaged() {
-                    self.terrain_pointer(x, y, &response, erase);
-                } else if let Some(asset_id) = self.paint_asset.clone() {
-                    self.place_at(x, y, asset_id, erase);
-                } else if erase {
-                    self.place_at(x, y, String::new(), true);
+                    CoursePointer::Stamp => {
+                        if let Some(asset_id) = self.paint_asset.clone() {
+                            self.place_at(x, y, asset_id, erase);
+                        }
+                    }
+                    CoursePointer::Erase => self.place_at(x, y, String::new(), true),
+                    CoursePointer::None => {}
                 }
             }
         }
@@ -4839,3 +4850,58 @@ Mesen (https://github.com/SourMesen/Mesen2) and SameBoy (https://github.com/LIJI
 Tiled (https://github.com/mapeditor/tiled) and Godot (https://godotengine.org/) are the next stop if you later want a native build for mobile stores.
 
 The two keys in API keys are independent. The workshop assistant uses one key (OpenAI, Anthropic, or a custom OpenAI-compatible base URL) and the model id is editable. Suggested starting points are gpt-4.1-mini and claude-sonnet-4-5. The image maker uses a second key and only runs when you press Generate. It speaks OpenAI images (gpt-image-1 or dall-e-3) or a custom OpenAI-compatible images endpoint, then downscales and quantizes into a 16, 32, or 48 pixel sprite. The assistant cannot call that model. If you ask it to draw, it will point you at the Image maker.";
+
+/// What a click or drag on the course grid does.
+/// A selected terrain brush wins over moving the player spawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CoursePointer {
+    Edit,
+    Terrain,
+    MoveSpawn,
+    Stamp,
+    Erase,
+    None,
+}
+
+fn course_pointer(
+    edit_placement: bool,
+    terrain: bool,
+    move_spawn: bool,
+    stamp: bool,
+    erase: bool,
+) -> CoursePointer {
+    if edit_placement && !erase {
+        CoursePointer::Edit
+    } else if terrain {
+        CoursePointer::Terrain
+    } else if move_spawn && !erase {
+        CoursePointer::MoveSpawn
+    } else if stamp {
+        CoursePointer::Stamp
+    } else if erase {
+        CoursePointer::Erase
+    } else {
+        CoursePointer::None
+    }
+}
+
+#[cfg(test)]
+mod course_pointer_tests {
+    use super::{course_pointer, CoursePointer};
+
+    #[test]
+    fn a_terrain_brush_paints_even_after_a_player_picture_was_chosen() {
+        assert_eq!(
+            course_pointer(false, true, true, true, false),
+            CoursePointer::Terrain
+        );
+        assert_eq!(
+            course_pointer(false, false, true, true, false),
+            CoursePointer::MoveSpawn
+        );
+        assert_eq!(
+            course_pointer(false, false, false, true, false),
+            CoursePointer::Stamp
+        );
+    }
+}
