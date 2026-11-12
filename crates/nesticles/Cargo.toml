@@ -1,0 +1,21 @@
+[package]
+name = "nesticles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Nesticles desktop workshop and player"
+publish = false
+build = "build.rs"
+
+[dependencies]
+nesticles-core = { path = "../nesticles-core", features = ["decode"] }
+eframe = "0.31.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12.23", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+rfd = { version = "0.16.1", default-features = false, features = ["gtk3"] }
+directories = "5.0.1"
+base64 = "0.22"
+
+[dev-dependencies]
+nesticles-core = { path = "../nesticles-core" }

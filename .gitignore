@@ -1,0 +1,7 @@
+/target
+**/*.rs.bk
+.DS_Store
+*.local
+node_modules
+dist
+.vite
