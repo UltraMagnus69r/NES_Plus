@@ -541,13 +541,26 @@ impl NestApp {
                 .level(&level_id)
                 .map(|l| l.name.clone())
                 .unwrap_or_else(|| "Course".into());
+            let message = format!("{name} cleared. Linked paths are open.");
             if let Some(play) = self.play.as_mut() {
                 play.cleared.insert(level_id);
-                play.message = format!("{name} cleared. Linked paths are open.");
+                play.message = message.clone();
                 play.sim = None;
                 play.from_map = true;
             }
+            self.status = message;
             self.stop_music();
+        } else if hurt || stomped {
+            let message = match (hurt, stomped) {
+                (true, true) => "The enemy hit the player. Stomped the enemy.".to_string(),
+                (true, false) => "The enemy hit the player.".to_string(),
+                (false, true) => "Stomped the enemy.".to_string(),
+                (false, false) => String::new(),
+            };
+            if let Some(play) = self.play.as_mut() {
+                play.message = message.clone();
+            }
+            self.status = message;
         }
     }
 }
@@ -771,7 +784,6 @@ impl NestApp {
         let per_page = self.columns.saturating_mul(self.rows).max(1);
         let page_origin =
             offset.saturating_add(self.page.saturating_mul(per_page).saturating_mul(bytes_per));
-        self.draw_page(ui, ctx, page_origin, per_page);
         ui.horizontal_wrapped(|ui| {
             ui.label("Stamp");
             ui.selectable_value(&mut self.stamp, 1, "1×1");
@@ -784,20 +796,32 @@ impl NestApp {
                     }
                 });
             if ui.button("Add as part").clicked() {
-                if let Some((w, h, rgba, png)) = self.grab_stamp(page_origin) {
+                if self.selected.is_none() {
+                    self.status = "Select a tile first. The project was not changed.".into();
+                } else if let Some((w, h, rgba, png)) = self.grab_stamp(page_origin) {
+                    let index = self.selected.unwrap_or(0);
+                    let at = page_origin + index * bytes_per;
+                    let label = format!("Tile ${at:X}");
                     let style = self.project.style_name(&self.active_style);
-                    self.add_rgba_asset("Tile", self.tag, w, h, rgba, png);
+                    self.add_rgba_asset(&label, self.tag, w, h, rgba, png);
                     self.status = format!(
-                        "Added a part to style {style}. Use in Maker Engine to paint or assign it."
+                        "Saved {label} ({w}×{h}) into {style}. It is selected for Maker Engine. The cartridge file is not stored in the project."
                     );
                 }
             }
             if ui.button("Use in Maker Engine").clicked() {
-                if self.paint_asset.is_some() {
+                if let Some(id) = self.paint_asset.clone() {
+                    let name = self
+                        .project
+                        .asset(&id)
+                        .map(|asset| asset.name.clone())
+                        .unwrap_or_else(|| "That picture".into());
                     self.tab = Tab::Courses;
-                    self.status = "The part is selected in Courses. Paint with it, or create a Player Blueprint.".into();
+                    self.status = format!(
+                        "{name} is selected in Courses. Paint with it, or create a Player Blueprint."
+                    );
                 } else {
-                    self.status = "Add the stamp as a part first.".into();
+                    self.status = "Add the stamp as a part first. The project was not changed.".into();
                 }
             }
             if ui.button("Export PNG").clicked() {
@@ -810,6 +834,7 @@ impl NestApp {
                 }
             }
         });
+        self.draw_page(ui, ctx, page_origin, per_page);
         if let Some(sel) = self.selected {
             if let Some(indices) = self.tile_indices(page_origin, sel) {
                 let guess = suggest_kind(&indices, 8, 8);

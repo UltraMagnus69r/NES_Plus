@@ -670,3 +670,69 @@ fn gameplay_presets_deserialize_and_round_trip() {
     assert_eq!(again.enemy_ai, EnemyAiStyle::Smb1Nes);
     assert_eq!(again.levels[0].id, "one");
 }
+
+/// A decoded cartridge tile becomes an ordinary picture. Reopening the project
+/// does not read the cartridge file.
+#[test]
+fn cartridge_tile_round_trips_without_the_rom() {
+    let rom = crate::demo::demo_rom();
+    let dir = std::env::temp_dir().join(format!("nesticles-rom-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let rom_path = dir.join("seed-spirit.nes");
+    std::fs::write(&rom_path, &rom).unwrap();
+    if let Ok(out) = std::env::var("NESTICLES_ROM_DIR") {
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(std::path::Path::new(&out).join("seed-spirit.nes"), &rom).unwrap();
+    }
+    let loaded = std::fs::read(&rom_path).unwrap();
+    let info = crate::detect::detect_rom(&loaded, "seed-spirit.nes");
+    assert_eq!(info.format, crate::detect::RomFormat::Nes);
+    assert!(info.chr_len > 0);
+    let tile = crate::codec::decode_tile(
+        &loaded,
+        info.tile_offset + crate::codec::tile_bytes(crate::codec::Codec::Nes),
+        crate::codec::Codec::Nes,
+    )
+    .expect("sprite tile");
+    assert!(tile.iter().any(|pixel| *pixel != 0));
+    let palette = crate::codec::default_palette(crate::codec::Codec::Nes);
+    let (w, h, rgba) = crate::codec::indices_to_rgba(&tile, 1, 1, &palette, true);
+    assert_eq!((w, h), (8, 8));
+    assert!(rgba.chunks(4).any(|pixel| pixel[3] == 0));
+    assert!(rgba.chunks(4).any(|pixel| pixel[3] == 255));
+
+    let mut picture = asset("sprite", "Tile $4020", AssetKind::Player);
+    picture.w = w;
+    picture.h = h;
+    picture.rgba_base64 = crate::pngutil::b64_encode(&rgba);
+    let mut project = Project::blank("from cartridge");
+    project.character_physics = CharacterPhysics::Smb1Mario;
+    project.assets.push(picture);
+    let blueprint =
+        crate::player::new_player_blueprint("Sprout", "sprite", CharacterPhysics::Smb1Luigi);
+    let blueprint_id = blueprint.id.clone();
+    project.player_blueprints.push(blueprint);
+    project.levels = vec![course(ground_row(), 2.0, 12.0)];
+    project.levels[0].player_blueprint_id = Some(blueprint_id);
+
+    let json = serde_json::to_string(&project).unwrap();
+    assert!(
+        !json.contains("PHYSICS IS NOT STORED"),
+        "the cartridge program must not be copied into the project"
+    );
+    assert!(!json
+        .as_bytes()
+        .windows(4)
+        .any(|window| window == b"NES\x1a"));
+    std::fs::remove_file(&rom_path).unwrap();
+    let _ = std::fs::remove_dir(&dir);
+    assert!(!rom_path.exists());
+
+    let reopened: Project = serde_json::from_str(&json).unwrap();
+    let resolved = crate::player::resolve_player(&reopened, &reopened.levels[0]);
+    assert_eq!(resolved.visual_id, "sprite");
+    assert_eq!(resolved.physics, CharacterPhysics::Smb1Luigi);
+    assert_ne!(resolved.physics, reopened.character_physics);
+    let saved = crate::pngutil::b64_decode(&reopened.asset("sprite").unwrap().rgba_base64).unwrap();
+    assert_eq!(saved, rgba);
+}
