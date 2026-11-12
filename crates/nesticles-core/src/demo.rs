@@ -3,7 +3,7 @@
 
 use crate::codec::{encode_tile, Codec};
 use crate::pngutil::b64_encode;
-use crate::project::{Asset, AssetKind, Cell, Layer, Level, OverNode, Project, Spawn};
+use crate::project::{Asset, AssetKind, Cell, Layer, Level, OverNode, Project, Spawn, Style};
 use crate::wav::{synth_sweep, synth_tone, wav_from_samples};
 
 pub fn demo_rom() -> Vec<u8> {
@@ -152,6 +152,7 @@ fn asset_from(id: &str, name: &str, kind: AssetKind, rows: &[&str], cue: &str) -
         id: id.into(),
         name: name.into(),
         kind,
+        style_id: "style-seed".into(),
         w,
         h,
         rgba_base64: b64_encode(&rgba),
@@ -168,6 +169,7 @@ fn audio_asset(id: &str, name: &str, kind: AssetKind, samples: &[f32], rate: u32
         id: id.into(),
         name: name.into(),
         kind,
+        style_id: "style-seed".into(),
         w: 0,
         h: 0,
         rgba_base64: String::new(),
@@ -232,6 +234,7 @@ pub fn demo_project() -> Project {
     let mut moss = Level {
         id: "moss".into(),
         name: "Moss Steps".into(),
+        style_id: "style-seed".into(),
         w: 32,
         h: 15,
         sky: "#2a3c44".into(),
@@ -255,6 +258,7 @@ pub fn demo_project() -> Project {
     let mut lantern = Level {
         id: "lantern".into(),
         name: "Lantern Rise".into(),
+        style_id: "style-seed".into(),
         w: 32,
         h: 15,
         sky: "#243038".into(),
@@ -276,6 +280,11 @@ pub fn demo_project() -> Project {
 
     Project {
         name: "Seed Spirit".into(),
+        styles: vec![Style {
+            id: "style-seed".into(),
+            name: "Seed Spirit".into(),
+            source: "original".into(),
+        }],
         assets,
         levels: vec![moss, lantern],
         nodes: vec![

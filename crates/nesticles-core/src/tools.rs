@@ -41,6 +41,7 @@ pub fn execute_tool_value(project: &mut Project, value: &Value) -> Result<String
         "move_overworld_node" => move_node(project, &args),
         "link_nodes" => link_nodes(project, &args),
         "set_start_node" => set_start_node(project, &args),
+        "set_course_style" => set_course_style(project, &args),
         "audit_course" => {
             let id = req_str(&args, &["level_id", "id"])?;
             audit_course(project, &id)
@@ -57,6 +58,7 @@ fn create_course(project: &mut Project, args: &Value) -> Result<String, String> 
     project.levels.push(Level {
         id: id.clone(),
         name,
+        style_id: opt_str(args, &["style_id"]).unwrap_or_default(),
         w,
         h,
         sky: "#24343c".into(),
@@ -197,6 +199,22 @@ fn link_nodes(project: &mut Project, args: &Value) -> Result<String, String> {
         node.links.push(to.clone());
     }
     Ok(format!("linked {from} -> {to}. Clearing the source course unlocks the link."))
+}
+
+fn set_course_style(project: &mut Project, args: &Value) -> Result<String, String> {
+    let level_id = req_str(args, &["level_id", "id"])?;
+    let style_id = req_str(args, &["style_id"])?;
+    if !project.styles.iter().any(|style| style.id == style_id) {
+        return Err(format!("no style {style_id}"));
+    }
+    let name = project.style_name(&style_id);
+    let level = project
+        .level_mut(&level_id)
+        .ok_or_else(|| format!("no course {level_id}"))?;
+    level.style_id = style_id;
+    Ok(format!(
+        "course {level_id} home style is {name}. Parts from other styles can still be painted on it."
+    ))
 }
 
 fn set_start_node(project: &mut Project, args: &Value) -> Result<String, String> {

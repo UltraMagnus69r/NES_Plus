@@ -22,5 +22,5 @@ pub use detect::{detect_rom, find_strings, RomFormat, RomInfo};
 pub use disasm::{disassemble6502, AsmLine};
 pub use guard::image_prompt_blocked;
 pub use physics::{Input, Sim, Aabb, TILE};
-pub use project::{Asset, AssetKind, Layer, Level, Project};
+pub use project::{Asset, AssetKind, Layer, Level, Project, Style};
 pub use tools::execute_tool_json;

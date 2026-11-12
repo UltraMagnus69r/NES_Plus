@@ -95,8 +95,9 @@ pub struct NestApp {
     lib_sel: Option<String>,
     level_sel: usize,
     paint_asset: Option<String>,
-    paint_layer: Layer,
     paint_start: bool,
+    active_style: String,
+    tray_filter: String,
     node_sel: usize,
     link_from: Option<String>,
     play: Option<PlayState>,
@@ -147,6 +148,7 @@ impl NestApp {
         });
         let project = demo_project();
         let paint_asset = project.assets.iter().find(|a| a.kind == AssetKind::Terrain).map(|a| a.id.clone());
+        let active_style = project.styles.first().map(|style| style.id.clone()).unwrap_or_default();
         Self {
             project,
             tab: Tab::Courses,
@@ -173,8 +175,9 @@ impl NestApp {
             lib_sel: None,
             level_sel: 0,
             paint_asset,
-            paint_layer: Layer::Main,
             paint_start: false,
+            active_style,
+            tray_filter: "course".into(),
             node_sel: 0,
             link_from: None,
             play: None,
@@ -401,7 +404,7 @@ impl NestApp {
 
     fn cartridge(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Cartridge").font(serif(26.0)));
-        ui.label("Open an NES, Game Boy, Game Boy Color, Super NES, or Game Boy Advance image you supply. Files over 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted. Unknown files still open as a tile pager.");
+        ui.label("Open an NES, Game Boy, Game Boy Color, Super NES, or Game Boy Advance image you supply. Nesticles keeps tiles and sounds only, as parts you can drag into a course. Each file becomes its own style. A second game adds a style and does not replace the first. Files over 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted. Unknown files still open as a tile pager.");
         ui.horizontal(|ui| {
             if ui.button("Open file…").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
@@ -423,20 +426,30 @@ impl NestApp {
                 self.load_rom_path();
             }
         });
-        let Some(rom) = &self.rom else {
-            ui.label("No cartridge yet. The demo board under Courses is already playable.");
+        let Some(rom) = self.rom.as_ref() else {
+            ui.label("No cartridge yet. The Seed Spirit style under Courses is already playable.");
             return;
         };
-        ui.label(format!("File: {}", rom.name));
-        ui.label(RichText::new(&rom.info.title).font(serif(20.0)).color(ember()));
-        for (label, value) in &rom.info.details {
+        let file_name = rom.name.clone();
+        let title = rom.info.title.clone();
+        let details = rom.info.details.clone();
+        let warnings = rom.info.warnings.clone();
+        ui.label(format!("File: {file_name}"));
+        ui.label(RichText::new(&title).font(serif(20.0)).color(ember()));
+        for (label, value) in &details {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(label).color(ember()));
                 ui.label(value);
             });
         }
-        for warning in &rom.info.warnings {
+        for warning in &warnings {
             ui.label(RichText::new(warning).color(Color32::from_rgb(232, 196, 150)));
+        }
+        if let Some(style) = self.project.styles.iter().find(|style| style.source == file_name) {
+            ui.label(format!(
+                "Style \"{}\" holds parts from this file. Styles already in the project stay in the tray.",
+                style.name
+            ));
         }
     }
 
@@ -496,10 +509,11 @@ impl NestApp {
                         ui.selectable_value(&mut self.tag, kind, kind.label());
                     }
                 });
-            if ui.button("Add to library").clicked() {
+            if ui.button("Add as part").clicked() {
                 if let Some((w, h, rgba, png)) = self.grab_stamp(page_origin) {
+                    let style = self.project.style_name(&self.active_style);
                     self.add_rgba_asset("Tile", self.tag, w, h, rgba, png);
-                    self.status = "Added the tile to the library.".into();
+                    self.status = format!("Added a part to style {style}. Drag it from the course tray.");
                 }
             }
             if ui.button("Export PNG").clicked() {
@@ -632,6 +646,7 @@ impl NestApp {
                     id: nid(if kind == "music" { "music-" } else { "sfx-" }),
                     name: hit.label.clone(),
                     kind: asset_kind,
+                    style_id: self.active_style.clone(),
                     w: 0,
                     h: 0,
                     rgba_base64: String::new(),
@@ -669,15 +684,18 @@ impl NestApp {
 
     fn library(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Library").font(serif(26.0)));
-        ui.label("Tags are yours: player, enemy, terrain, background, foreground, item, hazard, goal, sound, music.");
+        ui.label("Parts are grouped by style. A style is one cartridge, or the original Seed Spirit set. Importing another game adds a style.");
         let mut remove = None;
         let ids: Vec<String> = self.project.assets.iter().map(|a| a.id.clone()).collect();
         for id in ids {
             let Some(asset) = self.project.asset(&id) else { continue };
             let selected = self.lib_sel.as_deref() == Some(id.as_str());
+            let style = self.project.style_name(&asset.style_id);
+            let label = format!("{}  {}  ·  {style}", asset.name, asset.kind.label());
             ui.horizontal(|ui| {
-                if ui.selectable_label(selected, format!("{}  {}", asset.name, asset.kind.label())).clicked() {
+                if ui.selectable_label(selected, label).clicked() {
                     self.lib_sel = Some(id.clone());
+                    self.active_style = self.project.asset(&id).map(|item| item.style_id.clone()).unwrap_or_default();
                 }
             });
         }
@@ -733,6 +751,7 @@ impl NestApp {
 
     fn courses(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Courses").font(serif(26.0)));
+        ui.label("Drag a part from the tray onto the grid, or select it and paint. The course has a home style. All styles stays available, so parts from more than one game can sit on the same course.");
         if self.project.levels.is_empty() {
             ui.label("No courses yet.");
             return;
@@ -745,9 +764,15 @@ impl NestApp {
             }
             if ui.button("New course").clicked() {
                 let id = nid("course-");
+                let style_id = if self.active_style.is_empty() {
+                    self.project.styles.first().map(|style| style.id.clone()).unwrap_or_default()
+                } else {
+                    self.active_style.clone()
+                };
                 self.project.levels.push(nesticles_core::Level {
                     id,
                     name: "New course".into(),
+                    style_id,
                     w: 32,
                     h: 15,
                     sky: "#24343c".into(),
@@ -770,29 +795,113 @@ impl NestApp {
         if let Ok(audit) = audit_course(&self.project, &level_id) {
             ui.label(audit);
         }
+        {
+            let styles = self.project.styles.clone();
+            let mut style_id = self.project.levels[self.level_sel].style_id.clone();
+            ui.horizontal(|ui| {
+                ui.label("Home style");
+                egui::ComboBox::from_id_salt("course-style")
+                    .selected_text(self.project.style_name(&style_id))
+                    .show_ui(ui, |ui| {
+                        for style in &styles {
+                            ui.selectable_value(&mut style_id, style.id.clone(), &style.name);
+                        }
+                    });
+            });
+            self.project.levels[self.level_sel].style_id = style_id;
+        }
+        self.parts_tray(ui);
+        ui.label("Right click erases. Dragging Pip, or any player part, moves the start.");
+        self.paint_grid(ui);
+    }
+
+    fn parts_tray(&mut self, ui: &mut egui::Ui) {
+        let course_style = self
+            .project
+            .levels
+            .get(self.level_sel)
+            .map(|level| level.style_id.clone())
+            .unwrap_or_default();
         ui.horizontal_wrapped(|ui| {
-            ui.label("Paint");
-            let ids: Vec<(String, String, AssetKind)> = self
+            ui.label("Tray");
+            if ui.selectable_label(self.tray_filter == "course", "This style").clicked() {
+                self.tray_filter = "course".into();
+            }
+            if ui.selectable_label(self.tray_filter.is_empty(), "All styles").clicked() {
+                self.tray_filter.clear();
+            }
+            let styles = self.project.styles.clone();
+            for style in styles {
+                if ui.selectable_label(self.tray_filter == style.id, &style.name).clicked() {
+                    self.tray_filter = style.id.clone();
+                }
+            }
+        });
+        let selected_style = if self.tray_filter == "course" {
+            course_style
+        } else {
+            self.tray_filter.clone()
+        };
+        let show_all = self.tray_filter.is_empty() || selected_style.is_empty();
+        const GROUPS: [(&str, &[AssetKind]); 7] = [
+            ("Terrain", &[AssetKind::Terrain]),
+            ("Items", &[AssetKind::Item]),
+            ("Characters", &[AssetKind::Player, AssetKind::Enemy]),
+            ("Hazards", &[AssetKind::Hazard]),
+            ("Goals", &[AssetKind::Goal]),
+            ("Scenery", &[AssetKind::Background, AssetKind::Foreground]),
+            ("Sound", &[AssetKind::Music, AssetKind::Sfx]),
+        ];
+        for (label, kinds) in GROUPS {
+            let parts: Vec<String> = self
                 .project
                 .assets
                 .iter()
-                .filter(|a| !a.kind.is_audio())
-                .map(|a| (a.id.clone(), a.name.clone(), a.kind))
+                .filter(|asset| {
+                    kinds.contains(&asset.kind) && (show_all || asset.style_id == selected_style || asset.style_id.is_empty())
+                })
+                .map(|asset| asset.id.clone())
                 .collect();
-            for (id, name, kind) in ids {
-                let on = self.paint_asset.as_deref() == Some(id.as_str());
-                if ui.selectable_label(on, format!("{name} ({})", kind.label())).clicked() {
-                    self.paint_asset = Some(id);
-                    self.paint_layer = kind.default_layer();
-                    self.paint_start = false;
+            if parts.is_empty() {
+                continue;
+            }
+            ui.label(RichText::new(label).color(ember()));
+            ui.horizontal_wrapped(|ui| {
+                for id in parts {
+                    self.part_chip(ui, &id);
                 }
-            }
-            if ui.selectable_label(self.paint_start, "Set start").clicked() {
-                self.paint_start = !self.paint_start;
-            }
-            ui.label("Right click erases.");
+            });
+        }
+    }
+
+    fn part_chip(&mut self, ui: &mut egui::Ui, id: &str) {
+        let Some(asset) = self.project.asset(id) else {
+            return;
+        };
+        let name = asset.name.clone();
+        let kind = asset.kind;
+        let asset_id = asset.id.clone();
+        let on = self.paint_asset.as_deref() == Some(asset_id.as_str());
+        let drag_id = egui::Id::new(("part", asset_id.clone()));
+        let chip = ui.dnd_drag_source(drag_id, asset_id.clone(), |ui| {
+            ui.horizontal(|ui| {
+                if let Some(tex) = self.textures.get(&asset_id) {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
+                    ui.painter().image(
+                        tex.id(),
+                        rect,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                }
+                ui.selectable_label(on, name)
+            })
+            .inner
         });
-        self.paint_grid(ui);
+        if chip.inner.clicked() {
+            self.paint_asset = Some(asset_id);
+            self.paint_start = kind == AssetKind::Player;
+        }
     }
 
     fn paint_grid(&mut self, ui: &mut egui::Ui) {
@@ -830,29 +939,65 @@ impl NestApp {
             Vec2::splat(cell - 1.0),
         );
         painter.rect_stroke(pr, 2.0, egui::Stroke::new(2.0_f32, ember()), egui::StrokeKind::Inside);
-        if response.clicked() || response.dragged() {
+        if let Some(payload) = response.dnd_release_payload::<String>() {
+            if let Some(pos) = response.interact_pointer_pos().or(ui.input(|i| i.pointer.interact_pos())) {
+                let local = pos - rect.min;
+                self.place_at((local.x / cell) as i32, (local.y / cell) as i32, (*payload).clone(), false);
+            }
+        } else if response.clicked() || response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let local = pos - rect.min;
                 let x = (local.x / cell) as i32;
                 let y = (local.y / cell) as i32;
-                if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-                    let erase = ui.input(|i| i.pointer.secondary_down());
-                    if self.paint_start && !erase {
+                let erase = ui.input(|i| i.pointer.secondary_down());
+                if self.paint_start && !erase {
+                    if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
                         self.project.levels[self.level_sel].player.x = x as f32;
                         self.project.levels[self.level_sel].player.y = y as f32;
-                    } else if erase {
-                        self.project.levels[self.level_sel]
-                            .cells
-                            .retain(|c| !(c.x == x && c.y == y));
-                    } else if let Some(asset_id) = self.paint_asset.clone() {
-                        let layer = self.paint_layer;
-                        let level = &mut self.project.levels[self.level_sel];
-                        level.cells.retain(|c| !(c.x == x && c.y == y && c.layer == layer));
-                        level.cells.push(Cell { x, y, asset_id, layer });
                     }
+                } else if let Some(asset_id) = self.paint_asset.clone() {
+                    self.place_at(x, y, asset_id, erase);
+                } else if erase {
+                    self.place_at(x, y, String::new(), true);
                 }
             }
         }
+    }
+
+    fn place_at(&mut self, x: i32, y: i32, asset_id: String, erase: bool) {
+        if self.level_sel >= self.project.levels.len() {
+            return;
+        }
+        let w = self.project.levels[self.level_sel].w as i32;
+        let h = self.project.levels[self.level_sel].h as i32;
+        if x < 0 || y < 0 || x >= w || y >= h {
+            return;
+        }
+        if erase {
+            self.project.levels[self.level_sel]
+                .cells
+                .retain(|cell| !(cell.x == x && cell.y == y));
+            return;
+        }
+        let Some(asset) = self.project.asset(&asset_id).cloned() else {
+            return;
+        };
+        if asset.kind == AssetKind::Player {
+            self.project.levels[self.level_sel].player.x = x as f32;
+            self.project.levels[self.level_sel].player.y = y as f32;
+            return;
+        }
+        if asset.kind == AssetKind::Music {
+            self.project.levels[self.level_sel].music_id = Some(asset_id);
+            return;
+        }
+        if asset.kind.is_audio() {
+            return;
+        }
+        let layer = asset.kind.default_layer();
+        let level = &mut self.project.levels[self.level_sel];
+        level.cells.retain(|cell| !(cell.x == x && cell.y == y && cell.layer == layer));
+        level.cells.push(Cell { x, y, asset_id, layer });
     }
 
     fn overworld(&mut self, ui: &mut egui::Ui) {
@@ -1403,10 +1548,14 @@ impl NestApp {
         self.strings = find_strings(&bytes, 80);
         self.disasm_index_text = format!("{:X}", info.prg_start);
         self.disasm_base_text = if info.format == RomFormat::Nes { "8000" } else { "0" }.into();
+        let style_name = if info.title.trim().is_empty() { name.clone() } else { info.title.clone() };
         self.rom = Some(RomSession { name: name.clone(), bytes, info });
+        let style_id = self.project.adopt_style(&style_name, &name);
+        self.active_style = style_id;
+        self.tray_filter.clear();
         self.refresh_disasm();
         self.tab = Tab::Cartridge;
-        self.status = format!("Opened {name}");
+        self.status = format!("Style \"{style_name}\" is ready. Parts you keep join it. Styles already in the project stay.");
     }
 
     fn refresh_disasm(&mut self) {
@@ -1446,10 +1595,12 @@ impl NestApp {
         match import_audio(&bytes, name) {
             Ok((samples, rate)) => {
                 let wav = if read_pcm_wav(&bytes).is_ok() { bytes } else { wav_from_samples(&samples, rate) };
+                let style_id = self.part_style();
                 self.project.assets.push(Asset {
                     id: nid("sfx-"),
                     name: name.into(),
                     kind: AssetKind::Sfx,
+                    style_id,
                     w: 0,
                     h: 0,
                     rgba_base64: String::new(),
@@ -1527,10 +1678,12 @@ impl NestApp {
 
     fn add_rgba_asset(&mut self, name: &str, kind: AssetKind, w: u32, h: u32, rgba: Vec<u8>, png: Vec<u8>) {
         let id = nid("sprite-");
+        let style_id = self.part_style();
         self.project.assets.push(Asset {
             id: id.clone(),
             name: format!("{name} {}", kind.label()),
             kind,
+            style_id,
             w,
             h,
             rgba_base64: b64_encode(&rgba),
@@ -1558,6 +1711,18 @@ impl NestApp {
             let tex = ctx.load_texture(format!("{}-{}", asset.id, self.tex_epoch), image, TextureOptions::NEAREST);
             self.textures.insert(asset.id.clone(), tex);
         }
+    }
+
+    fn part_style(&mut self) -> String {
+        if !self.active_style.is_empty() {
+            return self.active_style.clone();
+        }
+        if let Some(style) = self.project.styles.first() {
+            return style.id.clone();
+        }
+        let id = self.project.adopt_style("Original drawings", "generated");
+        self.active_style = id.clone();
+        id
     }
 
     fn current_level_id(&self) -> String {
@@ -1778,13 +1943,13 @@ Nesticles is a local workshop. You bring a cartridge image, page it as tiles, ke
 
 Open a file from Cartridge, or load the bundled demo image. Nesticles reads NES / iNES / NES 2.0 (including the trainer bit), Game Boy, Game Boy Color, Super NES LoROM and HiROM (including a 512-byte copier header), and Game Boy Advance. Anything it does not recognize still pages as tiles. Files are capped around 64 MB. Encrypted Switch, 3DS, and Wii U images are not decrypted.
 
-Tiles are uncompressed only: NES 2bpp with separated planes, Game Boy 2bpp with interleaved rows, Super NES 4bpp, Game Boy Advance 4bpp with the low nibble first, and 1bpp. The preview is nearest-neighbor. A deduped scan suggests empty, sprite-like, scenery-like, text-like, or noise. You still tag player, enemy, terrain, background, foreground, item, hazard, or goal. Cartridges do not label the player versus an enemy, so the tag has to be yours. Export one sprite as PNG or add it to the library.
+Tiles are uncompressed only: NES 2bpp with separated planes, Game Boy 2bpp with interleaved rows, Super NES 4bpp, Game Boy Advance 4bpp with the low nibble first, and 1bpp. The preview is nearest-neighbor. A deduped scan suggests empty, sprite-like, scenery-like, text-like, or noise. You still tag player, enemy, terrain, background, foreground, item, hazard, or goal. Cartridges do not label the player versus an enemy, so the tag has to be yours. Add as part converts that stamp into a drag-and-drop piece on the current style. Export PNG writes the picture without putting it on a course.
 
 Audio can preview NES DPCM (least-significant bit first, starting at level 64, stepping by 2, clamped to 0–126), Game Boy 16-byte wave tables, and Super NES BRR. A kept clip becomes a sound or music. You can also import PCM WAV, and Ogg or MP3 when the file decodes.
 
 Notes show ASCII strings and, for NES, a linear 6502 disassembly. That listing does not follow banks and it will read data as code. Scripts are custom per game. Physics is not extracted. Play uses an original engine: gravity, acceleration, friction, a variable jump, coyote time, a jump buffer, AABB tile collision, patrol enemies that turn at walls and ledges, a stomp, hazard and fall respawns, and a goal.
 
-Courses are painted from the library. The overworld nodes link to courses. Play from the overworld and clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, and a web manifest. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
+Each cartridge becomes a style, the way a maker keeps several game looks in one tray. Dropping in another game adds a style and leaves the earlier parts where they are. A course has a home style, and the tray can show that style or every style. Drag a part onto the grid. Parts from more than one style can share a course. Play uses those parts with Nesticles physics, not the cartridge's code. The overworld nodes link to courses. Clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, and a web manifest. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
 
 Nesticles does not replace tools that already understand compressed graphics or a particular game's formats:
 

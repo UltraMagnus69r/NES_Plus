@@ -105,11 +105,24 @@ impl Layer {
     }
 }
 
+/// One imported cartridge, or the built-in original set. A style is a tray of parts.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Style {
+    pub id: String,
+    pub name: String,
+    /// File name of the cartridge, or "original" for parts drawn in Nesticles.
+    #[serde(default)]
+    pub source: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Asset {
     pub id: String,
     pub name: String,
     pub kind: AssetKind,
+    /// Style this part belongs to. Empty means it shows in every style filter.
+    #[serde(default)]
+    pub style_id: String,
     pub w: u32,
     pub h: u32,
     #[serde(default)]
@@ -148,6 +161,9 @@ pub struct Spawn {
 pub struct Level {
     pub id: String,
     pub name: String,
+    /// Home style, like a maker's selected game style. Parts from other styles can still be placed.
+    #[serde(default)]
+    pub style_id: String,
     pub w: u32,
     pub h: u32,
     #[serde(default = "default_sky")]
@@ -178,6 +194,8 @@ pub struct OverNode {
 pub struct Project {
     pub name: String,
     #[serde(default)]
+    pub styles: Vec<Style>,
+    #[serde(default)]
     pub assets: Vec<Asset>,
     #[serde(default)]
     pub levels: Vec<Level>,
@@ -191,11 +209,37 @@ impl Project {
     pub fn blank(name: &str) -> Self {
         Self {
             name: name.into(),
+            styles: Vec::new(),
             assets: Vec::new(),
             levels: Vec::new(),
             nodes: Vec::new(),
             start_node_id: String::new(),
         }
+    }
+
+    /// Add a style for a cartridge. The same source file does not create a second style.
+    pub fn adopt_style(&mut self, name: &str, source: &str) -> String {
+        if !source.is_empty() {
+            if let Some(found) = self.styles.iter().find(|style| style.source == source) {
+                return found.id.clone();
+            }
+        }
+        let id = nid("style-");
+        self.styles.push(Style {
+            id: id.clone(),
+            name: name.into(),
+            source: source.into(),
+        });
+        id
+    }
+
+    pub fn style_name(&self, id: &str) -> String {
+        self.styles
+            .iter()
+            .find(|style| style.id == id)
+            .map(|style| style.name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Unstyled".into())
     }
 
     pub fn asset(&self, id: &str) -> Option<&Asset> {
@@ -217,13 +261,23 @@ impl Project {
     pub fn summary(&self) -> String {
         let mut lines = Vec::new();
         lines.push(format!("Project \"{}\"", self.name));
+        lines.push("Styles (each imported cartridge is one style; courses may mix them):".into());
+        for style in &self.styles {
+            lines.push(format!("  {} \"{}\" source={}", style.id, style.name, style.source));
+        }
         lines.push("Assets:".into());
         for asset in &self.assets {
+            let style = self.style_name(&asset.style_id);
             if asset.kind.is_audio() {
-                lines.push(format!("  {} [{}] cue={}", asset.id, asset.kind.label(), asset.cue));
+                lines.push(format!(
+                    "  {} [{}] style=\"{style}\" cue={}",
+                    asset.id,
+                    asset.kind.label(),
+                    asset.cue
+                ));
             } else {
                 lines.push(format!(
-                    "  {} \"{}\" [{}] {}x{}",
+                    "  {} \"{}\" [{}] style=\"{style}\" {}x{}",
                     asset.id,
                     asset.name,
                     asset.kind.label(),
@@ -234,9 +288,10 @@ impl Project {
         }
         for level in &self.levels {
             lines.push(format!(
-                "Course {} \"{}\" {}x{} start=({}, {}) cells={} {}",
+                "Course {} \"{}\" style=\"{}\" {}x{} start=({}, {}) cells={} {}",
                 level.id,
                 level.name,
+                self.style_name(&level.style_id),
                 level.w,
                 level.h,
                 level.player.x,

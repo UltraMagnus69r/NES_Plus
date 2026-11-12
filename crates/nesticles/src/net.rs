@@ -16,6 +16,8 @@ Refuse requests to copy commercial characters. Ask for an original design instea
 A cartridge does not label which sprite is the player. Physics is not extracted from cartridges. \
 Scripts are custom per game. Do not claim otherwise.\n\
 Coordinates are tile cells, origin at the top left, y growing downward.\n\
+Each imported cartridge is a style of parts. A course has a home style via set_course_style. \
+paint_rect may use assets from any style, so one course can mix parts. Do not tell the user a new cartridge replaces older styles.\n\
 Use tools for concrete edits. After tools run, summarize what changed in a sentence or two.";
 
 pub struct AssistDone {
@@ -428,6 +430,12 @@ fn tool_defs() -> Vec<Value> {
             "Choose the overworld node that is open at the start.",
             json!({"node_id": {"type": "string"}}),
             &["node_id"],
+        ),
+        tool(
+            "set_course_style",
+            "Set a course's home style. Parts from other styles can still be painted onto it.",
+            json!({"level_id": {"type": "string"}, "style_id": {"type": "string"}}),
+            &["level_id", "style_id"],
         ),
         tool(
             "audit_course",

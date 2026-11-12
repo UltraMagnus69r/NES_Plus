@@ -190,6 +190,7 @@ fn paint_rect_changes_cells() {
         id: "ground".into(),
         name: "Ground".into(),
         kind: AssetKind::Terrain,
+        style_id: String::new(),
         w: 16,
         h: 16,
         rgba_base64: String::new(),
@@ -201,6 +202,7 @@ fn paint_rect_changes_cells() {
     project.levels.push(Level {
         id: "l1".into(),
         name: "Empty".into(),
+        style_id: String::new(),
         w: 20,
         h: 15,
         sky: "#000".into(),
@@ -284,6 +286,43 @@ fn clear_course(project: &nesticles_core::Project, level_id: &str) -> bool {
     }
     let _ = level_id;
     false
+}
+
+#[test]
+fn a_second_cartridge_adds_a_style_and_parts_can_mix() {
+    let mut project = nesticles_core::demo_project();
+    let first = project.styles[0].id.clone();
+    let second = project.adopt_style("Other Grove", "other.nes");
+    assert_ne!(first, second);
+    assert_eq!(project.styles.len(), 2);
+    assert_eq!(project.adopt_style("Other Grove again", "other.nes"), second);
+    project.assets.push(Asset {
+        id: "crate".into(),
+        name: "Crate".into(),
+        kind: AssetKind::Terrain,
+        style_id: second.clone(),
+        w: 16,
+        h: 16,
+        rgba_base64: String::new(),
+        png_base64: String::new(),
+        wav_base64: String::new(),
+        solid: true,
+        cue: String::new(),
+    });
+    execute_tool_json(
+        &mut project,
+        r#"{"tool":"set_course_style","level_id":"moss","style_id":"style-seed"}"#,
+    )
+    .unwrap();
+    execute_tool_json(
+        &mut project,
+        r#"{"tool":"paint_rect","level_id":"moss","asset_id":"crate","x":4,"y":11,"w":1,"h":1,"layer":"main"}"#,
+    )
+    .unwrap();
+    let moss = project.level("moss").unwrap();
+    assert_eq!(moss.style_id, "style-seed");
+    assert!(moss.cells.iter().any(|cell| cell.asset_id == "sod"));
+    assert!(moss.cells.iter().any(|cell| cell.asset_id == "crate"));
 }
 
 #[test]
