@@ -385,7 +385,7 @@ impl NestApp {
                             }
                             self.godot_child = Some(child);
                             self.status = format!(
-                                "Experimental Godot preview launched with {} ({}). It is only the player picture, solid fixtures, movement, jump, and a camera.",
+                                "Experimental Godot preview launched with {} ({}). It runs the 1080p SMB1-style step for the player, solids, goombas, and goal flags.",
                                 executable.display(),
                                 version
                             );
@@ -3268,7 +3268,7 @@ impl NestApp {
     }
 
     fn godot_preview_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label("Experimental Godot preview. It writes a small Godot scene from this course: the player picture, placed solid fixtures, gravity, horizontal movement, jump, and a following camera. Enemies, items, pipes, entrances, and transitions stay in the Rust Play view. This is not the full game.");
+        ui.label("Experimental Godot preview. It writes a Godot scene from this course and steps it with the 1080p SMB1-style rules: walk, run, skid, jump, solid fixtures, goombas, stomps, and goal flags. Pipes, items, hazards, power-ups, and other enemies stay in the Rust Play view. This is not the full game.");
         ui.horizontal(|ui| {
             ui.label("Godot 4.7.2");
             ui.add(

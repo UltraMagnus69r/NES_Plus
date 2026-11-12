@@ -250,9 +250,14 @@ fn pull_toward(vx: i32, limit: i32, decel: i32) -> i32 {
     }
 }
 
+/// Stomp hop shared by every SMB1 preset. Jump held uses the higher hop.
+/// These are the Mario hop values. They are not scaled per character.
+pub const STOMP_VY: i32 = -73728;
+pub const STOMP_VY_HELD: i32 = -92160;
+
 /// Stomp bounce. Jump held uses the higher hop.
 pub fn apply_stomp(body: &mut Body, jump_held: bool) {
-    body.vy = if jump_held { -92160 } else { -73728 };
+    body.vy = if jump_held { STOMP_VY_HELD } else { STOMP_VY };
     body.on_ground = false;
     body.is_jumping = true;
 }

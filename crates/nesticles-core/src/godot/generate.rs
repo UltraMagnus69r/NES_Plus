@@ -11,20 +11,33 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::blueprint::{ensure_legacy_blueprints, LegacyBlock, LegacyRole};
-use crate::physics::CharacterPhysics;
+use crate::blueprint::ensure_legacy_blueprints;
+use crate::engine::res_1080p::{World, FP};
+use crate::physics::map_character;
 use crate::pngutil::b64_decode;
-use crate::project::{Asset, AssetKind, Layer, Level, Project};
+use crate::project::{Asset, AssetKind, Level, Project};
 
-/// Godot pixels along one course cell.
+use super::parity::{sim_file_from_world, skipped_enemy_kinds, SimFile};
+
+/// Screen pixels along one stored course cell.
 ///
-/// Saved Nesticles coordinates stay in cells. This scale is applied only while
-/// writing the Godot scene. It is not the 1080p fixed-point tile, and the
-/// world is not defined as a 1920 by 1080 screen.
-pub const CELL_PX: i32 = 16;
+/// This is the 1080p play tile. Saved Nesticles coordinates stay in cells.
+/// The Godot step uses 4096 fixed-point units per one of these pixels.
+pub const CELL_PX: i32 = 72;
 
 const PLAYER_SOURCE: &str =
-    "Course spawn and character preset. Temporary adapter, not a Player Blueprint.";
+    "Course spawn and character preset, stepped with the 1080p SMB1-style rules. Temporary adapter, not a Player Blueprint.";
+
+const NOT_SIMULATED: &[&str] = &[
+    "pipes",
+    "vines",
+    "springs",
+    "hazards",
+    "items",
+    "power_ups",
+    "question_blocks",
+    "non_goomba_enemies",
+];
 
 const PROJECT_GODOT: &str = r#"; Nesticles Godot proof. This file is fixed and contains no project text.
 config_version=5
@@ -37,8 +50,8 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
-window/size/viewport_width=640
-window/size/viewport_height=360
+window/size/viewport_width=1280
+window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 
 [physics]
@@ -54,6 +67,7 @@ environment/defaults/default_clear_color=Color(0.16, 0.22, 0.26, 1)
 
 const PLAYER_SCRIPT: &str = include_str!("player.gd");
 const PROOF_SCRIPT: &str = include_str!("proof_driver.gd");
+const SIM_SCRIPT: &str = include_str!("nesticles_sim.gd");
 const EXPORT_PRESETS: &str = include_str!("export_presets.cfg");
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,13 +85,15 @@ struct LevelFile {
     cell_px: i32,
     player_source: &'static str,
     preset: String,
-    move_speed: f64,
-    jump_velocity: f64,
-    gravity: f64,
     player: BodyFile,
     support_top: Option<f64>,
     drop_px: f64,
     solids: Vec<BodyFile>,
+    enemies: Vec<BodyFile>,
+    goals: Vec<BodyFile>,
+    not_simulated: &'static [&'static str],
+    skipped_enemies: Vec<String>,
+    sim: SimFile,
 }
 
 #[derive(Serialize)]
@@ -90,7 +106,8 @@ struct BodyFile {
     y: f64,
     w: f64,
     h: f64,
-    scale: f64,
+    scale_x: f64,
+    scale_y: f64,
     texture: String,
 }
 
@@ -104,7 +121,8 @@ struct Plan {
 struct SpriteSize {
     w: f64,
     h: f64,
-    scale: f64,
+    scale_x: f64,
+    scale_y: f64,
 }
 
 /// Directory the editor uses for the experimental preview.
@@ -139,36 +157,69 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
     let (player_px_w, player_px_h, player_rgba) = decode_image(player).map_err(|err| {
         format!("The player picture cannot be decoded ({err}). The Godot scene was not created.")
     })?;
-    let player_size = fit(player_px_w, player_px_h);
-    let mut stems = stem_map(&image_ids(&view, level, &player.id));
+    let world = World::from_level(&view, level, map_character(view.character_physics));
+    let sim = sim_file_from_world(&world);
+    if sim.solids.is_empty() {
+        return Err(
+            "This course has no placed solid fixture. Place a solid blueprint before the Godot proof. No scene was created."
+                .into(),
+        );
+    }
+    let mut picture_ids = vec![player.id.clone()];
+    for solid in &sim.solids {
+        picture_ids.push(
+            picture_for_cell(&view, level, solid.cell_x, solid.cell_y)?
+                .id
+                .clone(),
+        );
+    }
+    for enemy in &world.enemies {
+        if enemy.kind != crate::engine::res_1080p::rules::smb1::enemies::Kind::Goomba {
+            continue;
+        }
+        picture_ids.push(enemy.asset_id.clone());
+    }
+    for goal in &sim.goals {
+        let cell_x = goal.x / crate::engine::res_1080p::TILE_FP;
+        let cell_y = goal.y / crate::engine::res_1080p::TILE_FP;
+        if let Some(asset) = picture_for_cell(&view, level, cell_x, cell_y).ok() {
+            picture_ids.push(asset.id.clone());
+        }
+    }
+    let mut stems = stem_map(&picture_ids);
     let player_stem = stems
         .get(&player.id)
         .cloned()
         .ok_or_else(|| "The player picture has no safe file name.".to_string())?;
+    let player_size = fit_box(
+        player_px_w,
+        player_px_h,
+        screen_px(sim.player.w),
+        screen_px(sim.player.h),
+    );
+    let player_body = BodyFile {
+        asset_id: player.id.clone(),
+        label: player.name.clone(),
+        cell_x: f64::from(level.player.x),
+        cell_y: f64::from(level.player.y),
+        x: screen_px(sim.player.x),
+        y: screen_px(sim.player.y),
+        w: player_size.w,
+        h: player_size.h,
+        scale_x: player_size.scale_x,
+        scale_y: player_size.scale_y,
+        texture: format!("res://assets/{player_stem}.png"),
+    };
     let mut solids = Vec::new();
-    let mut ordered: Vec<&crate::project::Cell> = level.cells.iter().collect();
-    ordered.sort_by(|a, b| (a.y, a.x, layer_rank(a.layer)).cmp(&(b.y, b.x, layer_rank(b.layer))));
-    for cell in ordered {
-        if !is_solid(&view, cell)? {
-            continue;
-        }
-        let asset = view
-            .assets
-            .iter()
-            .find(|asset| asset.id == cell.asset_id)
-            .ok_or_else(|| {
-                format!(
-                    "Solid fixture at {},{} uses missing asset {}. The Godot scene was not created.",
-                    cell.x, cell.y, cell.asset_id
-                )
-            })?;
+    for solid in &sim.solids {
+        let asset = picture_for_cell(&view, level, solid.cell_x, solid.cell_y)?;
         let (px_w, px_h, _) = decode_image(asset).map_err(|err| {
             format!(
                 "Solid fixture at {},{} has no usable picture ({err}). The Godot scene was not created.",
-                cell.x, cell.y
+                solid.cell_x, solid.cell_y
             )
         })?;
-        let size = fit(px_w, px_h);
+        let size = fit_box(px_w, px_h, screen_px(solid.w), screen_px(solid.h));
         let stem = stems
             .get(&asset.id)
             .cloned()
@@ -176,39 +227,91 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
         solids.push(BodyFile {
             asset_id: asset.id.clone(),
             label: asset.name.clone(),
-            cell_x: f64::from(cell.x),
-            cell_y: f64::from(cell.y),
-            x: world(f64::from(cell.x)),
-            y: world(f64::from(cell.y)),
+            cell_x: f64::from(solid.cell_x),
+            cell_y: f64::from(solid.cell_y),
+            x: screen_px(solid.x),
+            y: screen_px(solid.y),
             w: size.w,
             h: size.h,
-            scale: size.scale,
+            scale_x: size.scale_x,
+            scale_y: size.scale_y,
             texture: format!("res://assets/{stem}.png"),
         });
     }
-    if solids.is_empty() {
-        return Err(
-            "This course has no placed solid fixture. Place a solid blueprint before the Godot proof. No scene was created."
-                .into(),
-        );
+    let mut enemies = Vec::new();
+    for enemy in world
+        .enemies
+        .iter()
+        .filter(|enemy| enemy.kind == crate::engine::res_1080p::rules::smb1::enemies::Kind::Goomba)
+    {
+        let asset = view
+            .assets
+            .iter()
+            .find(|asset| asset.id == enemy.asset_id)
+            .ok_or_else(|| {
+                format!(
+                    "Goomba at cell {},{} uses missing asset {}. The Godot scene was not created.",
+                    enemy.cell_x, enemy.cell_y, enemy.asset_id
+                )
+            })?;
+        let (px_w, px_h, _) = decode_image(asset).map_err(|err| {
+            format!(
+                "Goomba at {},{} has no usable picture ({err}). The Godot scene was not created.",
+                enemy.cell_x, enemy.cell_y
+            )
+        })?;
+        let size = fit_box(px_w, px_h, screen_px(enemy.w), screen_px(enemy.h));
+        let stem = stems
+            .get(&asset.id)
+            .cloned()
+            .unwrap_or_else(|| sanitize(&asset.id));
+        enemies.push(BodyFile {
+            asset_id: asset.id.clone(),
+            label: asset.name.clone(),
+            cell_x: f64::from(enemy.cell_x),
+            cell_y: f64::from(enemy.cell_y),
+            x: screen_px(enemy.x),
+            y: screen_px(enemy.y),
+            w: size.w,
+            h: size.h,
+            scale_x: size.scale_x,
+            scale_y: size.scale_y,
+            texture: format!("res://assets/{stem}.png"),
+        });
     }
-    let player_body = BodyFile {
-        asset_id: player.id.clone(),
-        label: player.name.clone(),
-        cell_x: f64::from(level.player.x),
-        cell_y: f64::from(level.player.y),
-        x: world(f64::from(level.player.x)),
-        y: world(f64::from(level.player.y)),
-        w: player_size.w,
-        h: player_size.h,
-        scale: player_size.scale,
-        texture: format!("res://assets/{player_stem}.png"),
-    };
+    let mut goals = Vec::new();
+    for goal in &sim.goals {
+        let cell_x = goal.x / crate::engine::res_1080p::TILE_FP;
+        let cell_y = goal.y / crate::engine::res_1080p::TILE_FP;
+        let Ok(asset) = picture_for_cell(&view, level, cell_x, cell_y) else {
+            continue;
+        };
+        let Ok((px_w, px_h, _)) = decode_image(asset) else {
+            continue;
+        };
+        let size = fit_box(px_w, px_h, screen_px(goal.w), screen_px(goal.h));
+        let stem = stems
+            .get(&asset.id)
+            .cloned()
+            .unwrap_or_else(|| sanitize(&asset.id));
+        goals.push(BodyFile {
+            asset_id: asset.id.clone(),
+            label: asset.name.clone(),
+            cell_x: f64::from(cell_x),
+            cell_y: f64::from(cell_y),
+            x: screen_px(goal.x),
+            y: screen_px(goal.y),
+            w: size.w,
+            h: size.h,
+            scale_x: size.scale_x,
+            scale_y: size.scale_y,
+            texture: format!("res://assets/{stem}.png"),
+        });
+    }
     let support = support_top(&player_body, &solids);
     let drop_px = support
         .map(|top| (top - (player_body.y + player_body.h)).max(0.0))
         .unwrap_or(0.0);
-    let motion = motion_for(view.character_physics);
     let mut images = BTreeMap::new();
     images.insert(
         format!("assets/{player_stem}.png"),
@@ -216,15 +319,15 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
     );
     let mut seen = BTreeSet::new();
     seen.insert(player.id.clone());
-    for solid in &solids {
-        if !seen.insert(solid.asset_id.clone()) {
+    for body in solids.iter().chain(enemies.iter()).chain(goals.iter()) {
+        if !seen.insert(body.asset_id.clone()) {
             continue;
         }
         let asset = view
             .assets
             .iter()
-            .find(|asset| asset.id == solid.asset_id)
-            .expect("solid asset was validated");
+            .find(|asset| asset.id == body.asset_id)
+            .expect("actor asset was validated");
         let (w, h, rgba) = decode_image(asset)?;
         let stem = stems
             .remove(&asset.id)
@@ -232,17 +335,19 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
         images.insert(format!("assets/{stem}.png"), encode_png(&rgba, w, h)?);
     }
     let level_file = LevelFile {
-        format: 1,
+        format: 2,
         cell_px: CELL_PX,
         player_source: PLAYER_SOURCE,
         preset: view.character_physics.label().to_string(),
-        move_speed: motion.move_speed,
-        jump_velocity: motion.jump_velocity,
-        gravity: motion.gravity,
         player: player_body,
         support_top: support,
         drop_px,
         solids,
+        enemies,
+        goals,
+        not_simulated: NOT_SIMULATED,
+        skipped_enemies: skipped_enemy_kinds(&world),
+        sim,
     };
     let scene = scene_text(&level_file);
     Ok(Plan {
@@ -259,6 +364,7 @@ fn write_plan(dest: &Path, plan: &Plan) -> Result<(), String> {
     write_inside(dest, "export_presets.cfg", EXPORT_PRESETS.as_bytes())?;
     write_inside(dest, "scripts/player.gd", PLAYER_SCRIPT.as_bytes())?;
     write_inside(dest, "scripts/proof_driver.gd", PROOF_SCRIPT.as_bytes())?;
+    write_inside(dest, "scripts/nesticles_sim.gd", SIM_SCRIPT.as_bytes())?;
     write_inside(dest, "scenes/proof.tscn", plan.scene.as_bytes())?;
     let json = serde_json::to_vec_pretty(&plan.level_file)
         .map_err(|err| format!("Could not encode the Godot level data: {err}"))?;
@@ -266,11 +372,11 @@ fn write_plan(dest: &Path, plan: &Plan) -> Result<(), String> {
     for (rel, bytes) in &plan.images {
         write_inside(dest, rel, bytes)?;
     }
-    write_inside(dest, ".nesticles-godot-out", b"phase6\n")?;
+    write_inside(dest, ".nesticles-godot-out", b"phase6.1\n")?;
     Ok(())
 }
 
-fn prepare_output(dest: &Path) -> Result<(), String> {
+pub(crate) fn prepare_output(dest: &Path) -> Result<(), String> {
     if !owned_output(dest) {
         if dest.exists() && !dest.is_dir() {
             return Err(format!("{} is not a directory.", dest.display()));
@@ -319,7 +425,7 @@ fn output_is_empty_or_marked(dest: &Path) -> Result<bool, String> {
     Ok(entries.next().is_none())
 }
 
-fn write_inside(dest: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_inside(dest: &Path, rel: &str, bytes: &[u8]) -> Result<(), String> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute()
         || rel_path
@@ -389,37 +495,39 @@ fn player_asset(project: &Project) -> Result<&Asset, String> {
         })
 }
 
-fn is_solid(project: &Project, cell: &crate::project::Cell) -> Result<bool, String> {
-    let Some(id) = cell.blueprint_id.as_deref() else {
-        return Ok(false);
-    };
-    let Some(blueprint) = project
-        .blueprints
-        .iter()
-        .find(|blueprint| blueprint.id == id)
-    else {
-        return Err(format!(
-            "Cell {},{} references missing blueprint {id}. No scene was created.",
-            cell.x, cell.y
-        ));
-    };
-    Ok(matches!(
-        blueprint.legacy_role,
-        LegacyRole::Fixture {
-            block: Some(LegacyBlock::Solid),
-            ..
-        }
-    ))
-}
-
-fn image_ids(project: &Project, level: &Level, player_id: &str) -> Vec<String> {
-    let mut ids = vec![player_id.to_string()];
+fn picture_for_cell<'a>(
+    project: &'a Project,
+    level: &Level,
+    cell_x: i32,
+    cell_y: i32,
+) -> Result<&'a Asset, String> {
+    let mut fallback = None;
     for cell in &level.cells {
-        if matches!(is_solid(project, cell), Ok(true)) {
-            ids.push(cell.asset_id.clone());
+        if cell.x != cell_x || cell.y != cell_y {
+            continue;
+        }
+        let Some(asset) = project
+            .assets
+            .iter()
+            .find(|asset| asset.id == cell.asset_id)
+        else {
+            continue;
+        };
+        if !has_image(asset) {
+            continue;
+        }
+        if asset.kind == AssetKind::Terrain || asset.solid {
+            return Ok(asset);
+        }
+        if fallback.is_none() {
+            fallback = Some(asset);
         }
     }
-    ids
+    fallback.ok_or_else(|| {
+        format!(
+            "Solid fixture at {cell_x},{cell_y} has no usable picture. The Godot scene was not created."
+        )
+    })
 }
 
 fn has_image(asset: &Asset) -> bool {
@@ -470,18 +578,17 @@ fn encode_png(_rgba: &[u8], _width: u32, _height: u32) -> Result<Vec<u8>, String
     )
 }
 
-fn fit(width: u32, height: u32) -> SpriteSize {
-    let longest = width.max(height).max(1);
-    let scale = f64::from(CELL_PX) / f64::from(longest);
+fn fit_box(width: u32, height: u32, box_w: f64, box_h: f64) -> SpriteSize {
     SpriteSize {
-        w: f64::from(width) * scale,
-        h: f64::from(height) * scale,
-        scale,
+        w: box_w,
+        h: box_h,
+        scale_x: box_w / f64::from(width.max(1)),
+        scale_y: box_h / f64::from(height.max(1)),
     }
 }
 
-fn world(cell: f64) -> f64 {
-    cell * f64::from(CELL_PX)
+fn screen_px(units: i32) -> f64 {
+    f64::from(units) / f64::from(FP)
 }
 
 fn support_top(player: &BodyFile, solids: &[BodyFile]) -> Option<f64> {
@@ -500,36 +607,6 @@ fn support_top(player: &BodyFile, solids: &[BodyFile]) -> Option<f64> {
         });
     }
     best
-}
-
-struct Motion {
-    move_speed: f64,
-    jump_velocity: f64,
-    gravity: f64,
-}
-
-/// Pixel rates for the Godot controller.
-///
-/// These are a small subset so the proof can move and jump. They are not the
-/// Rust SMB1 fixed-point speeds, and they are not a claim of SMB1 parity.
-fn motion_for(physics: CharacterPhysics) -> Motion {
-    match physics {
-        CharacterPhysics::Smb1Mario | CharacterPhysics::Smb1Toad => Motion {
-            move_speed: 96.0,
-            jump_velocity: -280.0,
-            gravity: 900.0,
-        },
-        CharacterPhysics::Smb1Luigi => Motion {
-            move_speed: 96.0,
-            jump_velocity: -340.0,
-            gravity: 820.0,
-        },
-        CharacterPhysics::Smb1Peach => Motion {
-            move_speed: 80.0,
-            jump_velocity: -260.0,
-            gravity: 900.0,
-        },
-    }
 }
 
 fn stem_map(ids: &[String]) -> BTreeMap<String, String> {
@@ -570,32 +647,34 @@ fn sanitize(id: &str) -> String {
     out
 }
 
-fn layer_rank(layer: Layer) -> u8 {
-    match layer {
-        Layer::Back => 0,
-        Layer::Main => 1,
-        Layer::Front => 2,
-    }
-}
-
 fn scene_text(level: &LevelFile) -> String {
     let mut textures = BTreeMap::new();
     textures.insert(
         level.player.texture.clone(),
         texture_id(&level.player.texture),
     );
-    for solid in &level.solids {
+    for actor in level
+        .solids
+        .iter()
+        .chain(level.enemies.iter())
+        .chain(level.goals.iter())
+    {
         textures
-            .entry(solid.texture.clone())
-            .or_insert_with(|| texture_id(&solid.texture));
+            .entry(actor.texture.clone())
+            .or_insert_with(|| texture_id(&actor.texture));
     }
     let mut shapes = BTreeMap::new();
     shapes.insert(
         shape_id(level.player.w, level.player.h),
         (level.player.w, level.player.h),
     );
-    for solid in &level.solids {
-        shapes.insert(shape_id(solid.w, solid.h), (solid.w, solid.h));
+    for actor in level
+        .solids
+        .iter()
+        .chain(level.enemies.iter())
+        .chain(level.goals.iter())
+    {
+        shapes.insert(shape_id(actor.w, actor.h), (actor.w, actor.h));
     }
     let load_steps = 2 + textures.len() + shapes.len() + 1;
     let mut scene = String::new();
@@ -621,7 +700,7 @@ fn scene_text(level: &LevelFile) -> String {
     }
     scene.push_str("[node name=\"Proof\" type=\"Node2D\"]\nscript = ExtResource(\"1_driver\")\n\n");
     scene.push_str(&format!(
-        "[node name=\"Player\" type=\"CharacterBody2D\" parent=\".\"]\nposition = Vector2({}, {})\nscript = ExtResource(\"2_player\")\n\n",
+        "[node name=\"Player\" type=\"Node2D\" parent=\".\"]\nz_index = 2\nposition = Vector2({}, {})\nscript = ExtResource(\"2_player\")\n\n",
         num(level.player.x),
         num(level.player.y)
     ));
@@ -629,7 +708,7 @@ fn scene_text(level: &LevelFile) -> String {
         "[node name=\"Sprite\" type=\"Sprite2D\" parent=\"Player\"]\ncentered = false\ntexture_filter = 1\ntexture = ExtResource(\"{}\")\n",
         textures[&level.player.texture]
     ));
-    push_scale(&mut scene, level.player.scale);
+    push_scale(&mut scene, level.player.scale_x, level.player.scale_y);
     scene.push('\n');
     scene.push_str(&format!(
         "[node name=\"Collision\" type=\"CollisionShape2D\" parent=\"Player\"]\nposition = Vector2({}, {})\nshape = SubResource(\"{}\")\n\n",
@@ -638,7 +717,7 @@ fn scene_text(level: &LevelFile) -> String {
         shape_id(level.player.w, level.player.h)
     ));
     scene.push_str(&format!(
-        "[node name=\"Camera\" type=\"Camera2D\" parent=\"Player\"]\nposition = Vector2({}, {})\nenabled = true\nzoom = Vector2(2, 2)\n\n",
+        "[node name=\"Camera\" type=\"Camera2D\" parent=\"Player\"]\nposition = Vector2({}, {})\nenabled = true\nzoom = Vector2(1, 1)\n\n",
         num(level.player.w / 2.0),
         num(level.player.h / 2.0)
     ));
@@ -652,7 +731,7 @@ fn scene_text(level: &LevelFile) -> String {
             "[node name=\"Sprite\" type=\"Sprite2D\" parent=\"Solid_{index}\"]\ncentered = false\ntexture_filter = 1\ntexture = ExtResource(\"{}\")\n",
             textures[&solid.texture]
         ));
-        push_scale(&mut scene, solid.scale);
+        push_scale(&mut scene, solid.scale_x, solid.scale_y);
         scene.push('\n');
         scene.push_str(&format!(
             "[node name=\"Collision\" type=\"CollisionShape2D\" parent=\"Solid_{index}\"]\nposition = Vector2({}, {})\nshape = SubResource(\"{}\")\n\n",
@@ -661,15 +740,48 @@ fn scene_text(level: &LevelFile) -> String {
             shape_id(solid.w, solid.h)
         ));
     }
+    for (index, enemy) in level.enemies.iter().enumerate() {
+        push_actor(&mut scene, &textures, "Enemy", index, enemy, 1);
+    }
+    for (index, goal) in level.goals.iter().enumerate() {
+        push_actor(&mut scene, &textures, "Goal", index, goal, 1);
+    }
     scene
 }
 
-fn push_scale(scene: &mut String, scale: f64) {
-    if (scale - 1.0).abs() > 0.001 {
+fn push_actor(
+    scene: &mut String,
+    textures: &BTreeMap<String, String>,
+    kind: &str,
+    index: usize,
+    actor: &BodyFile,
+    z_index: i32,
+) {
+    scene.push_str(&format!(
+        "[node name=\"{kind}_{index}\" type=\"Node2D\" parent=\".\"]\nz_index = {z_index}\nposition = Vector2({}, {})\n\n",
+        num(actor.x),
+        num(actor.y)
+    ));
+    scene.push_str(&format!(
+        "[node name=\"Sprite\" type=\"Sprite2D\" parent=\"{kind}_{index}\"]\ncentered = false\ntexture_filter = 1\ntexture = ExtResource(\"{}\")\n",
+        textures[&actor.texture]
+    ));
+    push_scale(scene, actor.scale_x, actor.scale_y);
+    scene.push('\n');
+    scene.push_str(&format!(
+        "[node name=\"Collision\" type=\"CollisionShape2D\" parent=\"{kind}_{index}\"]\nposition = Vector2({}, {})\nshape = SubResource(\"{}\")\n\n",
+        num(actor.w / 2.0),
+        num(actor.h / 2.0),
+        shape_id(actor.w, actor.h)
+    ));
+}
+
+fn push_scale(scene: &mut String, scale_x: f64, scale_y: f64) {
+    if (scale_x - 1.0).abs() > 0.001 || (scale_y - 1.0).abs() > 0.001 {
         scene.push_str(&format!(
             "scale = Vector2({}, {})\n",
-            num(scale),
-            num(scale)
+            num(scale_x),
+            num(scale_y)
         ));
     }
 }
@@ -726,7 +838,7 @@ fn visit_files(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blueprint::{assign_cell, compose_fixture};
+    use crate::blueprint::{assign_cell, compose_fixture, LegacyBlock};
     use crate::demo::demo_project;
     use crate::physics::CharacterPhysics;
     use crate::pngutil::png_to_rgba;
@@ -798,13 +910,18 @@ mod tests {
         assert_eq!(info.solid_count, 16);
         let level: serde_json::Value =
             serde_json::from_slice(&fs::read(dest.join("data/level.json")).unwrap()).unwrap();
-        assert_eq!(level["cell_px"], 16);
-        assert_eq!(level["player"]["x"], 32.0);
-        assert_eq!(level["player"]["y"], 96.0);
-        assert_eq!(level["support_top"], 192.0);
-        assert_eq!(level["drop_px"], 80.0);
+        assert_eq!(level["cell_px"], 72);
+        assert_eq!(level["player"]["x"], 153.0);
+        assert_eq!(level["player"]["y"], 432.0);
+        assert_eq!(level["player"]["w"], 54.0);
+        assert_eq!(level["player"]["h"], 72.0);
+        assert_eq!(level["support_top"], 864.0);
+        assert_eq!(level["drop_px"], 360.0);
         assert_eq!(level["solids"][0]["x"], 0.0);
-        assert_eq!(level["solids"][0]["y"], 192.0);
+        assert_eq!(level["solids"][0]["y"], 864.0);
+        assert_eq!(level["sim"]["motion"]["jump_slow"], -73728);
+        assert_eq!(level["sim"]["player"]["x"], 2 * 72 * 4096 + 9 * 4096);
+        assert!(level.get("move_speed").is_none());
         assert!(level["player_source"]
             .as_str()
             .unwrap()
@@ -835,7 +952,7 @@ mod tests {
         assert_eq!(info.player_asset_id, "pip");
         let scene = fs::read_to_string(dest.join("scenes/proof.tscn")).unwrap();
         assert!(scene.contains("res://assets/sod.png"));
-        assert!(scene.contains("position = Vector2(32, 176)"));
+        assert!(scene.contains("position = Vector2(153, 792)"));
         assert!(fs::read(dest.join("assets/sod.png"))
             .unwrap()
             .starts_with(b"\x89PNG"));
@@ -901,6 +1018,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dest.join("scripts/proof_driver.gd")).unwrap(),
             PROOF_SCRIPT
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("scripts/nesticles_sim.gd")).unwrap(),
+            SIM_SCRIPT
         );
         let scene = fs::read_to_string(dest.join("scenes/proof.tscn")).unwrap();
         let project_file = fs::read_to_string(dest.join("project.godot")).unwrap();
@@ -998,7 +1119,9 @@ mod tests {
         generate_proof(&project, "proof", &dest).unwrap();
         let level: serde_json::Value =
             serde_json::from_slice(&fs::read(dest.join("data/level.json")).unwrap()).unwrap();
-        assert_eq!(level["jump_velocity"], -340.0);
+        assert_eq!(level["sim"]["motion"]["jump_slow"], -81920);
+        assert_eq!(level["sim"]["motion"]["max_walk"], 27648);
+        assert!(level.get("jump_velocity").is_none());
         assert_eq!(
             fs::read_to_string(dest.join("scripts/player.gd")).unwrap(),
             PLAYER_SCRIPT

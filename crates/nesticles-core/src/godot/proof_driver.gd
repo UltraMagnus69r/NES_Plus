@@ -25,7 +25,7 @@ func _ready() -> void:
 		_fail("level data is not a dictionary")
 		return
 	_data = parsed
-	var player := get_node_or_null("Player") as CharacterBody2D
+	var player := get_node_or_null("Player") as Node2D
 	if player == null:
 		_fail("player is missing")
 		return
@@ -74,7 +74,7 @@ func _ready() -> void:
 func _physics_process(_delta: float) -> void:
 	if _failed or _phase == "idle":
 		return
-	var player := get_node("Player") as CharacterBody2D
+	var player := get_node("Player") as Node2D
 	_frames += 1
 	var support := float(_data["support_top"])
 	var height := float(_data["player"]["h"])
@@ -86,7 +86,7 @@ func _physics_process(_delta: float) -> void:
 	if _phase == "drop":
 		if player.position.y > _start.y + 1.0:
 			_saw_drop = true
-		var on_floor: bool = player.is_on_floor()
+		var on_floor: bool = bool(player.get("sim_on_floor"))
 		var close_to_floor: bool = absf(bottom - support) <= 4.0
 		var landed: bool = on_floor and close_to_floor
 		if landed and _frames > 2:
@@ -99,7 +99,7 @@ func _physics_process(_delta: float) -> void:
 			Input.action_press("move_right")
 			return
 		if _frames > 180:
-			_fail("player did not land on the floor (y %s, on_floor %s)" % [player.position.y, player.is_on_floor()])
+			_fail("player did not land on the floor (y %s, on_floor %s)" % [player.position.y, bool(player.get("sim_on_floor"))])
 			return
 	elif _phase == "move":
 		if _frames >= 30:
