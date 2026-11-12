@@ -1,8 +1,8 @@
 extends Node2D
 
 # Fixed Nesticles runtime template.
-# The step is nesticles_sim.gd. Speeds come from res://data/level.json.
-# This script does not read asset names, and it is not a Player Blueprint.
+# The step is nesticles_sim.gd. Speeds and the picture come from res://data/level.json.
+# A Player Blueprint on the course fills that file. This script does not read asset names.
 
 const SimScript := preload("res://scripts/nesticles_sim.gd")
 

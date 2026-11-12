@@ -345,11 +345,11 @@ impl Sim {
         }
         sim.smb1.sync_from_float(&sim.player);
         sim.update_view(256.0, 240.0);
-        sim.field = Some(PlayField::Res1080p(res_1080p::World::from_level(
-            project,
-            level,
-            map_character(project.character_physics),
-        )));
+        let resolved = crate::player::resolve_player(project, level);
+        let mut world =
+            res_1080p::World::from_level(project, level, map_character(resolved.physics));
+        crate::player::apply_resolved(&mut world, &resolved);
+        sim.field = Some(PlayField::Res1080p(world));
         sim
     }
 

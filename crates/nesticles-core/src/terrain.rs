@@ -1002,6 +1002,7 @@ mod tests {
             cells: Vec::new(),
             enemy_ai: EnemyAiStyle::Smb1Nes,
             entrances: Vec::new(),
+            player_blueprint_id: None,
         }
     }
 

@@ -5,10 +5,11 @@
 //! The generated game runs in Godot. The Rust course simulator is not attached
 //! and is not replaced.
 //!
-//! The player is a temporary adapter over the course spawn and the project
-//! character preset. It is not a Player Blueprint. Full player authoring
-//! remains a later requirement. The Godot step follows the 1080p SMB1-style
-//! rules for the supported subset. It is not a second set of speeds.
+//! The player picture and physics preset come from a Player Blueprint when the
+//! course has one. Otherwise the first character picture and the project preset
+//! are used. The Godot step follows the 1080p SMB1-style rules for the
+//! supported subset. It is not a second set of speeds, and it is not full
+//! Rust Play parity.
 
 mod generate;
 mod parity;

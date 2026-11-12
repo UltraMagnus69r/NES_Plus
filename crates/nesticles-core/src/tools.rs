@@ -70,6 +70,7 @@ fn create_course(project: &mut Project, args: &Value) -> Result<String, String> 
         cells: Vec::new(),
         enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
         entrances: Vec::new(),
+        player_blueprint_id: None,
     });
     Ok(format!("created course {id}"))
 }

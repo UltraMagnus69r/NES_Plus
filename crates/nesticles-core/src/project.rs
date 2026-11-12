@@ -3,6 +3,7 @@
 use crate::blueprint::Blueprint;
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::physics::CharacterPhysics;
+use crate::player::PlayerBlueprint;
 use crate::terrain::{TerrainBrush, TerrainCell};
 use serde::{Deserialize, Serialize};
 
@@ -396,6 +397,10 @@ pub struct Level {
     /// Named places the player can appear. The course start in `player` stays.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entrances: Vec<Entrance>,
+    /// Player Blueprint for this course. Absent on older courses, which keep
+    /// the first character picture and the project physics preset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_blueprint_id: Option<String>,
 }
 
 fn default_sky() -> String {
@@ -454,6 +459,9 @@ pub struct Project {
     /// Opening a project does not turn existing stamps into terrain.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub terrain_brushes: Vec<TerrainBrush>,
+    /// Authored players. Old projects omit this and do not gain one on open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub player_blueprints: Vec<PlayerBlueprint>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -481,6 +489,7 @@ impl Project {
             blueprint_cutover: false,
             transitions: Vec::new(),
             terrain_brushes: Vec::new(),
+            player_blueprints: Vec::new(),
         }
     }
 

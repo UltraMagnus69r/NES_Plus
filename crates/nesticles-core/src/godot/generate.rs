@@ -25,9 +25,6 @@ use super::parity::{sim_file_from_world, skipped_enemy_kinds, SimFile};
 /// The Godot step uses 4096 fixed-point units per one of these pixels.
 pub const CELL_PX: i32 = 72;
 
-const PLAYER_SOURCE: &str =
-    "Course spawn and character preset, stepped with the 1080p SMB1-style rules. Temporary adapter, not a Player Blueprint.";
-
 const NOT_SIMULATED: &[&str] = &[
     "pipes",
     "vines",
@@ -83,7 +80,7 @@ pub struct ProofInfo {
 struct LevelFile {
     format: u32,
     cell_px: i32,
-    player_source: &'static str,
+    player_source: String,
     preset: String,
     player: BodyFile,
     support_top: Option<f64>,
@@ -170,11 +167,13 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
         .find(|level| level.id == level_id)
         .ok_or_else(|| format!("No course with id {level_id}. The Godot scene was not created."))?;
     validate_references(&view, level)?;
-    let player = player_asset(&view)?;
+    let resolved = crate::player::resolve_player(&view, level);
+    let player = player_asset(&view, &resolved)?;
     let (player_px_w, player_px_h, player_rgba) = decode_image(player).map_err(|err| {
         format!("The player picture cannot be decoded ({err}). The Godot scene was not created.")
     })?;
-    let world = World::from_level(&view, level, map_character(view.character_physics));
+    let mut world = World::from_level(&view, level, map_character(resolved.physics));
+    crate::player::apply_resolved(&mut world, &resolved);
     let sim = sim_file_from_world(&world);
     if sim.solids.is_empty() {
         return Err(
@@ -427,8 +426,8 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
     let level_file = LevelFile {
         format: 2,
         cell_px: CELL_PX,
-        player_source: PLAYER_SOURCE,
-        preset: view.character_physics.label().to_string(),
+        player_source: crate::player::player_source_note(&resolved),
+        preset: resolved.physics.label().to_string(),
         player: player_body,
         support_top: support,
         drop_px,
@@ -577,13 +576,28 @@ fn validate_references(project: &Project, level: &Level) -> Result<(), String> {
     Ok(())
 }
 
-fn player_asset(project: &Project) -> Result<&Asset, String> {
+fn player_asset<'a>(
+    project: &'a Project,
+    resolved: &crate::player::ResolvedPlayer,
+) -> Result<&'a Asset, String> {
+    if resolved.missing_blueprint {
+        return Err(
+            "This course names a Player Blueprint that is not in the project. No other picture was substituted. The Godot scene was not created."
+                .into(),
+        );
+    }
+    if resolved.visual_id.is_empty() {
+        return Err(
+            "This course has no player picture. Create a Player Blueprint, or keep a character picture in the project. The Godot scene was not created."
+                .into(),
+        );
+    }
     project
         .assets
         .iter()
-        .find(|asset| asset.kind == AssetKind::Player && has_image(asset))
+        .find(|asset| asset.id == resolved.visual_id && has_image(asset))
         .ok_or_else(|| {
-            "This project has no player picture. Phase 6 uses the existing player artwork as a temporary stand-in and does not create a Player Blueprint. No scene was created.".into()
+            "The Player Blueprint's picture is missing. The Godot scene was not created.".into()
         })
 }
 
@@ -1005,6 +1019,7 @@ mod tests {
                 .collect(),
             enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
             entrances: Vec::new(),
+            player_blueprint_id: None,
         });
         let role = compose_fixture(Some(LegacyBlock::Solid), None, None).unwrap();
         for x in 0..16 {
@@ -1479,6 +1494,42 @@ mod tests {
         let _ = fs::remove_dir_all(&second);
     }
 
+    #[test]
+    fn a_player_blueprint_chooses_the_godot_picture_and_preset() {
+        let mut project = proof_fixture();
+        let mut dino = project
+            .assets
+            .iter()
+            .find(|asset| asset.id == "pip")
+            .unwrap()
+            .clone();
+        dino.id = "dino".into();
+        dino.name = "Dino".into();
+        dino.kind = crate::project::AssetKind::Enemy;
+        project.assets.push(dino);
+        let mut blueprint =
+            crate::player::new_player_blueprint("Dino", "dino", CharacterPhysics::Smb1Luigi);
+        blueprint.id = "player-dino".into();
+        project.player_blueprints.push(blueprint);
+        project.levels[0].player_blueprint_id = Some("player-dino".into());
+        let dest = std::env::temp_dir().join(format!("nesticles-player-bp-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dest);
+        generate_proof(&project, "proof", &dest).unwrap();
+        let level: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dest.join("data/level.json")).unwrap())
+                .unwrap();
+        let source = level["player_source"].as_str().unwrap();
+        assert!(source.contains("Player Blueprint player-dino"));
+        assert!(level["player"]["texture"]
+            .as_str()
+            .unwrap()
+            .contains("dino.png"));
+        assert_eq!(level["preset"], "SMB1 - Luigi");
+        assert!(level["sim"]["motion"]["jump_slow"].as_i64().unwrap() <= -81920);
+        assert!(fs::read(dest.join("assets/dino.png")).unwrap().len() > 8);
+        let _ = fs::remove_dir_all(&dest);
+    }
+
     fn terrain_course() -> Project {
         use crate::enemy_ai::EnemyAiStyle;
         use crate::project::{Asset, AssetKind, BlockTag, HazardTag, ItemTag};
@@ -1601,6 +1652,7 @@ mod tests {
             cells: Vec::new(),
             enemy_ai: EnemyAiStyle::Smb1Nes,
             entrances: Vec::new(),
+            player_blueprint_id: None,
         });
         let brushes = project.terrain_brushes.clone();
         let solid = compose_fixture(Some(LegacyBlock::Solid), None, None).unwrap();

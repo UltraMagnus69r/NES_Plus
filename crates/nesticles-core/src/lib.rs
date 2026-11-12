@@ -16,6 +16,7 @@ pub mod engine;
 pub mod godot;
 pub mod guard;
 pub mod physics;
+pub mod player;
 pub mod pngutil;
 pub mod project;
 pub mod terrain;
@@ -39,6 +40,10 @@ pub use enemy_ai::{archetype_label, override_label, EnemyAiStyle, EnemyArchetype
 pub use guard::image_prompt_blocked;
 pub use physics::{
     play_surface_scale, scale_virtual_px, Aabb, CharacterPhysics, Input, Sim, WarpArrival, TILE,
+};
+pub use player::{
+    apply_resolved, facing_label, new_player_blueprint, power_from_label, power_label,
+    resolve_player, PlayerBlueprint, ResolvedPlayer,
 };
 pub use project::PlacementWarp;
 pub use project::{

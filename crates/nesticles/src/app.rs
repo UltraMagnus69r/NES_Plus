@@ -29,8 +29,9 @@ use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
 use nesticles_core::{
     add_entrance, add_return, assign_cell, clear_exit, clear_named_exit, compose_fixture,
     demo_project, demo_rom, enemy_from_archetype, enemy_role, ensure_legacy_blueprints,
-    ensure_legacy_transitions, gameplay_options, load_project_json, placed_fixture,
-    placement_label, remove_entrance, remove_return, resolve_warp_arrival, set_exit,
+    ensure_legacy_transitions, facing_label, gameplay_options, load_project_json,
+    new_player_blueprint, placed_fixture, placement_label, power_from_label, power_label,
+    remove_entrance, remove_return, resolve_player, resolve_warp_arrival, set_exit,
     set_placement_warp, suggest_kind, update_entrance, LegacyBlock, LegacyHazard, LegacyItem,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -184,6 +185,11 @@ pub struct NestApp {
     terrain_undo: Vec<TerrainEdit>,
     terrain_redo: Vec<TerrainEdit>,
     terrain_stroke: Option<TerrainStroke>,
+    project_path: Option<std::path::PathBuf>,
+    saved_stamp: Option<u64>,
+    dirty: bool,
+    stamp_at: Instant,
+    import_kind: AssetKind,
 }
 
 #[derive(Clone)]
@@ -339,6 +345,11 @@ impl NestApp {
             terrain_undo: Vec::new(),
             terrain_redo: Vec::new(),
             terrain_stroke: None,
+            project_path: None,
+            saved_stamp: None,
+            dirty: true,
+            stamp_at: Instant::now(),
+            import_kind: AssetKind::Player,
         }
     }
 
@@ -464,7 +475,7 @@ impl NestApp {
             up: up || self.hold_up,
             down: down || self.hold_down,
         };
-        let preset = self.project.character_physics;
+        let preset = self.active_physics();
         let power = self.project.power_up_style;
         let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.05);
         let (jumped, stomped, hurt, goal, level_id, warp) = {
@@ -544,6 +555,8 @@ impl NestApp {
 impl eframe::App for NestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
+        self.take_drops(ctx);
+        self.refresh_dirty();
         if self.godot_busy {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -591,10 +604,23 @@ impl NestApp {
             );
             ui.label(RichText::new("Nesticles").font(serif(30.0)).color(ember()));
             ui.label(
-                RichText::new("local workshop")
-                    .font(serif(16.0))
-                    .color(paper()),
+                RichText::new(if self.dirty {
+                    "unsaved changes"
+                } else {
+                    "saved"
+                })
+                .font(serif(16.0))
+                .color(paper()),
             );
+            if ui.button("New").clicked() {
+                self.new_project();
+            }
+            if ui.button("Open…").clicked() {
+                self.open_project_dialog();
+            }
+            if ui.button("Save").clicked() {
+                self.save_project_quick();
+            }
             if ui.button("Demo cartridge").clicked() {
                 self.load_rom_bytes("seed-spirit.nes", demo_rom());
             }
@@ -637,7 +663,7 @@ impl NestApp {
 
     fn cartridge(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Cartridge").font(serif(26.0)));
-        ui.label("Open an NES, Game Boy, Game Boy Color, Super NES, or Game Boy Advance image you supply. Nesticles keeps tiles and sounds only, as parts you can drag into a course. Each file becomes its own style. A second game adds a style and does not replace the first. Files over 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted. Unknown files still open as a tile pager.");
+        ui.label("Open an NES, Game Boy, Game Boy Color, Super NES, or Game Boy Advance image you supply, or drop the file on this window. Nesticles keeps tiles and sounds only. It does not import the cartridge's gameplay. Each file becomes its own style. A second game adds a style and does not replace the first. Files over 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted. A file with no known header still opens as a tile pager, and the status line says so.");
         ui.horizontal(|ui| {
             if ui.button("Open file…").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
@@ -761,8 +787,17 @@ impl NestApp {
                 if let Some((w, h, rgba, png)) = self.grab_stamp(page_origin) {
                     let style = self.project.style_name(&self.active_style);
                     self.add_rgba_asset("Tile", self.tag, w, h, rgba, png);
-                    self.status =
-                        format!("Added a part to style {style}. Drag it from the course tray.");
+                    self.status = format!(
+                        "Added a part to style {style}. Use in Maker Engine to paint or assign it."
+                    );
+                }
+            }
+            if ui.button("Use in Maker Engine").clicked() {
+                if self.paint_asset.is_some() {
+                    self.tab = Tab::Courses;
+                    self.status = "The part is selected in Courses. Paint with it, or create a Player Blueprint.".into();
+                } else {
+                    self.status = "Add the stamp as a part first.".into();
                 }
             }
             if ui.button("Export PNG").clicked() {
@@ -972,7 +1007,29 @@ impl NestApp {
 
     fn library(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Library").font(serif(26.0)));
-        ui.label("Parts are grouped by style. A style is one cartridge, or the original Seed Spirit set. Importing another game adds a style.");
+        ui.label("Parts are grouped by style. A style is one cartridge, or original art. Import a PNG, or keep a stamp from a cartridge. The original file is not required after the picture is in the project.");
+        ui.horizontal_wrapped(|ui| {
+            ui.label("New picture");
+            egui::ComboBox::from_id_salt("import-kind")
+                .selected_text(self.import_kind.label())
+                .show_ui(ui, |ui| {
+                    for kind in visual_kinds() {
+                        ui.selectable_value(&mut self.import_kind, kind, kind.label());
+                    }
+                });
+            if ui.button("Import PNG…").clicked() {
+                self.import_png_dialog();
+            }
+            if ui.button("Use in Maker Engine").clicked() {
+                if let Some(id) = self.lib_sel.clone() {
+                    self.paint_asset = Some(id);
+                    self.tab = Tab::Courses;
+                    self.status = "That picture is selected in Courses.".into();
+                } else {
+                    self.status = "Select a picture first.".into();
+                }
+            }
+        });
         let mut remove = None;
         let ids: Vec<String> = self.project.assets.iter().map(|a| a.id.clone()).collect();
         for id in ids {
@@ -1091,6 +1148,7 @@ impl NestApp {
                     cells: Vec::new(),
                     enemy_ai: EnemyAiStyle::Smb1Nes,
                     entrances: Vec::new(),
+                    player_blueprint_id: None,
                 });
                 self.level_sel = self.project.levels.len() - 1;
             }
@@ -1123,6 +1181,7 @@ impl NestApp {
             self.project.levels[self.level_sel].style_id = style_id;
         }
         self.physics_dropdown(ui);
+        self.player_panel(ui);
         self.powerup_dropdown(ui);
         self.enemy_ai_dropdown(ui, self.level_sel, true);
         self.gameplay_controls(ui);
@@ -1509,6 +1568,7 @@ impl NestApp {
                 after: level.cells.clone(),
             },
         );
+        self.dirty = true;
         if missing > 0 {
             self.status = format!(
                 "Terrain updated. {missing} cells have no exact graphic, so the fallback tile is showing."
@@ -1614,6 +1674,7 @@ impl NestApp {
                     &mut self.terrain_redo,
                     &mut self.project.levels,
                 ) {
+                    self.dirty = true;
                     self.status = "Undid the terrain stroke.".into();
                 }
             }
@@ -1624,6 +1685,7 @@ impl NestApp {
                     &mut self.terrain_redo,
                     &mut self.project.levels,
                 ) {
+                    self.dirty = true;
                     self.status = "Redid the terrain stroke.".into();
                 }
             }
@@ -1922,6 +1984,7 @@ impl NestApp {
         if x < 0 || y < 0 || x >= w || y >= h {
             return;
         }
+        self.dirty = true;
         if erase {
             self.project.levels[self.level_sel]
                 .cells
@@ -2828,26 +2891,251 @@ impl NestApp {
     }
 
     fn physics_dropdown(&mut self, ui: &mut egui::Ui) {
-        let before = self.project.character_physics;
+        let bound = self.course_blueprint_index();
+        let before = self.active_physics();
+        let label = if bound.is_some() {
+            "Player physics"
+        } else {
+            "Player physics (project default)"
+        };
         ui.horizontal(|ui| {
-            ui.label("Character Game Style Physics");
+            ui.label(label);
             egui::ComboBox::from_id_salt("character-game-style-physics")
-                .selected_text(self.project.character_physics.label())
+                .selected_text(before.label())
                 .show_ui(ui, |ui| {
                     for preset in CharacterPhysics::ALL {
-                        ui.selectable_value(
-                            &mut self.project.character_physics,
-                            preset,
-                            preset.label(),
-                        );
+                        let picked = ui
+                            .selectable_label(before == preset, preset.label())
+                            .clicked();
+                        if picked {
+                            self.set_active_physics(preset);
+                        }
                     }
                 });
         });
-        if self.project.character_physics != before {
+        let after = self.active_physics();
+        if after != before {
             if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
-                sim.bind_character_physics(self.project.character_physics);
+                sim.bind_character_physics(after);
             }
         }
+    }
+
+    fn course_blueprint_index(&self) -> Option<usize> {
+        let id = self
+            .project
+            .levels
+            .get(self.level_sel)
+            .and_then(|level| level.player_blueprint_id.clone())?;
+        self.project
+            .player_blueprints
+            .iter()
+            .position(|blueprint| blueprint.id == id)
+    }
+
+    fn active_physics(&self) -> CharacterPhysics {
+        match self.playing_level() {
+            Some(level) => resolve_player(&self.project, level).physics,
+            None => self.project.character_physics,
+        }
+    }
+
+    fn playing_level(&self) -> Option<&nesticles_core::Level> {
+        if let Some(id) = self.play.as_ref().map(|play| play.level_id.as_str()) {
+            if let Some(level) = self.project.levels.iter().find(|level| level.id == id) {
+                return Some(level);
+            }
+        }
+        self.project
+            .levels
+            .get(self.level_sel)
+            .or_else(|| self.project.levels.first())
+    }
+
+    fn set_active_physics(&mut self, preset: CharacterPhysics) {
+        if let Some(index) = self.course_blueprint_index() {
+            self.project.player_blueprints[index].physics = preset;
+        } else {
+            self.project.character_physics = preset;
+        }
+        self.dirty = true;
+    }
+
+    fn player_panel(&mut self, ui: &mut egui::Ui) {
+        if self.level_sel >= self.project.levels.len() {
+            return;
+        }
+        ui.label(RichText::new("Player").font(serif(18.0)));
+        let assigned = self.project.levels[self.level_sel]
+            .player_blueprint_id
+            .clone();
+        if let Some(id) = &assigned {
+            if let Some(blueprint) = self
+                .project
+                .player_blueprints
+                .iter()
+                .find(|blueprint| &blueprint.id == id)
+            {
+                let picture = self
+                    .project
+                    .asset(&blueprint.visual_id)
+                    .map(|asset| asset.name.clone())
+                    .unwrap_or_else(|| "missing picture".into());
+                ui.label(format!(
+                    "{} plays as {picture}. Physics is {}. Facing {}. Starts {}.",
+                    blueprint.name,
+                    blueprint.physics.label(),
+                    facing_label(blueprint.facing),
+                    power_label(power_from_label(&blueprint.power))
+                ));
+            } else {
+                ui.label("This course names a Player Blueprint that is missing. No other picture was substituted.");
+            }
+        } else {
+            ui.label("No Player Blueprint on this course. Play uses the first character picture and the project physics.");
+        }
+        if let Some(index) = self.course_blueprint_index() {
+            ui.horizontal(|ui| {
+                ui.label("Blueprint name");
+                ui.text_edit_singleline(&mut self.project.player_blueprints[index].name);
+            });
+            let pictures: Vec<(String, String)> = self
+                .project
+                .assets
+                .iter()
+                .filter(|asset| {
+                    !asset.kind.is_audio()
+                        && (!asset.rgba_base64.is_empty() || !asset.png_base64.is_empty())
+                })
+                .map(|asset| {
+                    (
+                        asset.id.clone(),
+                        format!("{} ({})", asset.name, asset.kind.label()),
+                    )
+                })
+                .collect();
+            let mut visual = self.project.player_blueprints[index].visual_id.clone();
+            let shown = pictures
+                .iter()
+                .find(|(id, _)| id == &visual)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| "Choose a picture".into());
+            egui::ComboBox::from_id_salt("player-picture")
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    for (id, name) in &pictures {
+                        ui.selectable_value(&mut visual, id.clone(), name);
+                    }
+                });
+            if visual != self.project.player_blueprints[index].visual_id {
+                self.project.player_blueprints[index].visual_id = visual;
+                self.dirty = true;
+                self.status = "The player picture changed. The physics preset stayed.".into();
+            }
+            let mut facing = self.project.player_blueprints[index].facing;
+            let mut power = self.project.player_blueprints[index].power.clone();
+            ui.horizontal(|ui| {
+                ui.label("Facing");
+                if ui.selectable_label(facing >= 0, "Right").clicked() {
+                    facing = 1;
+                }
+                if ui.selectable_label(facing < 0, "Left").clicked() {
+                    facing = -1;
+                }
+                ui.label("Starts as");
+                for (key, label) in [("small", "Small"), ("super", "Super"), ("fire", "Fire")] {
+                    if ui.selectable_label(power == key, label).clicked() {
+                        power = key.into();
+                    }
+                }
+            });
+            if facing != self.project.player_blueprints[index].facing
+                || power != self.project.player_blueprints[index].power
+            {
+                self.project.player_blueprints[index].facing = facing;
+                self.project.player_blueprints[index].power = power;
+                self.dirty = true;
+            }
+            ui.label("The picture does not choose the physics. Collision uses the play hitbox. Super and Fire grow on the first play tick.");
+        }
+        let choices: Vec<(String, String)> = self
+            .project
+            .player_blueprints
+            .iter()
+            .map(|blueprint| (blueprint.id.clone(), blueprint.name.clone()))
+            .collect();
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Create Player Blueprint").clicked() {
+                self.create_player_blueprint();
+            }
+            if !choices.is_empty() {
+                let mut current = assigned.clone().unwrap_or_default();
+                let shown = choices
+                    .iter()
+                    .find(|(id, _)| id == &current)
+                    .map(|(_, name)| name.clone())
+                    .unwrap_or_else(|| "Choose a blueprint".into());
+                egui::ComboBox::from_id_salt("assign-player")
+                    .selected_text(shown)
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &choices {
+                            ui.selectable_value(&mut current, id.clone(), name);
+                        }
+                    });
+                if Some(current.clone()) != assigned && choices.iter().any(|(id, _)| id == &current)
+                {
+                    self.project.levels[self.level_sel].player_blueprint_id = Some(current);
+                    self.dirty = true;
+                    self.status = "This course uses that Player Blueprint.".into();
+                }
+            }
+            if assigned.is_some() && ui.button("Clear course assignment").clicked() {
+                self.project.levels[self.level_sel].player_blueprint_id = None;
+                self.dirty = true;
+                self.status =
+                    "This course is back to the project default. The Player Blueprint was kept."
+                        .into();
+            }
+        });
+    }
+
+    fn create_player_blueprint(&mut self) {
+        if self.level_sel >= self.project.levels.len() {
+            self.status = "Make a course before creating a player.".into();
+            return;
+        }
+        let visual = self
+            .paint_asset
+            .clone()
+            .or_else(|| self.lib_sel.clone())
+            .filter(|id| {
+                self.project.asset(id).is_some_and(|asset| {
+                    !asset.kind.is_audio()
+                        && (!asset.rgba_base64.is_empty() || !asset.png_base64.is_empty())
+                })
+            });
+        let Some(visual) = visual else {
+            self.status =
+                "Select a picture in the library or the tray, then create the Player Blueprint."
+                    .into();
+            return;
+        };
+        let asset_name = self
+            .project
+            .asset(&visual)
+            .map(|asset| asset.name.clone())
+            .unwrap_or_else(|| "Player".into());
+        let blueprint = new_player_blueprint(
+            &format!("{asset_name} player"),
+            &visual,
+            self.project.character_physics,
+        );
+        let id = blueprint.id.clone();
+        let name = blueprint.name.clone();
+        self.project.player_blueprints.push(blueprint);
+        self.project.levels[self.level_sel].player_blueprint_id = Some(id);
+        self.dirty = true;
+        self.status = format!("{name} is the player on this course. Choose the physics preset above. The picture did not choose it.");
     }
 
     fn powerup_dropdown(&mut self, ui: &mut egui::Ui) {
@@ -3217,6 +3505,7 @@ impl NestApp {
         let Some(level) = self.project.level(&level_id) else {
             return;
         };
+        let player_visual = resolve_player(&self.project, level).visual_id;
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, parse_hex_color(&sky));
         let cam_x = sim.view.x;
@@ -3286,25 +3575,18 @@ impl NestApp {
                 Color32::from_rgb(marker.rgb[0], marker.rgb[1], marker.rgb[2]),
             );
         }
-        if !sim.hide_player {
-            if let Some(player) = self
-                .project
-                .assets
-                .iter()
-                .find(|a| a.kind == AssetKind::Player)
-            {
-                self.blit(
-                    &painter,
-                    rect.min,
-                    cam_x,
-                    cam_y,
-                    scale,
-                    &player.id,
-                    sim.player.x - 2.0,
-                    sim.player.y - 2.0,
-                    sim.player.facing < 0,
-                );
-            }
+        if !sim.hide_player && !player_visual.is_empty() {
+            self.blit(
+                &painter,
+                rect.min,
+                cam_x,
+                cam_y,
+                scale,
+                &player_visual,
+                sim.player.x - 2.0,
+                sim.player.y - 2.0,
+                sim.player.facing < 0,
+            );
         }
         painter.text(
             rect.min + Vec2::new(8.0, 6.0),
@@ -3382,7 +3664,9 @@ impl NestApp {
                     match serde_json::to_string_pretty(&self.project) {
                         Ok(text) => match std::fs::write(&path, text) {
                             Ok(()) => self.status = format!("Saved {}", path.display()),
-                            Err(err) => self.status = err.to_string(),
+                            Err(err) => {
+                                self.status = format!("Could not save the project: {err}");
+                            }
                         },
                         Err(err) => self.status = err.to_string(),
                     }
@@ -3608,6 +3892,241 @@ impl NestApp {
 }
 
 impl NestApp {
+    fn refresh_dirty(&mut self) {
+        if self.stamp_at.elapsed() < std::time::Duration::from_millis(400) {
+            return;
+        }
+        self.stamp_at = Instant::now();
+        let Some(saved) = self.saved_stamp else {
+            return;
+        };
+        self.dirty = self.project_stamp() != saved;
+    }
+
+    fn project_stamp(&self) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        let Ok(bytes) = serde_json::to_vec(&self.project) else {
+            return 0;
+        };
+        for byte in bytes {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    fn new_project(&mut self) {
+        let mut project = Project::blank("Untitled");
+        let style = project.adopt_style("Original drawings", "original");
+        project.levels.push(nesticles_core::Level {
+            id: nid("course-"),
+            name: "First course".into(),
+            style_id: style.clone(),
+            w: 32,
+            h: 15,
+            sky: "#24343c".into(),
+            music_id: None,
+            player: nesticles_core::project::Spawn { x: 2.0, y: 11.0 },
+            cells: Vec::new(),
+            enemy_ai: EnemyAiStyle::Smb1Nes,
+            entrances: Vec::new(),
+            player_blueprint_id: None,
+        });
+        self.project = project;
+        self.active_style = style;
+        self.level_sel = 0;
+        self.paint_asset = None;
+        self.lib_sel = None;
+        self.textures.clear();
+        self.tex_epoch = self.tex_epoch.wrapping_add(1);
+        self.terrain_undo.clear();
+        self.terrain_redo.clear();
+        self.terrain_stroke = None;
+        self.terrain_brush = None;
+        self.play = None;
+        self.project_path = None;
+        self.saved_stamp = None;
+        self.dirty = true;
+        self.tab = Tab::Library;
+        self.status = "New project. Import a PNG or open a cartridge, then save.".into();
+    }
+
+    fn save_project_quick(&mut self) {
+        if let Some(path) = self.project_path.clone() {
+            self.write_project(&path);
+        } else {
+            self.save_project_as();
+        }
+    }
+
+    fn save_project_as(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Project", &["json"])
+            .save_file()
+        else {
+            return;
+        };
+        self.write_project(&path);
+    }
+
+    fn write_project(&mut self, path: &std::path::Path) {
+        match serde_json::to_string_pretty(&self.project) {
+            Ok(text) => match std::fs::write(path, &text) {
+                Ok(()) => {
+                    self.project_path = Some(path.to_path_buf());
+                    self.saved_stamp = Some(self.project_stamp());
+                    self.dirty = false;
+                    self.status = format!("Saved {}", path.display());
+                }
+                Err(err) => {
+                    self.status = format!("Could not save the project: {err}");
+                }
+            },
+            Err(err) => self.status = format!("Could not prepare the project file: {err}"),
+        }
+    }
+
+    fn open_project_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Project", &["json"])
+            .pick_file()
+        else {
+            return;
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                let label = path.display().to_string();
+                self.open_project_text(&label, &text, Some(path));
+            }
+            Err(err) => {
+                self.status = format!("Could not open that project: {err}");
+            }
+        }
+    }
+
+    fn open_project_text(&mut self, label: &str, text: &str, path: Option<std::path::PathBuf>) {
+        match load_project_json(text) {
+            Ok(project) => {
+                self.project = project;
+                self.textures.clear();
+                self.tex_epoch = self.tex_epoch.wrapping_add(1);
+                self.level_sel = 0;
+                self.terrain_undo.clear();
+                self.terrain_redo.clear();
+                self.terrain_stroke = None;
+                self.terrain_brush = None;
+                self.play = None;
+                self.project_path = path;
+                self.saved_stamp = Some(self.project_stamp());
+                self.dirty = false;
+                self.active_style = self
+                    .project
+                    .styles
+                    .first()
+                    .map(|style| style.id.clone())
+                    .unwrap_or_default();
+                self.tab = Tab::Courses;
+                self.status = format!("Opened {label}");
+            }
+            Err(err) => {
+                self.status = format!(
+                    "That file is not a Nesticles project ({err}). The open project was kept."
+                );
+            }
+        }
+    }
+
+    fn import_png_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("PNG", &["png"])
+            .pick_file()
+        else {
+            return;
+        };
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                self.status = format!("Could not read the picture: {err}");
+                return;
+            }
+        };
+        let name = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Picture");
+        self.import_png_bytes(name, &bytes);
+    }
+
+    fn import_png_bytes(&mut self, name: &str, bytes: &[u8]) {
+        if bytes.len() > 8 * 1024 * 1024 {
+            self.status = "That picture is over 8 MB. The project was not changed.".into();
+            return;
+        }
+        match nesticles_core::pngutil::png_to_rgba(bytes) {
+            Ok((w, h, rgba)) => {
+                if w == 0 || h == 0 || w > 1024 || h > 1024 {
+                    self.status = "Pictures must be between 1 and 1024 pixels on each side. The project was not changed.".into();
+                    return;
+                }
+                self.add_rgba_asset(name, self.import_kind, w, h, rgba, bytes.to_vec());
+                self.status = format!(
+                    "Imported {name} as {}. It is selected for Maker Engine.",
+                    self.import_kind.label()
+                );
+            }
+            Err(err) => {
+                self.status =
+                    format!("That file is not a usable PNG ({err}). The project was not changed.");
+            }
+        }
+    }
+
+    fn take_drops(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|input| input.raw.dropped_files.clone());
+        for file in dropped {
+            let name = if file.name.is_empty() {
+                file.path
+                    .as_ref()
+                    .and_then(|path| path.file_name())
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("dropped-file")
+                    .to_string()
+            } else {
+                file.name.clone()
+            };
+            let bytes = if let Some(bytes) = file.bytes {
+                bytes.to_vec()
+            } else if let Some(path) = &file.path {
+                match std::fs::read(path) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        self.status = format!("Could not read {name}: {err}");
+                        continue;
+                    }
+                }
+            } else {
+                self.status = format!("{name} had no readable bytes. The project was not changed.");
+                continue;
+            };
+            let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+            match ext.as_str() {
+                "png" => self.import_png_bytes(&name, &bytes),
+                "json" => {
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    self.open_project_text(&name, &text, file.path.clone());
+                }
+                "nes" | "gb" | "gbc" | "gba" | "sfc" | "smc" | "bin" | "rom" => {
+                    self.load_rom_bytes(name, bytes);
+                }
+                _ => {
+                    self.status = format!(
+                        "{name} is not a cartridge image, a PNG, or a Nesticles project. The project was not changed."
+                    );
+                }
+            }
+        }
+    }
+
     fn load_rom_path(&mut self) {
         let path = self.rom_path.clone();
         match std::fs::read(&path) {
@@ -3619,21 +4138,36 @@ impl NestApp {
                     .to_string();
                 self.load_rom_bytes(name, bytes);
             }
-            Err(err) => self.status = err.to_string(),
+            Err(err) => {
+                self.status =
+                    format!("Could not read that cartridge ({err}). The project was not changed.");
+            }
         }
     }
 
     fn load_rom_bytes(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
         let name = name.into();
+        if bytes.is_empty() {
+            self.status = format!("{name} is empty. The project was not changed.");
+            return;
+        }
         if bytes.len() > MAX_ROM_BYTES {
             self.status = format!(
-                "{} is {} bytes. Nesticles stops at 64 MB.",
-                name,
+                "{name} is {} bytes. Nesticles stops at 64 MB. The project was not changed.",
                 bytes.len()
             );
             return;
         }
         let info = detect_rom(&bytes, &name);
+        if info.format == RomFormat::Nes && info.chr_len > 0 {
+            let need = info.chr_start.saturating_add(info.chr_len.min(16));
+            if bytes.len() < need {
+                self.status = format!(
+                    "{name} looks truncated. The NES header asks for graphics that are not in the file. The project was not changed."
+                );
+                return;
+            }
+        }
         self.codec = info.codec;
         self.palette = default_palette(info.codec);
         self.tile_offset_text = format!("{:X}", info.tile_offset);
@@ -3652,6 +4186,7 @@ impl NestApp {
         } else {
             info.title.clone()
         };
+        let unknown = info.format == RomFormat::Unknown;
         self.rom = Some(RomSession {
             name: name.clone(),
             bytes,
@@ -3661,8 +4196,13 @@ impl NestApp {
         self.active_style = style_id;
         self.tray_filter.clear();
         self.refresh_disasm();
-        self.tab = Tab::Cartridge;
-        self.status = format!("Style \"{style_name}\" is ready. Parts you keep join it. Styles already in the project stay.");
+        self.tab = Tab::Tiles;
+        self.dirty = true;
+        self.status = if unknown {
+            format!("{name} has no NES, Game Boy, Super NES, or Game Boy Advance header. It is open as a tile pager. Nothing was inferred as gameplay.")
+        } else {
+            format!("Style \"{style_name}\" is ready. Page the tiles, add a part, then use it in Maker Engine. Gameplay stays yours.")
+        };
     }
 
     fn refresh_disasm(&mut self) {
@@ -3815,7 +4355,7 @@ impl NestApp {
         let style_id = self.part_style();
         self.project.assets.push(Asset {
             id: id.clone(),
-            name: format!("{name} {}", kind.label()),
+            name: name.to_string(),
             kind,
             style_id,
             w,
@@ -3830,9 +4370,11 @@ impl NestApp {
             hazard_tag: nesticles_core::HazardTag::Auto,
             warp: None,
         });
-        self.lib_sel = Some(id);
+        self.lib_sel = Some(id.clone());
+        self.paint_asset = Some(id);
         self.textures.clear();
         self.tex_epoch = self.tex_epoch.wrapping_add(1);
+        self.dirty = true;
     }
 
     fn ensure_textures(&mut self, ctx: &egui::Context) {
@@ -4241,6 +4783,8 @@ fn provider_label(provider: &str) -> &'static str {
 }
 
 const GUIDE: &str = "\
+Nesticles Alpha 1. Launch the app, then use New, Open, and Save on the top bar. Import a PNG from Library, or open a cartridge and choose Add as part, then Use in Maker Engine. In Courses, create a Player Blueprint, pick Mario, Luigi, Toad, or Peach physics, paint terrain, place an enemy, and press Play. Save writes a project file. The cartridge is not needed again. Experimental Godot preview runs the supported subset only: walk, run, jump, solids, goombas, and goals. Pipes, items, hazards, power-ups, and other enemies stay in the Rust Play tab. A full Quick Start is shipped beside the Linux package.
+
 Nesticles is a local workshop. You bring a cartridge image, page it as tiles, keep the pieces you tag, and build an original game around them. The desktop window is the editor and the player on Linux and Windows. The export folder is a browser player, so the same game opens in Chrome, Firefox, and Edge on Linux, Windows, and Android.
 
 Open a file from Cartridge, or load the bundled demo image. Nesticles reads NES / iNES / NES 2.0 (including the trainer bit), Game Boy, Game Boy Color, Super NES LoROM and HiROM (including a 512-byte copier header), and Game Boy Advance. Anything it does not recognize still pages as tiles. Files are capped around 64 MB. Encrypted Switch, 3DS, and Wii U images are not decrypted.
