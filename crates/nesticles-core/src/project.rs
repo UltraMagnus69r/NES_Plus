@@ -1,0 +1,297 @@
+//! Workshop project. Serialized as JSON. API keys never live in this struct.
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetKind {
+    Player,
+    Enemy,
+    Terrain,
+    Background,
+    Foreground,
+    Item,
+    Hazard,
+    Goal,
+    Sfx,
+    Music,
+}
+
+impl AssetKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            AssetKind::Player => "player",
+            AssetKind::Enemy => "enemy",
+            AssetKind::Terrain => "terrain",
+            AssetKind::Background => "background",
+            AssetKind::Foreground => "foreground",
+            AssetKind::Item => "item",
+            AssetKind::Hazard => "hazard",
+            AssetKind::Goal => "goal",
+            AssetKind::Sfx => "sfx",
+            AssetKind::Music => "music",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text.trim().to_ascii_lowercase().as_str() {
+            "player" => AssetKind::Player,
+            "enemy" => AssetKind::Enemy,
+            "terrain" | "ground" => AssetKind::Terrain,
+            "background" | "back" => AssetKind::Background,
+            "foreground" | "front" => AssetKind::Foreground,
+            "item" => AssetKind::Item,
+            "hazard" => AssetKind::Hazard,
+            "goal" => AssetKind::Goal,
+            "sfx" | "sound" => AssetKind::Sfx,
+            "music" => AssetKind::Music,
+            _ => return None,
+        })
+    }
+
+    pub fn default_layer(self) -> Layer {
+        match self {
+            AssetKind::Background => Layer::Back,
+            AssetKind::Foreground => Layer::Front,
+            _ => Layer::Main,
+        }
+    }
+
+    pub fn default_solid(self) -> bool {
+        matches!(self, AssetKind::Terrain)
+    }
+
+    pub fn is_audio(self) -> bool {
+        matches!(self, AssetKind::Sfx | AssetKind::Music)
+    }
+
+    pub const ALL: [AssetKind; 10] = [
+        AssetKind::Player,
+        AssetKind::Enemy,
+        AssetKind::Terrain,
+        AssetKind::Background,
+        AssetKind::Foreground,
+        AssetKind::Item,
+        AssetKind::Hazard,
+        AssetKind::Goal,
+        AssetKind::Sfx,
+        AssetKind::Music,
+    ];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Layer {
+    Back,
+    Main,
+    Front,
+}
+
+impl Layer {
+    pub fn parse(text: &str) -> Self {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "back" | "background" => Layer::Back,
+            "front" | "foreground" => Layer::Front,
+            _ => Layer::Main,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Layer::Back => "back",
+            Layer::Main => "main",
+            Layer::Front => "front",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Asset {
+    pub id: String,
+    pub name: String,
+    pub kind: AssetKind,
+    pub w: u32,
+    pub h: u32,
+    #[serde(default)]
+    pub rgba_base64: String,
+    #[serde(default)]
+    pub png_base64: String,
+    #[serde(default)]
+    pub wav_base64: String,
+    #[serde(default)]
+    pub solid: bool,
+    /// Playback cue: jump, stomp, hurt, goal, music, or empty.
+    #[serde(default)]
+    pub cue: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Cell {
+    pub x: i32,
+    pub y: i32,
+    pub asset_id: String,
+    #[serde(default = "default_layer")]
+    pub layer: Layer,
+}
+
+fn default_layer() -> Layer {
+    Layer::Main
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct Spawn {
+    pub x: f32,
+    pub y: f32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Level {
+    pub id: String,
+    pub name: String,
+    pub w: u32,
+    pub h: u32,
+    #[serde(default = "default_sky")]
+    pub sky: String,
+    #[serde(default)]
+    pub music_id: Option<String>,
+    pub player: Spawn,
+    #[serde(default)]
+    pub cells: Vec<Cell>,
+}
+
+fn default_sky() -> String {
+    "#24343c".into()
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OverNode {
+    pub id: String,
+    pub name: String,
+    pub level_id: String,
+    pub x: f32,
+    pub y: f32,
+    #[serde(default)]
+    pub links: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Project {
+    pub name: String,
+    #[serde(default)]
+    pub assets: Vec<Asset>,
+    #[serde(default)]
+    pub levels: Vec<Level>,
+    #[serde(default)]
+    pub nodes: Vec<OverNode>,
+    #[serde(default)]
+    pub start_node_id: String,
+}
+
+impl Project {
+    pub fn blank(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            assets: Vec::new(),
+            levels: Vec::new(),
+            nodes: Vec::new(),
+            start_node_id: String::new(),
+        }
+    }
+
+    pub fn asset(&self, id: &str) -> Option<&Asset> {
+        self.assets.iter().find(|a| a.id == id)
+    }
+
+    pub fn asset_mut(&mut self, id: &str) -> Option<&mut Asset> {
+        self.assets.iter_mut().find(|a| a.id == id)
+    }
+
+    pub fn level(&self, id: &str) -> Option<&Level> {
+        self.levels.iter().find(|l| l.id == id)
+    }
+
+    pub fn level_mut(&mut self, id: &str) -> Option<&mut Level> {
+        self.levels.iter_mut().find(|l| l.id == id)
+    }
+
+    pub fn summary(&self) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!("Project \"{}\"", self.name));
+        lines.push("Assets:".into());
+        for asset in &self.assets {
+            if asset.kind.is_audio() {
+                lines.push(format!("  {} [{}] cue={}", asset.id, asset.kind.label(), asset.cue));
+            } else {
+                lines.push(format!(
+                    "  {} \"{}\" [{}] {}x{}",
+                    asset.id,
+                    asset.name,
+                    asset.kind.label(),
+                    asset.w,
+                    asset.h
+                ));
+            }
+        }
+        for level in &self.levels {
+            lines.push(format!(
+                "Course {} \"{}\" {}x{} start=({}, {}) cells={} {}",
+                level.id,
+                level.name,
+                level.w,
+                level.h,
+                level.player.x,
+                level.player.y,
+                level.cells.len(),
+                audit_course(self, &level.id).unwrap_or_default()
+            ));
+        }
+        lines.push(format!("Overworld start node: {}", self.start_node_id));
+        for node in &self.nodes {
+            lines.push(format!(
+                "  node {} \"{}\" level={} at ({:.0},{:.0}) links={:?}",
+                node.id, node.name, node.level_id, node.x, node.y, node.links
+            ));
+        }
+        lines.join("\n")
+    }
+}
+
+pub fn audit_course(project: &Project, level_id: &str) -> Result<String, String> {
+    let level = project
+        .level(level_id)
+        .ok_or_else(|| format!("no course with id {level_id}"))?;
+    let mut ground = false;
+    let mut goal = false;
+    for cell in &level.cells {
+        let Some(asset) = project.asset(&cell.asset_id) else {
+            continue;
+        };
+        if asset.kind == AssetKind::Terrain && (asset.solid || cell.layer == Layer::Main) {
+            ground = true;
+        }
+        if asset.kind == AssetKind::Goal {
+            goal = true;
+        }
+    }
+    let start = level.player.x >= 0.0
+        && level.player.y >= 0.0
+        && level.player.x < level.w as f32
+        && level.player.y < level.h as f32;
+    Ok(format!(
+        "ground={} start={} goal={}",
+        if ground { "yes" } else { "no" },
+        if start { "yes" } else { "no" },
+        if goal { "yes" } else { "no" }
+    ))
+}
+
+pub fn nid(prefix: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    format!("{prefix}{millis:x}{n:x}")
+}
