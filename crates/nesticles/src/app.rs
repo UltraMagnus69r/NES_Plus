@@ -18,7 +18,8 @@ use nesticles_core::pngutil::{b64_decode, b64_encode};
 use nesticles_core::project::{audit_course, nid, Asset, AssetKind, Cell, Layer, Project};
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
 use nesticles_core::{
-    demo_project, demo_rom, ensure_legacy_blueprints, load_project_json, suggest_kind,
+    assign_cell, demo_project, demo_rom, enemy_from_archetype, enemy_role,
+    ensure_legacy_blueprints, gameplay_options, load_project_json, placement_label, suggest_kind,
 };
 use std::collections::{HashMap, HashSet};
 use std::process::Child;
@@ -118,6 +119,11 @@ pub struct NestApp {
     jump_edge: bool,
     /// Selected enemy cell on the course being edited, if any.
     enemy_pick: Option<(i32, i32)>,
+    /// Gameplay applied to parts painted from here on. 0 is decoration.
+    brush_gameplay: usize,
+    /// When set, a grid click selects a placement instead of painting.
+    edit_placement: bool,
+    placement_pick: Option<(i32, i32)>,
     keys_open: bool,
     image_open: bool,
     keys: KeyFile,
@@ -223,6 +229,9 @@ impl NestApp {
             hold_run: false,
             jump_edge: false,
             enemy_pick: None,
+            brush_gameplay: 0,
+            edit_placement: false,
+            placement_pick: None,
             keys_open: false,
             image_open: false,
             keys: KeyFile::load(),
@@ -983,6 +992,7 @@ impl NestApp {
         self.physics_dropdown(ui);
         self.powerup_dropdown(ui);
         self.enemy_ai_dropdown(ui, self.level_sel, true);
+        self.gameplay_controls(ui);
         self.parts_tray(ui);
         ui.label("Right click erases. Dragging Pip, or any player part, moves the start.");
         self.paint_grid(ui);
@@ -1134,6 +1144,20 @@ impl NestApp {
             egui::Stroke::new(2.0_f32, ember()),
             egui::StrokeKind::Inside,
         );
+        if self.edit_placement {
+            if let Some((x, y)) = self.placement_pick {
+                let picked = Rect::from_min_size(
+                    rect.min + Vec2::new(x as f32 * cell, y as f32 * cell),
+                    Vec2::splat(cell - 1.0),
+                );
+                painter.rect_stroke(
+                    picked,
+                    1.0,
+                    egui::Stroke::new(2.0_f32, paper()),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
         if let Some(payload) = response.dnd_release_payload::<String>() {
             if let Some(pos) = response
                 .interact_pointer_pos()
@@ -1153,7 +1177,20 @@ impl NestApp {
                 let x = (local.x / cell) as i32;
                 let y = (local.y / cell) as i32;
                 let erase = ui.input(|i| i.pointer.secondary_down());
-                if self.paint_start && !erase {
+                if self.edit_placement && !erase {
+                    if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+                        let occupied = self.project.levels[self.level_sel]
+                            .cells
+                            .iter()
+                            .any(|placed| placed.x == x && placed.y == y);
+                        if occupied {
+                            self.placement_pick = Some((x, y));
+                        } else {
+                            self.placement_pick = None;
+                            self.status = format!("No part at {x},{y}.");
+                        }
+                    }
+                } else if self.paint_start && !erase {
                     if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
                         self.project.levels[self.level_sel].player.x = x as f32;
                         self.project.levels[self.level_sel].player.y = y as f32;
@@ -1209,6 +1246,82 @@ impl NestApp {
             layer,
             ..Cell::default()
         });
+        let role = gameplay_options()
+            .into_iter()
+            .nth(self.brush_gameplay)
+            .map(|(_, role)| role)
+            .unwrap_or(nesticles_core::LegacyRole::Inert);
+        let level_id = self.project.levels[self.level_sel].id.clone();
+        if let Err(err) = assign_cell(&mut self.project, &level_id, x, y, role) {
+            self.status = err;
+        }
+    }
+
+    fn gameplay_controls(&mut self, ui: &mut egui::Ui) {
+        if self.level_sel >= self.project.levels.len() {
+            return;
+        }
+        let options = gameplay_options();
+        let level_id = self.project.levels[self.level_sel].id.clone();
+        if let Some((x, y)) = self.placement_pick {
+            let still_there = self.project.levels[self.level_sel]
+                .cells
+                .iter()
+                .any(|cell| cell.x == x && cell.y == y);
+            if !still_there {
+                self.placement_pick = None;
+            }
+        }
+        let mut chosen: Option<usize> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.checkbox(&mut self.edit_placement, "Edit a placed part");
+            let caption = if self.edit_placement {
+                "Selected gameplay"
+            } else {
+                "Gameplay for new stamps"
+            };
+            ui.label(caption);
+            let selected = if self.edit_placement {
+                self.placement_pick
+                    .and_then(|(x, y)| placement_label(&self.project, &level_id, x, y))
+                    .unwrap_or_else(|| "Click a part on the grid".into())
+            } else {
+                options
+                    .get(self.brush_gameplay)
+                    .map(|(label, _)| (*label).to_string())
+                    .unwrap_or_else(|| "Decoration".into())
+            };
+            egui::ComboBox::from_id_salt("placement-gameplay")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    for (index, (label, _)) in options.iter().enumerate() {
+                        if ui.selectable_label(false, *label).clicked() {
+                            chosen = Some(index);
+                        }
+                    }
+                });
+        });
+        ui.label(
+            "The picture stays a picture. This menu is the only thing that gives it gameplay.",
+        );
+        let Some(index) = chosen else {
+            return;
+        };
+        if self.edit_placement {
+            let Some((x, y)) = self.placement_pick else {
+                self.status = "Click a placed part first.".into();
+                return;
+            };
+            let role = options[index].1.clone();
+            let label = options[index].0;
+            match assign_cell(&mut self.project, &level_id, x, y, role) {
+                Ok(_) => self.status = format!("Gameplay set to {label}."),
+                Err(err) => self.status = err,
+            }
+        } else {
+            self.brush_gameplay = index;
+            self.status = format!("New stamps use {}.", options[index].0);
+        }
     }
 
     fn overworld(&mut self, ui: &mut egui::Ui) {
@@ -1503,7 +1616,14 @@ impl NestApp {
         }
         if let Some(kind) = chosen_roster {
             if let Some((x, y)) = pick {
-                if let Some(cell) = self.project.levels[level_index]
+                if let Some(enemy) = enemy_from_archetype(&kind) {
+                    let level_id = self.project.levels[level_index].id.clone();
+                    if let Err(err) =
+                        assign_cell(&mut self.project, &level_id, x, y, enemy_role(enemy))
+                    {
+                        self.status = err;
+                    }
+                } else if let Some(cell) = self.project.levels[level_index]
                     .cells
                     .iter_mut()
                     .find(|cell| cell.x == x && cell.y == y)
