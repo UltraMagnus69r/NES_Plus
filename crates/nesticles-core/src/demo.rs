@@ -21,7 +21,7 @@ pub fn demo_rom() -> Vec<u8> {
         0x78u8, // SEI
         0xD8,   // CLD
         0xA2, 0xFF, // LDX #$FF
-        0x9A,   // TXS
+        0x9A, // TXS
         0xA9, 0x00, // LDA #$00
         0x8D, 0x00, 0x20, // STA $2000
         0x4C, 0x0A, 0x80, // JMP $800A
@@ -163,7 +163,14 @@ fn asset_from(id: &str, name: &str, kind: AssetKind, rows: &[&str], cue: &str) -
     }
 }
 
-fn audio_asset(id: &str, name: &str, kind: AssetKind, samples: &[f32], rate: u32, cue: &str) -> Asset {
+fn audio_asset(
+    id: &str,
+    name: &str,
+    kind: AssetKind,
+    samples: &[f32],
+    rate: u32,
+    cue: &str,
+) -> Asset {
     let wav = wav_from_samples(samples, rate);
     Asset {
         id: id.into(),
@@ -188,6 +195,7 @@ fn fill(level: &mut Level, asset: &str, layer: Layer, x0: i32, y0: i32, x1: i32,
                 y,
                 asset_id: asset.into(),
                 layer,
+                ..Cell::default()
             });
         }
     }
@@ -199,6 +207,7 @@ fn put(level: &mut Level, asset: &str, layer: Layer, x: i32, y: i32) {
         y,
         asset_id: asset.into(),
         layer,
+        ..Cell::default()
     });
 }
 
@@ -227,7 +236,14 @@ pub fn demo_project() -> Project {
         audio_asset("sfx-stomp", "Tap", AssetKind::Sfx, &stomp, rate, "stomp"),
         audio_asset("sfx-hurt", "Stumble", AssetKind::Sfx, &hurt, rate, "hurt"),
         audio_asset("sfx-goal", "Hearth", AssetKind::Sfx, &goal, rate, "goal"),
-        audio_asset("music-hearth", "Hearth loop", AssetKind::Music, &music, rate, "music"),
+        audio_asset(
+            "music-hearth",
+            "Hearth loop",
+            AssetKind::Music,
+            &music,
+            rate,
+            "music",
+        ),
     ];
     let _ = &mut assets;
 
@@ -241,6 +257,7 @@ pub fn demo_project() -> Project {
         music_id: Some("music-hearth".into()),
         player: Spawn { x: 2.0, y: 11.0 },
         cells: Vec::new(),
+        enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
     };
     for x in [1, 6, 22, 28] {
         put(&mut moss, "hill", Layer::Back, x, 8);
@@ -265,6 +282,7 @@ pub fn demo_project() -> Project {
         music_id: Some("music-hearth".into()),
         player: Spawn { x: 2.0, y: 12.0 },
         cells: Vec::new(),
+        enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
     };
     for x in [2, 16, 26] {
         put(&mut lantern, "hill", Layer::Back, x, 6);
@@ -306,14 +324,16 @@ pub fn demo_project() -> Project {
             },
         ],
         start_node_id: "node-moss".into(),
+        enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
+        character_physics: crate::physics::CharacterPhysics::Smb1Nes,
     }
 }
 
 fn hearth_music(rate: u32) -> Vec<f32> {
     // Original short phrase. Not a quotation of a commercial theme.
     let notes = [
-        196.0, 220.0, 262.0, 294.0, 262.0, 220.0, 247.0, 196.0, 294.0, 330.0, 294.0, 262.0,
-        220.0, 196.0, 174.0, 196.0,
+        196.0, 220.0, 262.0, 294.0, 262.0, 220.0, 247.0, 196.0, 294.0, 330.0, 294.0, 262.0, 220.0,
+        196.0, 174.0, 196.0,
     ];
     let mut out = Vec::new();
     for (i, freq) in notes.iter().enumerate() {

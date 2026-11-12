@@ -137,7 +137,11 @@ fn physics_lands_on_a_floor_and_stomps_a_patrol_enemy() {
     for _ in 0..240 {
         sim.step(&Input::default(), 1.0 / 60.0);
     }
-    assert!(sim.player.on_ground, "player should land, y={}", sim.player.y);
+    assert!(
+        sim.player.on_ground,
+        "player should land, y={}",
+        sim.player.y
+    );
     let feet = sim.player.y + sim.player.h;
     assert!(
         (feet - 160.0).abs() < 1.0,
@@ -176,7 +180,11 @@ fn physics_lands_on_a_floor_and_stomps_a_patrol_enemy() {
         sim.step(&Input::default(), 1.0 / 60.0);
         if !sim.enemies[0].alive {
             stomped = true;
-            assert!(sim.player.vy < 0.0, "stomp should bounce, vy={}", sim.player.vy);
+            assert!(
+                sim.player.vy < 0.0,
+                "stomp should bounce, vy={}",
+                sim.player.vy
+            );
             break;
         }
     }
@@ -209,6 +217,7 @@ fn paint_rect_changes_cells() {
         music_id: None,
         player: Spawn { x: 1.0, y: 1.0 },
         cells: vec![CellStub::one()],
+        enemy_ai: nesticles_core::EnemyAiStyle::Smb1Nes,
     });
     // The stub cell is a different layer so the paint is a real change either way.
     let note = execute_tool_json(
@@ -236,6 +245,7 @@ impl CellStub {
             y: 0,
             asset_id: "ground".into(),
             layer: Layer::Back,
+            ..nesticles_core::project::Cell::default()
         }
     }
 }
@@ -243,8 +253,14 @@ impl CellStub {
 #[test]
 fn demo_courses_can_be_cleared() {
     let project = nesticles_core::demo_project();
-    assert!(clear_course(&project, "moss"), "Moss Steps should be finishable");
-    assert!(clear_course(&project, "lantern"), "Lantern Rise should be finishable");
+    assert!(
+        clear_course(&project, "moss"),
+        "Moss Steps should be finishable"
+    );
+    assert!(
+        clear_course(&project, "lantern"),
+        "Lantern Rise should be finishable"
+    );
 }
 
 fn clear_course(project: &nesticles_core::Project, level_id: &str) -> bool {
@@ -256,14 +272,20 @@ fn clear_course(project: &nesticles_core::Project, level_id: &str) -> bool {
         let ahead = sim.player.x + sim.player.w + 18.0;
         let feet = sim.player.y + sim.player.h + 2.0;
         let supported = sim.solids.iter().any(|s| s.contains_point(ahead, feet));
-        let wall = sim.solids.iter().any(|s| s.contains_point(sim.player.x + sim.player.w + 1.0, sim.player.y + 6.0));
+        let wall = sim
+            .solids
+            .iter()
+            .any(|s| s.contains_point(sim.player.x + sim.player.w + 1.0, sim.player.y + 6.0));
         let hazard = sim.hazards.iter().any(|h| {
             h.x < sim.player.x + sim.player.w + 22.0
                 && h.x + h.w > sim.player.x
                 && (h.y - sim.player.y).abs() < 28.0
         });
         let enemy = sim.enemies.iter().any(|e| {
-            e.alive && e.x < sim.player.x + 40.0 && e.x + e.w > sim.player.x - 4.0 && (e.y - sim.player.y).abs() < 24.0
+            e.alive
+                && e.x < sim.player.x + 40.0
+                && e.x + e.w > sim.player.x - 4.0
+                && (e.y - sim.player.y).abs() < 24.0
         });
         let stuck = still > 12;
         let jump = sim.player.on_ground && (!supported || wall || hazard || enemy || stuck);
@@ -272,6 +294,7 @@ fn clear_course(project: &nesticles_core::Project, level_id: &str) -> bool {
             right: true,
             jump_held: jump || sim.player.vy < 0.0,
             jump_pressed: jump,
+            run_held: false,
         };
         sim.step(&input, 1.0 / 60.0);
         if sim.player.x <= last_x + 0.2 {
@@ -295,7 +318,10 @@ fn a_second_cartridge_adds_a_style_and_parts_can_mix() {
     let second = project.adopt_style("Other Grove", "other.nes");
     assert_ne!(first, second);
     assert_eq!(project.styles.len(), 2);
-    assert_eq!(project.adopt_style("Other Grove again", "other.nes"), second);
+    assert_eq!(
+        project.adopt_style("Other Grove again", "other.nes"),
+        second
+    );
     project.assets.push(Asset {
         id: "crate".into(),
         name: "Crate".into(),

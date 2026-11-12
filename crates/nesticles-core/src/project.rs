@@ -1,5 +1,7 @@
 //! Workshop project. Serialized as JSON. API keys never live in this struct.
 
+use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
+use crate::physics::CharacterPhysics;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +147,24 @@ pub struct Cell {
     pub asset_id: String,
     #[serde(default = "default_layer")]
     pub layer: Layer,
+    /// None inherits the course style, then the project style.
+    #[serde(default)]
+    pub enemy_ai: Option<EnemyAiStyle>,
+    #[serde(default)]
+    pub archetype: EnemyArchetype,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            asset_id: String::new(),
+            layer: Layer::Main,
+            enemy_ai: None,
+            archetype: EnemyArchetype::Walker,
+        }
+    }
 }
 
 fn default_layer() -> Layer {
@@ -173,6 +193,9 @@ pub struct Level {
     pub player: Spawn,
     #[serde(default)]
     pub cells: Vec<Cell>,
+    /// Enemy brain for this course. Old projects load as SMB1.
+    #[serde(default)]
+    pub enemy_ai: EnemyAiStyle,
 }
 
 fn default_sky() -> String {
@@ -203,6 +226,12 @@ pub struct Project {
     pub nodes: Vec<OverNode>,
     #[serde(default)]
     pub start_node_id: String,
+    /// Fallback enemy brain when a course has not chosen one. Default is SMB1.
+    #[serde(default)]
+    pub enemy_ai: EnemyAiStyle,
+    /// Playable character controller. Default is SMB1; Nesticles keeps the float sim.
+    #[serde(default)]
+    pub character_physics: CharacterPhysics,
 }
 
 impl Project {
@@ -214,6 +243,8 @@ impl Project {
             levels: Vec::new(),
             nodes: Vec::new(),
             start_node_id: String::new(),
+            enemy_ai: EnemyAiStyle::Smb1Nes,
+            character_physics: CharacterPhysics::Smb1Nes,
         }
     }
 
@@ -263,7 +294,10 @@ impl Project {
         lines.push(format!("Project \"{}\"", self.name));
         lines.push("Styles (each imported cartridge is one style; courses may mix them):".into());
         for style in &self.styles {
-            lines.push(format!("  {} \"{}\" source={}", style.id, style.name, style.source));
+            lines.push(format!(
+                "  {} \"{}\" source={}",
+                style.id, style.name, style.source
+            ));
         }
         lines.push("Assets:".into());
         for asset in &self.assets {

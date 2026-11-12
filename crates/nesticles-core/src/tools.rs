@@ -15,7 +15,10 @@ pub fn execute_tool_value(project: &mut Project, value: &Value) -> Result<String
         .or_else(|| value.get("name"))
         .and_then(|v| v.as_str())
         .ok_or("tool call needs a tool name")?;
-    let args = value.get("arguments").cloned().unwrap_or_else(|| value.clone());
+    let args = value
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| value.clone());
     if name == "generate_image" || name == "draw_image" || name == "image" {
         return Err(
             "The workshop assistant cannot call the image model. Open the Image maker and press Generate."
@@ -65,6 +68,7 @@ fn create_course(project: &mut Project, args: &Value) -> Result<String, String> 
         music_id: None,
         player: Spawn { x: 2.0, y: 2.0 },
         cells: Vec::new(),
+        enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
     });
     Ok(format!("created course {id}"))
 }
@@ -107,11 +111,14 @@ fn paint_rect(project: &mut Project, args: &Value) -> Result<String, String> {
                 y: yy,
                 asset_id: asset_id.clone(),
                 layer,
+                ..Cell::default()
             });
             painted += 1;
         }
     }
-    Ok(format!("painted {painted} cells on {level_id} with {asset_id}"))
+    Ok(format!(
+        "painted {painted} cells on {level_id} with {asset_id}"
+    ))
 }
 
 fn set_player_start(project: &mut Project, args: &Value) -> Result<String, String> {
@@ -198,7 +205,9 @@ fn link_nodes(project: &mut Project, args: &Value) -> Result<String, String> {
     if !node.links.iter().any(|id| id == &to) {
         node.links.push(to.clone());
     }
-    Ok(format!("linked {from} -> {to}. Clearing the source course unlocks the link."))
+    Ok(format!(
+        "linked {from} -> {to}. Clearing the source course unlocks the link."
+    ))
 }
 
 fn set_course_style(project: &mut Project, args: &Value) -> Result<String, String> {

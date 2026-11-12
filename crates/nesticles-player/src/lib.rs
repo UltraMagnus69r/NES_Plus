@@ -1,7 +1,7 @@
 //! Browser player. Physics comes from nesticles-core, the same crate the desktop app uses.
 
+use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, TILE};
 use nesticles_core::pngutil::b64_decode;
-use nesticles_core::physics::{Input, Sim, TILE};
 use nesticles_core::{AssetKind, Layer, Project};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,7 @@ struct Game {
     pointer: Option<(f32, f32)>,
     prev_left: bool,
     prev_right: bool,
+    run_held: bool,
 }
 
 enum Mode {
@@ -81,10 +82,7 @@ pub fn start_game(project_json: &str) {
         }
         if let Ok(rgba) = b64_decode(&asset.rgba_base64) {
             if let Ok(canvas) = sprite_canvas(&rgba, asset.w, asset.h) {
-                sprites.insert(
-                    asset.id.clone(),
-                    Sprite { canvas },
-                );
+                sprites.insert(asset.id.clone(), Sprite { canvas });
             }
         }
     }
@@ -103,6 +101,7 @@ pub fn start_game(project_json: &str) {
             pointer: None,
             prev_left: false,
             prev_right: false,
+            run_held: false,
         });
     });
 }
@@ -115,6 +114,15 @@ pub fn pointer(x: f32, y: f32, down: bool) {
     GAME.with(|slot| {
         if let Some(game) = slot.borrow_mut().as_mut() {
             game.pointer = Some((x, y));
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn set_run(held: bool) {
+    GAME.with(|slot| {
+        if let Some(game) = slot.borrow_mut().as_mut() {
+            game.run_held = held;
         }
     });
 }
@@ -139,7 +147,13 @@ impl Game {
         }
     }
 
-    fn tick_map(&mut self, left: bool, right: bool, jump_pressed: bool, pointer: Option<(f32, f32)>) {
+    fn tick_map(
+        &mut self,
+        left: bool,
+        right: bool,
+        jump_pressed: bool,
+        pointer: Option<(f32, f32)>,
+    ) {
         let unlocked = unlocked_nodes(&self.project, &self.cleared);
         if unlocked.is_empty() {
             self.draw_map(&unlocked);
@@ -181,7 +195,13 @@ impl Game {
     }
 
     fn enter(&mut self, level_id: &str) {
-        let Some(level) = self.project.levels.iter().find(|l| l.id == level_id).cloned() else {
+        let Some(level) = self
+            .project
+            .levels
+            .iter()
+            .find(|l| l.id == level_id)
+            .cloned()
+        else {
             self.message = "That path has no course".into();
             return;
         };
@@ -200,37 +220,57 @@ impl Game {
         }
     }
 
-    fn tick_level(&mut self, left: bool, right: bool, jump_down: bool, jump_pressed: bool, dt: f32) {
-        let mut steps = ((dt.max(0.0) / (1.0 / 60.0)).round() as i32).clamp(1, 3);
-        if dt <= 0.0 {
-            steps = 1;
+    fn tick_level(
+        &mut self,
+        left: bool,
+        right: bool,
+        jump_down: bool,
+        jump_pressed: bool,
+        dt: f32,
+    ) {
+        let preset = self.project.character_physics;
+        if let Some(sim) = self.sim.as_mut() {
+            let scale = play_surface_scale(480.0, 270.0, sim.level_w, sim.level_h);
+            sim.update_view(480.0 / scale, 270.0 / scale);
         }
-        let mut first = true;
-        for _ in 0..steps {
+        let run_held = self.run_held;
+        if preset == CharacterPhysics::Smb1Nes {
             let input = Input {
                 left,
                 right,
                 jump_held: jump_down,
-                jump_pressed: jump_pressed && first,
+                jump_pressed,
+                run_held,
             };
-            first = false;
             let events = if let Some(sim) = self.sim.as_mut() {
-                sim.step(&input, 1.0 / 60.0);
+                sim.step_preset(preset, &input, dt.clamp(0.0, 0.05));
                 sim.events
             } else {
                 nesticles_core::physics::Events::default()
             };
-            if events.jump {
-                self.cue("jump", false);
+            self.play_events(events);
+        } else {
+            let mut steps = ((dt.max(0.0) / (1.0 / 60.0)).round() as i32).clamp(1, 3);
+            if dt <= 0.0 {
+                steps = 1;
             }
-            if events.stomp {
-                self.cue("stomp", false);
-            }
-            if events.hurt {
-                self.cue("hurt", false);
-            }
-            if events.goal {
-                self.cue("goal", false);
+            let mut first = true;
+            for _ in 0..steps {
+                let input = Input {
+                    left,
+                    right,
+                    jump_held: jump_down,
+                    jump_pressed: jump_pressed && first,
+                    run_held,
+                };
+                first = false;
+                let events = if let Some(sim) = self.sim.as_mut() {
+                    sim.step(&input, 1.0 / 60.0);
+                    sim.events
+                } else {
+                    nesticles_core::physics::Events::default()
+                };
+                self.play_events(events);
             }
         }
         let won = self.sim.as_ref().map(|s| s.won).unwrap_or(false);
@@ -250,6 +290,21 @@ impl Game {
             return;
         }
         self.draw_level();
+    }
+
+    fn play_events(&self, events: nesticles_core::physics::Events) {
+        if events.jump {
+            self.cue("jump", false);
+        }
+        if events.stomp {
+            self.cue("stomp", false);
+        }
+        if events.hurt {
+            self.cue("hurt", false);
+        }
+        if events.goal {
+            self.cue("goal", false);
+        }
     }
 
     fn cue(&self, name: &str, looped: bool) {
@@ -280,7 +335,10 @@ impl Game {
         }
         for (i, node) in self.project.nodes.iter().enumerate() {
             let open = unlocked.iter().any(|id| id == &node.id);
-            let selected = unlocked.get(self.select).map(|id| id == &node.id).unwrap_or(false);
+            let selected = unlocked
+                .get(self.select)
+                .map(|id| id == &node.id)
+                .unwrap_or(false);
             let (x, y) = map_point(node.x, node.y);
             let color = if !open {
                 "#4a403c"
@@ -291,7 +349,13 @@ impl Game {
             };
             ctx.set_fill_style_str(color);
             ctx.begin_path();
-            let _ = ctx.arc(x, y, if selected { 16.0 } else { 12.0 }, 0.0, std::f64::consts::TAU);
+            let _ = ctx.arc(
+                x,
+                y,
+                if selected { 16.0 } else { 12.0 },
+                0.0,
+                std::f64::consts::TAU,
+            );
             ctx.fill();
             ctx.set_fill_style_str(if open { "#f4ece0" } else { "#8a8078" });
             ctx.set_font("16px serif");
@@ -316,11 +380,9 @@ impl Game {
         let ctx = &self.ctx;
         ctx.set_fill_style_str(&level.sky);
         ctx.fill_rect(0.0, 0.0, 480.0, 270.0);
-        let scale = 2.0;
-        let view_w = 480.0 / scale;
-        let view_h = 270.0 / scale;
-        let cam_x = (sim.player.x as f64 - view_w * 0.35).clamp(0.0, (sim.level_w as f64 - view_w).max(0.0));
-        let cam_y = (sim.player.y as f64 - view_h * 0.55).clamp(0.0, (sim.level_h as f64 - view_h).max(0.0));
+        let scale = f64::from(play_surface_scale(480.0, 270.0, sim.level_w, sim.level_h));
+        let cam_x = sim.view.x as f64;
+        let cam_y = sim.view.y as f64;
         let mut ordered = level.cells.clone();
         ordered.sort_by_key(|c| match c.layer {
             Layer::Back => 0,
@@ -334,7 +396,12 @@ impl Game {
             if asset.kind == AssetKind::Enemy {
                 continue;
             }
-            if asset.kind == AssetKind::Item && sim.items.iter().any(|(r, alive)| !*alive && (r.x - cell.x as f32 * TILE).abs() < 1.0 && (r.y - cell.y as f32 * TILE).abs() < 1.0)
+            if asset.kind == AssetKind::Item
+                && sim.items.iter().any(|(r, alive)| {
+                    !*alive
+                        && (r.x - cell.x as f32 * TILE).abs() < 1.0
+                        && (r.y - cell.y as f32 * TILE).abs() < 1.0
+                })
             {
                 continue;
             }
@@ -357,7 +424,12 @@ impl Game {
                 enemy.dir < 0,
             );
         }
-        if let Some(player) = self.project.assets.iter().find(|a| a.kind == AssetKind::Player) {
+        if let Some(player) = self
+            .project
+            .assets
+            .iter()
+            .find(|a| a.kind == AssetKind::Player)
+        {
             self.blit(
                 &player.id,
                 (sim.player.x as f64 - 2.0 - cam_x) * scale,
@@ -381,10 +453,17 @@ impl Game {
             let _ = ctx.save();
             let _ = ctx.translate(x + w, y);
             let _ = ctx.scale(-1.0, 1.0);
-            let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(&sprite.canvas, 0.0, 0.0, w, h);
+            let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(
+                &sprite.canvas,
+                0.0,
+                0.0,
+                w,
+                h,
+            );
             let _ = ctx.restore();
         } else {
-            let _ = ctx.draw_image_with_html_canvas_element_and_dw_and_dh(&sprite.canvas, x, y, w, h);
+            let _ =
+                ctx.draw_image_with_html_canvas_element_and_dw_and_dh(&sprite.canvas, x, y, w, h);
         }
     }
 }
@@ -413,7 +492,9 @@ fn unlocked_nodes(project: &Project, cleared: &HashSet<String>) -> Vec<String> {
 }
 
 fn sprite_canvas(rgba: &[u8], w: u32, h: u32) -> Result<HtmlCanvasElement, JsValue> {
-    let document = web_sys::window().and_then(|w| w.document()).ok_or_else(|| JsValue::from_str("no document"))?;
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or_else(|| JsValue::from_str("no document"))?;
     let canvas: HtmlCanvasElement = document.create_element("canvas")?.dyn_into()?;
     canvas.set_width(w);
     canvas.set_height(h);

@@ -2,12 +2,18 @@ use crate::audio_out;
 use crate::export_game;
 use crate::keys::KeyFile;
 use crate::net::{self, AssistDone, ImageDone};
-use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, RichText, Sense, TextureHandle, TextureOptions, Vec2};
+use eframe::egui::{
+    self, Color32, FontFamily, FontId, Pos2, Rect, RichText, Sense, TextureHandle, TextureOptions,
+    Vec2,
+};
 use nesticles_core::audio::{scan_brr, scan_dpcm, scan_gb_waves, AudioHit};
-use nesticles_core::codec::{decode_tile, default_palette, indices_to_rgba, scan_tiles, tile_bytes, Codec, TileCandidate};
+use nesticles_core::codec::{
+    decode_tile, default_palette, indices_to_rgba, scan_tiles, tile_bytes, Codec, TileCandidate,
+};
 use nesticles_core::detect::{detect_rom, find_strings, RomFormat, RomInfo, MAX_ROM_BYTES};
 use nesticles_core::disasm::{disassemble6502, AsmLine};
-use nesticles_core::physics::{Input, Sim, TILE};
+use nesticles_core::enemy_ai::{override_label, EnemyAiStyle};
+use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, TILE};
 use nesticles_core::pngutil::{b64_decode, b64_encode};
 use nesticles_core::project::{audit_course, nid, Asset, AssetKind, Cell, Layer, Project};
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
@@ -104,7 +110,10 @@ pub struct NestApp {
     hold_left: bool,
     hold_right: bool,
     hold_jump: bool,
+    hold_run: bool,
     jump_edge: bool,
+    /// Selected enemy cell on the course being edited, if any.
+    enemy_pick: Option<(i32, i32)>,
     keys_open: bool,
     image_open: bool,
     keys: KeyFile,
@@ -136,8 +145,17 @@ impl NestApp {
         std::thread::spawn(move || {
             while let Ok(req) = rx_req.recv() {
                 let resp = match req {
-                    Req::Assist { keys, history, project } => Resp::Assist(net::run_assistant(&keys, &history, project)),
-                    Req::Image { keys, prompt, side, kind } => Resp::Image {
+                    Req::Assist {
+                        keys,
+                        history,
+                        project,
+                    } => Resp::Assist(net::run_assistant(&keys, &history, project)),
+                    Req::Image {
+                        keys,
+                        prompt,
+                        side,
+                        kind,
+                    } => Resp::Image {
                         result: net::run_image(&keys, &prompt, side),
                         kind,
                     },
@@ -148,8 +166,16 @@ impl NestApp {
             }
         });
         let project = demo_project();
-        let paint_asset = project.assets.iter().find(|a| a.kind == AssetKind::Terrain).map(|a| a.id.clone());
-        let active_style = project.styles.first().map(|style| style.id.clone()).unwrap_or_default();
+        let paint_asset = project
+            .assets
+            .iter()
+            .find(|a| a.kind == AssetKind::Terrain)
+            .map(|a| a.id.clone());
+        let active_style = project
+            .styles
+            .first()
+            .map(|style| style.id.clone())
+            .unwrap_or_default();
         let brand_icon = brand_texture(&cc.egui_ctx);
         Self {
             project,
@@ -186,7 +212,9 @@ impl NestApp {
             hold_left: false,
             hold_right: false,
             hold_jump: false,
+            hold_run: false,
             jump_edge: false,
+            enemy_pick: None,
             keys_open: false,
             image_open: false,
             keys: KeyFile::load(),
@@ -232,13 +260,25 @@ impl NestApp {
                     self.chat.push(("assistant".into(), err));
                     self.assist_busy = false;
                 }
-                Resp::Image { result: Ok(done), kind } => {
-                    self.add_rgba_asset("Generated", kind, done.side, done.side, done.rgba, done.png);
+                Resp::Image {
+                    result: Ok(done),
+                    kind,
+                } => {
+                    self.add_rgba_asset(
+                        "Generated",
+                        kind,
+                        done.side,
+                        done.side,
+                        done.rgba,
+                        done.png,
+                    );
                     self.image_busy = false;
                     self.image_status = "Added the sprite to the library.".into();
                     self.tab = Tab::Library;
                 }
-                Resp::Image { result: Err(err), .. } => {
+                Resp::Image {
+                    result: Err(err), ..
+                } => {
                     self.image_busy = false;
                     self.image_status = err;
                 }
@@ -253,10 +293,14 @@ impl NestApp {
         if self.play.as_ref().map(|p| p.sim.is_none()).unwrap_or(true) {
             return;
         }
-        let (left, right, jump_held, jump_key) = ctx.input(|i| {
+        let (left, right, jump_held, jump_key, run_held) = ctx.input(|i| {
             (
-                i.key_down(egui::Key::ArrowLeft) || i.key_down(egui::Key::A) || i.key_down(egui::Key::H),
-                i.key_down(egui::Key::ArrowRight) || i.key_down(egui::Key::D) || i.key_down(egui::Key::L),
+                i.key_down(egui::Key::ArrowLeft)
+                    || i.key_down(egui::Key::A)
+                    || i.key_down(egui::Key::H),
+                i.key_down(egui::Key::ArrowRight)
+                    || i.key_down(egui::Key::D)
+                    || i.key_down(egui::Key::L),
                 i.key_down(egui::Key::Space)
                     || i.key_down(egui::Key::Z)
                     || i.key_down(egui::Key::W)
@@ -265,6 +309,7 @@ impl NestApp {
                     || i.key_pressed(egui::Key::Z)
                     || i.key_pressed(egui::Key::W)
                     || i.key_pressed(egui::Key::ArrowUp),
+                i.key_down(egui::Key::X) || i.modifiers.shift,
             )
         });
         let jump_edge = jump_key || self.jump_edge;
@@ -274,25 +319,37 @@ impl NestApp {
             right: right || self.hold_right,
             jump_held: jump_held || self.hold_jump,
             jump_pressed: jump_edge,
+            run_held: run_held || self.hold_run,
         };
+        let preset = self.project.character_physics;
         let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.05);
         let (jumped, stomped, hurt, goal, level_id) = {
             let play = self.play.as_mut().unwrap();
-            play.accum += dt;
             let mut jumped = false;
             let mut stomped = false;
             let mut hurt = false;
             let mut goal = false;
-            while play.accum >= 1.0 / 60.0 {
-                play.accum -= 1.0 / 60.0;
-                let mut step_input = input;
-                step_input.jump_pressed = input.jump_pressed && !jumped;
+            if preset == CharacterPhysics::Smb1Nes {
                 if let Some(sim) = play.sim.as_mut() {
-                    sim.step(&step_input, 1.0 / 60.0);
-                    jumped |= sim.events.jump;
-                    stomped |= sim.events.stomp;
-                    hurt |= sim.events.hurt;
-                    goal |= sim.events.goal;
+                    sim.step_preset(preset, &input, dt);
+                    jumped = sim.events.jump;
+                    stomped = sim.events.stomp;
+                    hurt = sim.events.hurt;
+                    goal = sim.events.goal;
+                }
+            } else {
+                play.accum += dt;
+                while play.accum >= 1.0 / 60.0 {
+                    play.accum -= 1.0 / 60.0;
+                    let mut step_input = input;
+                    step_input.jump_pressed = input.jump_pressed && !jumped;
+                    if let Some(sim) = play.sim.as_mut() {
+                        sim.step(&step_input, 1.0 / 60.0);
+                        jumped |= sim.events.jump;
+                        stomped |= sim.events.stomp;
+                        hurt |= sim.events.hurt;
+                        goal |= sim.events.goal;
+                    }
                 }
             }
             (jumped, stomped, hurt, goal, play.level_id.clone())
@@ -370,7 +427,11 @@ impl NestApp {
                     .alt_text("Nesticles"),
             );
             ui.label(RichText::new("Nesticles").font(serif(30.0)).color(ember()));
-            ui.label(RichText::new("local workshop").font(serif(16.0)).color(paper()));
+            ui.label(
+                RichText::new("local workshop")
+                    .font(serif(16.0))
+                    .color(paper()),
+            );
             if ui.button("Demo cartridge").clicked() {
                 self.load_rom_bytes("seed-spirit.nes", demo_rom());
             }
@@ -417,7 +478,10 @@ impl NestApp {
         ui.horizontal(|ui| {
             if ui.button("Open file…").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Images and data", &["nes", "gb", "gbc", "gba", "sfc", "smc", "bin", "rom"])
+                    .add_filter(
+                        "Images and data",
+                        &["nes", "gb", "gbc", "gba", "sfc", "smc", "bin", "rom"],
+                    )
                     .pick_file()
                 {
                     self.rom_path = path.display().to_string();
@@ -454,7 +518,12 @@ impl NestApp {
         for warning in &warnings {
             ui.label(RichText::new(warning).color(Color32::from_rgb(232, 196, 150)));
         }
-        if let Some(style) = self.project.styles.iter().find(|style| style.source == file_name) {
+        if let Some(style) = self
+            .project
+            .styles
+            .iter()
+            .find(|style| style.source == file_name)
+        {
             ui.label(format!(
                 "Style \"{}\" holds parts from this file. Styles already in the project stay in the tray.",
                 style.name
@@ -473,7 +542,13 @@ impl NestApp {
             egui::ComboBox::from_id_salt("codec")
                 .selected_text(self.codec.label())
                 .show_ui(ui, |ui| {
-                    for codec in [Codec::Nes, Codec::Gb, Codec::Snes, Codec::Gba, Codec::OneBpp] {
+                    for codec in [
+                        Codec::Nes,
+                        Codec::Gb,
+                        Codec::Snes,
+                        Codec::Gba,
+                        Codec::OneBpp,
+                    ] {
                         ui.selectable_value(&mut self.codec, codec, codec.label());
                     }
                 });
@@ -505,7 +580,8 @@ impl NestApp {
         let offset = parse_hex_or_dec(&self.tile_offset_text);
         let bytes_per = tile_bytes(self.codec);
         let per_page = self.columns.saturating_mul(self.rows).max(1);
-        let page_origin = offset.saturating_add(self.page.saturating_mul(per_page).saturating_mul(bytes_per));
+        let page_origin =
+            offset.saturating_add(self.page.saturating_mul(per_page).saturating_mul(bytes_per));
         self.draw_page(ui, ctx, page_origin, per_page);
         ui.horizontal_wrapped(|ui| {
             ui.label("Stamp");
@@ -522,7 +598,8 @@ impl NestApp {
                 if let Some((w, h, rgba, png)) = self.grab_stamp(page_origin) {
                     let style = self.project.style_name(&self.active_style);
                     self.add_rgba_asset("Tile", self.tag, w, h, rgba, png);
-                    self.status = format!("Added a part to style {style}. Drag it from the course tray.");
+                    self.status =
+                        format!("Added a part to style {style}. Drag it from the course tray.");
                 }
             }
             if ui.button("Export PNG").clicked() {
@@ -550,7 +627,11 @@ impl NestApp {
         for candidate in &self.candidates {
             ui.horizontal(|ui| {
                 if ui
-                    .button(format!("${:X} {}", candidate.offset, candidate.suggestion.label()))
+                    .button(format!(
+                        "${:X} {}",
+                        candidate.offset,
+                        candidate.suggestion.label()
+                    ))
                     .clicked()
                 {
                     jump = Some(candidate.offset);
@@ -564,7 +645,13 @@ impl NestApp {
         }
     }
 
-    fn draw_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, page_origin: usize, per_page: usize) {
+    fn draw_page(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        page_origin: usize,
+        per_page: usize,
+    ) {
         let Some(rom) = &self.rom else { return };
         let mut indices = vec![0u8; per_page * 64];
         for i in 0..per_page {
@@ -573,9 +660,27 @@ impl NestApp {
                 indices[i * 64..(i + 1) * 64].copy_from_slice(&tile);
             }
         }
-        let (w, h, rgba) = indices_to_rgba(&indices, self.columns.max(1), self.rows.max(1), &self.palette, self.transparent_zero);
-        let sig = page_sig(page_origin, self.codec, &self.palette, self.columns, self.rows, self.transparent_zero, rgba.len());
-        if self.page_tex.as_ref().map(|(s, _)| *s) != Some(sig) && w > 0 && h > 0 && rgba.len() == (w * h * 4) as usize {
+        let (w, h, rgba) = indices_to_rgba(
+            &indices,
+            self.columns.max(1),
+            self.rows.max(1),
+            &self.palette,
+            self.transparent_zero,
+        );
+        let sig = page_sig(
+            page_origin,
+            self.codec,
+            &self.palette,
+            self.columns,
+            self.rows,
+            self.transparent_zero,
+            rgba.len(),
+        );
+        if self.page_tex.as_ref().map(|(s, _)| *s) != Some(sig)
+            && w > 0
+            && h > 0
+            && rgba.len() == (w * h * 4) as usize
+        {
             let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
             let tex = ctx.load_texture(format!("page-{sig}"), image, TextureOptions::NEAREST);
             self.page_tex = Some((sig, tex));
@@ -650,7 +755,11 @@ impl NestApp {
             } else {
                 let hit = &self.hits[index];
                 let wav = wav_from_samples(&hit.samples, hit.rate);
-                let asset_kind = if kind == "music" { AssetKind::Music } else { AssetKind::Sfx };
+                let asset_kind = if kind == "music" {
+                    AssetKind::Music
+                } else {
+                    AssetKind::Sfx
+                };
                 self.project.assets.push(Asset {
                     id: nid(if kind == "music" { "music-" } else { "sfx-" }),
                     name: hit.label.clone(),
@@ -682,7 +791,10 @@ impl NestApp {
             }
         });
         for line in &self.disasm {
-            ui.monospace(format!("{:04X}  {:<12} {}", line.address, line.bytes, line.text));
+            ui.monospace(format!(
+                "{:04X}  {:<12} {}",
+                line.address, line.bytes, line.text
+            ));
         }
         ui.separator();
         ui.label(RichText::new("Strings").font(serif(18.0)));
@@ -697,14 +809,20 @@ impl NestApp {
         let mut remove = None;
         let ids: Vec<String> = self.project.assets.iter().map(|a| a.id.clone()).collect();
         for id in ids {
-            let Some(asset) = self.project.asset(&id) else { continue };
+            let Some(asset) = self.project.asset(&id) else {
+                continue;
+            };
             let selected = self.lib_sel.as_deref() == Some(id.as_str());
             let style = self.project.style_name(&asset.style_id);
             let label = format!("{}  {}  ·  {style}", asset.name, asset.kind.label());
             ui.horizontal(|ui| {
                 if ui.selectable_label(selected, label).clicked() {
                     self.lib_sel = Some(id.clone());
-                    self.active_style = self.project.asset(&id).map(|item| item.style_id.clone()).unwrap_or_default();
+                    self.active_style = self
+                        .project
+                        .asset(&id)
+                        .map(|item| item.style_id.clone())
+                        .unwrap_or_default();
                 }
             });
         }
@@ -731,9 +849,18 @@ impl NestApp {
                 ui.label(format!("{}×{}", asset.w, asset.h));
             }
             if let Some(tex) = self.textures.get(&id) {
-                let size = self.project.asset(&id).map(|a| Vec2::new(a.w as f32 * 4.0, a.h as f32 * 4.0)).unwrap_or(Vec2::new(64.0, 64.0));
+                let size = self
+                    .project
+                    .asset(&id)
+                    .map(|a| Vec2::new(a.w as f32 * 4.0, a.h as f32 * 4.0))
+                    .unwrap_or(Vec2::new(64.0, 64.0));
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-                ui.painter().image(tex.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                ui.painter().image(
+                    tex.id(),
+                    rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
             }
             ui.horizontal(|ui| {
                 if ui.button("Use as paint").clicked() {
@@ -767,14 +894,21 @@ impl NestApp {
         }
         ui.horizontal_wrapped(|ui| {
             for (index, level) in self.project.levels.iter().enumerate() {
-                if ui.selectable_label(self.level_sel == index, &level.name).clicked() {
+                if ui
+                    .selectable_label(self.level_sel == index, &level.name)
+                    .clicked()
+                {
                     self.level_sel = index;
                 }
             }
             if ui.button("New course").clicked() {
                 let id = nid("course-");
                 let style_id = if self.active_style.is_empty() {
-                    self.project.styles.first().map(|style| style.id.clone()).unwrap_or_default()
+                    self.project
+                        .styles
+                        .first()
+                        .map(|style| style.id.clone())
+                        .unwrap_or_default()
                 } else {
                     self.active_style.clone()
                 };
@@ -788,6 +922,7 @@ impl NestApp {
                     music_id: None,
                     player: nesticles_core::project::Spawn { x: 2.0, y: 2.0 },
                     cells: Vec::new(),
+                    enemy_ai: EnemyAiStyle::Smb1Nes,
                 });
                 self.level_sel = self.project.levels.len() - 1;
             }
@@ -819,6 +954,8 @@ impl NestApp {
             });
             self.project.levels[self.level_sel].style_id = style_id;
         }
+        self.physics_dropdown(ui);
+        self.enemy_ai_dropdown(ui, self.level_sel, true);
         self.parts_tray(ui);
         ui.label("Right click erases. Dragging Pip, or any player part, moves the start.");
         self.paint_grid(ui);
@@ -833,15 +970,24 @@ impl NestApp {
             .unwrap_or_default();
         ui.horizontal_wrapped(|ui| {
             ui.label("Tray");
-            if ui.selectable_label(self.tray_filter == "course", "This style").clicked() {
+            if ui
+                .selectable_label(self.tray_filter == "course", "This style")
+                .clicked()
+            {
                 self.tray_filter = "course".into();
             }
-            if ui.selectable_label(self.tray_filter.is_empty(), "All styles").clicked() {
+            if ui
+                .selectable_label(self.tray_filter.is_empty(), "All styles")
+                .clicked()
+            {
                 self.tray_filter.clear();
             }
             let styles = self.project.styles.clone();
             for style in styles {
-                if ui.selectable_label(self.tray_filter == style.id, &style.name).clicked() {
+                if ui
+                    .selectable_label(self.tray_filter == style.id, &style.name)
+                    .clicked()
+                {
                     self.tray_filter = style.id.clone();
                 }
             }
@@ -867,7 +1013,10 @@ impl NestApp {
                 .assets
                 .iter()
                 .filter(|asset| {
-                    kinds.contains(&asset.kind) && (show_all || asset.style_id == selected_style || asset.style_id.is_empty())
+                    kinds.contains(&asset.kind)
+                        && (show_all
+                            || asset.style_id == selected_style
+                            || asset.style_id.is_empty())
                 })
                 .map(|asset| asset.id.clone())
                 .collect();
@@ -937,7 +1086,12 @@ impl NestApp {
                 Vec2::splat(cell - 1.0),
             );
             if let Some(tex) = self.textures.get(&cell_ref.asset_id) {
-                painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                painter.image(
+                    tex.id(),
+                    r,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
             } else {
                 painter.rect_filled(r, 1.0, color);
             }
@@ -947,11 +1101,24 @@ impl NestApp {
             rect.min + Vec2::new(player.x * cell, player.y * cell),
             Vec2::splat(cell - 1.0),
         );
-        painter.rect_stroke(pr, 2.0, egui::Stroke::new(2.0_f32, ember()), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            pr,
+            2.0,
+            egui::Stroke::new(2.0_f32, ember()),
+            egui::StrokeKind::Inside,
+        );
         if let Some(payload) = response.dnd_release_payload::<String>() {
-            if let Some(pos) = response.interact_pointer_pos().or(ui.input(|i| i.pointer.interact_pos())) {
+            if let Some(pos) = response
+                .interact_pointer_pos()
+                .or(ui.input(|i| i.pointer.interact_pos()))
+            {
                 let local = pos - rect.min;
-                self.place_at((local.x / cell) as i32, (local.y / cell) as i32, (*payload).clone(), false);
+                self.place_at(
+                    (local.x / cell) as i32,
+                    (local.y / cell) as i32,
+                    (*payload).clone(),
+                    false,
+                );
             }
         } else if response.clicked() || response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
@@ -1005,8 +1172,16 @@ impl NestApp {
         }
         let layer = asset.kind.default_layer();
         let level = &mut self.project.levels[self.level_sel];
-        level.cells.retain(|cell| !(cell.x == x && cell.y == y && cell.layer == layer));
-        level.cells.push(Cell { x, y, asset_id, layer });
+        level
+            .cells
+            .retain(|cell| !(cell.x == x && cell.y == y && cell.layer == layer));
+        level.cells.push(Cell {
+            x,
+            y,
+            asset_id,
+            layer,
+            ..Cell::default()
+        });
     }
 
     fn overworld(&mut self, ui: &mut egui::Ui) {
@@ -1047,7 +1222,11 @@ impl NestApp {
                     from_map: true,
                     level_id: String::new(),
                     sim: None,
-                    cleared: self.play.as_ref().map(|p| p.cleared.clone()).unwrap_or_default(),
+                    cleared: self
+                        .play
+                        .as_ref()
+                        .map(|p| p.cleared.clone())
+                        .unwrap_or_default(),
                     message: "Choose a path".into(),
                     accum: 0.0,
                     select: 0,
@@ -1055,7 +1234,8 @@ impl NestApp {
                 self.tab = Tab::Play;
             }
         });
-        let (rect, response) = ui.allocate_exact_size(Vec2::new(640.0, 320.0), Sense::click_and_drag());
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(640.0, 320.0), Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 8.0, Color32::from_rgb(22, 18, 16));
         for node in &self.project.nodes {
@@ -1063,7 +1243,10 @@ impl NestApp {
             for link in &node.links {
                 if let Some(other) = self.project.nodes.iter().find(|n| &n.id == link) {
                     let b = rect.min + Vec2::new(other.x, other.y);
-                    painter.line_segment([a, b], egui::Stroke::new(2.0_f32, Color32::from_rgb(138, 90, 58)));
+                    painter.line_segment(
+                        [a, b],
+                        egui::Stroke::new(2.0_f32, Color32::from_rgb(138, 90, 58)),
+                    );
                 }
             }
         }
@@ -1125,12 +1308,171 @@ impl NestApp {
         }
     }
 
+    fn physics_dropdown(&mut self, ui: &mut egui::Ui) {
+        let before = self.project.character_physics;
+        ui.horizontal(|ui| {
+            ui.label("Character Game Style Physics");
+            egui::ComboBox::from_id_salt("character-game-style-physics")
+                .selected_text(self.project.character_physics.label())
+                .show_ui(ui, |ui| {
+                    for preset in CharacterPhysics::ALL {
+                        ui.selectable_value(
+                            &mut self.project.character_physics,
+                            preset,
+                            preset.label(),
+                        );
+                    }
+                });
+        });
+        if self.project.character_physics != before {
+            if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
+                sim.bind_character_physics(self.project.character_physics);
+            }
+        }
+    }
+
+    fn enemy_ai_dropdown(&mut self, ui: &mut egui::Ui, level_index: usize, with_enemies: bool) {
+        if level_index >= self.project.levels.len() {
+            return;
+        }
+        let enemies: Vec<(i32, i32)> = self.project.levels[level_index]
+            .cells
+            .iter()
+            .filter(|cell| {
+                self.project
+                    .asset(&cell.asset_id)
+                    .map(|asset| asset.kind == AssetKind::Enemy)
+                    .unwrap_or(false)
+            })
+            .map(|cell| (cell.x, cell.y))
+            .collect();
+        let mut pick = self
+            .enemy_pick
+            .filter(|cell| enemies.iter().any(|enemy| enemy == cell));
+        if !with_enemies {
+            pick = None;
+        }
+        let mut chosen_level: Option<EnemyAiStyle> = None;
+        let mut chosen_enemy: Option<Option<EnemyAiStyle>> = None;
+        ui.horizontal(|ui| {
+            ui.label("Enemy AI Style");
+            if with_enemies {
+                egui::ComboBox::from_id_salt("enemy-ai-target")
+                    .selected_text(match pick {
+                        Some((x, y)) => format!("Enemy {x},{y}"),
+                        None => "This course".to_string(),
+                    })
+                    .show_ui(ui, |ui| {
+                        if ui.selectable_label(pick.is_none(), "This course").clicked() {
+                            pick = None;
+                        }
+                        for (x, y) in &enemies {
+                            let label = format!("Enemy {x},{y}");
+                            if ui.selectable_label(pick == Some((*x, *y)), label).clicked() {
+                                pick = Some((*x, *y));
+                            }
+                        }
+                    });
+            }
+            let selected = if let Some((x, y)) = pick {
+                let style = self.project.levels[level_index]
+                    .cells
+                    .iter()
+                    .find(|cell| cell.x == x && cell.y == y)
+                    .and_then(|cell| cell.enemy_ai);
+                override_label(style)
+            } else {
+                self.project.levels[level_index].enemy_ai.label()
+            };
+            egui::ComboBox::from_id_salt(("enemy-ai-style", with_enemies, level_index))
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if pick.is_some() {
+                        if ui
+                            .selectable_label(
+                                selected == "Inherit Level Style",
+                                "Inherit Level Style",
+                            )
+                            .clicked()
+                        {
+                            chosen_enemy = Some(None);
+                        }
+                        let smb1 = EnemyAiStyle::Smb1Nes.label();
+                        if ui.selectable_label(selected == smb1, smb1).clicked() {
+                            chosen_enemy = Some(Some(EnemyAiStyle::Smb1Nes));
+                        }
+                    } else if ui
+                        .selectable_label(
+                            selected == EnemyAiStyle::Smb1Nes.label(),
+                            EnemyAiStyle::Smb1Nes.label(),
+                        )
+                        .clicked()
+                    {
+                        chosen_level = Some(EnemyAiStyle::Smb1Nes);
+                    }
+                });
+        });
+        if with_enemies {
+            self.enemy_pick = pick;
+        }
+        if let Some(style) = chosen_level {
+            self.project.levels[level_index].enemy_ai = style;
+            self.push_enemy_styles(level_index);
+        }
+        if let Some((x, y)) = pick {
+            if let Some(style) = chosen_enemy {
+                if let Some(cell) = self.project.levels[level_index]
+                    .cells
+                    .iter_mut()
+                    .find(|cell| cell.x == x && cell.y == y)
+                {
+                    cell.enemy_ai = style;
+                }
+                if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
+                    sim.set_enemy_override(x, y, style);
+                }
+            }
+        }
+    }
+
+    fn push_enemy_styles(&mut self, level_index: usize) {
+        let Some(level) = self.project.levels.get(level_index) else {
+            return;
+        };
+        let style = level.enemy_ai;
+        let id = level.id.clone();
+        let global = self.project.enemy_ai;
+        if let Some(play) = self.play.as_mut() {
+            if play.level_id == id {
+                if let Some(sim) = play.sim.as_mut() {
+                    sim.set_enemy_styles(style, global);
+                }
+            }
+        }
+    }
+
     fn play_view(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Play").font(serif(26.0)));
+        self.physics_dropdown(ui);
+        let level_index = self
+            .play
+            .as_ref()
+            .and_then(|play| {
+                self.project
+                    .levels
+                    .iter()
+                    .position(|level| level.id == play.level_id)
+            })
+            .unwrap_or(self.level_sel);
+        self.enemy_ai_dropdown(ui, level_index, false);
         if self.play.is_none() {
             self.start_level(self.current_level_id(), false);
         }
-        let from_map = self.play.as_ref().map(|p| p.from_map && p.sim.is_none()).unwrap_or(false);
+        let from_map = self
+            .play
+            .as_ref()
+            .map(|p| p.from_map && p.sim.is_none())
+            .unwrap_or(false);
         if from_map {
             self.draw_play_map(ui);
         } else {
@@ -1140,6 +1482,7 @@ impl NestApp {
             let left = ui.add(egui::Button::new("Left").min_size(Vec2::new(72.0, 36.0)));
             let right = ui.add(egui::Button::new("Right").min_size(Vec2::new(72.0, 36.0)));
             let jump = ui.add(egui::Button::new("Jump").min_size(Vec2::new(72.0, 36.0)));
+            let run = ui.add(egui::Button::new("Run").min_size(Vec2::new(72.0, 36.0)));
             self.hold_left = left.is_pointer_button_down_on();
             self.hold_right = right.is_pointer_button_down_on();
             let down = jump.is_pointer_button_down_on();
@@ -1147,8 +1490,13 @@ impl NestApp {
                 self.jump_edge = true;
             }
             self.hold_jump = down;
+            self.hold_run = run.is_pointer_button_down_on();
             if ui.button("Overworld").clicked() {
-                let cleared = self.play.as_ref().map(|p| p.cleared.clone()).unwrap_or_default();
+                let cleared = self
+                    .play
+                    .as_ref()
+                    .map(|p| p.cleared.clone())
+                    .unwrap_or_default();
                 self.stop_music();
                 self.play = Some(PlayState {
                     from_map: true,
@@ -1161,10 +1509,14 @@ impl NestApp {
                 });
             }
         });
-        ui.label("Arrows or A/D move. Z, W, Up, or Space jumps. The buttons above do the same.");
+        ui.label("Arrows or A/D move. Jump is Z, W, Up, or Space (the Jump button is A). Run is Left Shift, X, or the Run button.");
         if let Some(play) = &self.play {
             if !play.message.is_empty() {
-                ui.label(RichText::new(&play.message).font(serif(18.0)).color(ember()));
+                ui.label(
+                    RichText::new(&play.message)
+                        .font(serif(18.0))
+                        .color(ember()),
+                );
             }
         }
     }
@@ -1208,16 +1560,27 @@ impl NestApp {
             for link in &node.links {
                 if let Some(other) = self.project.nodes.iter().find(|n| &n.id == link) {
                     let b = rect.min + Vec2::new(other.x * 0.9, other.y * 0.75);
-                    painter.line_segment([a, b], egui::Stroke::new(2.0_f32, Color32::from_rgb(138, 90, 58)));
+                    painter.line_segment(
+                        [a, b],
+                        egui::Stroke::new(2.0_f32, Color32::from_rgb(138, 90, 58)),
+                    );
                 }
             }
         }
         for (index, id) in unlocked.iter().enumerate() {
-            let Some(node) = self.project.nodes.iter().find(|n| &n.id == id) else { continue };
+            let Some(node) = self.project.nodes.iter().find(|n| &n.id == id) else {
+                continue;
+            };
             let center = rect.min + Vec2::new(node.x * 0.9, node.y * 0.75);
             let color = if index == select { ember() } else { paper() };
             painter.circle_filled(center, 12.0, color);
-            painter.text(center + Vec2::new(16.0, -8.0), egui::Align2::LEFT_CENTER, &node.name, FontId::new(16.0, FontFamily::Name("serif".into())), paper());
+            painter.text(
+                center + Vec2::new(16.0, -8.0),
+                egui::Align2::LEFT_CENTER,
+                &node.name,
+                FontId::new(16.0, FontFamily::Name("serif".into())),
+                paper(),
+            );
             if response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     if pos.distance(center) < 18.0 {
@@ -1234,21 +1597,46 @@ impl NestApp {
             }
             let center = rect.min + Vec2::new(node.x * 0.9, node.y * 0.75);
             painter.circle_filled(center, 8.0, Color32::from_rgb(70, 60, 54));
-            painter.text(center + Vec2::new(14.0, -6.0), egui::Align2::LEFT_CENTER, &node.name, FontId::new(14.0, FontFamily::Name("serif".into())), Color32::from_rgb(140, 130, 120));
+            painter.text(
+                center + Vec2::new(14.0, -6.0),
+                egui::Align2::LEFT_CENTER,
+                &node.name,
+                FontId::new(14.0, FontFamily::Name("serif".into())),
+                Color32::from_rgb(140, 130, 120),
+            );
         }
     }
 
     fn draw_play_level(&mut self, ui: &mut egui::Ui) {
-        let Some(play) = self.play.as_ref() else { return };
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
         let Some(sim) = play.sim.as_ref() else { return };
-        let Some(level) = self.project.level(&play.level_id) else { return };
-        let scale = 2.0;
-        let view = Vec2::new(480.0, 270.0);
+        let Some(level) = self.project.level(&play.level_id) else {
+            return;
+        };
+        let surface_w = ui.available_width().clamp(320.0, 1920.0);
+        let surface_h = (ui.clip_rect().height() - 150.0).clamp(180.0, 1080.0);
+        let scale = play_surface_scale(surface_w, surface_h, sim.level_w, sim.level_h);
+        let view = Vec2::new(surface_w, surface_h);
+        let sky = level.sky.clone();
+        let level_name = level.name.clone();
+        let level_id = play.level_id.clone();
         let (rect, _) = ui.allocate_exact_size(view, Sense::hover());
+        if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
+            sim.update_view(rect.width() / scale, rect.height() / scale);
+        }
+        let Some(play) = self.play.as_ref() else {
+            return;
+        };
+        let Some(sim) = play.sim.as_ref() else { return };
+        let Some(level) = self.project.level(&level_id) else {
+            return;
+        };
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, parse_hex_color(&level.sky));
-        let cam_x = (sim.player.x - view.x / scale * 0.35).clamp(0.0, (sim.level_w - view.x / scale).max(0.0));
-        let cam_y = (sim.player.y - view.y / scale * 0.55).clamp(0.0, (sim.level_h - view.y / scale).max(0.0));
+        painter.rect_filled(rect, 0.0, parse_hex_color(&sky));
+        let cam_x = sim.view.x;
+        let cam_y = sim.view.y;
         let mut cells = level.cells.clone();
         cells.sort_by_key(|c| match c.layer {
             Layer::Back => 0,
@@ -1256,23 +1644,52 @@ impl NestApp {
             Layer::Front => 2,
         });
         for cell in &cells {
-            let Some(asset) = self.project.asset(&cell.asset_id) else { continue };
+            let Some(asset) = self.project.asset(&cell.asset_id) else {
+                continue;
+            };
             if asset.kind == AssetKind::Enemy {
                 continue;
             }
             if asset.kind == AssetKind::Item
                 && sim.items.iter().any(|(r, alive)| {
-                    !*alive && (r.x - cell.x as f32 * TILE).abs() < 1.0 && (r.y - cell.y as f32 * TILE).abs() < 1.0
+                    !*alive
+                        && (r.x - cell.x as f32 * TILE).abs() < 1.0
+                        && (r.y - cell.y as f32 * TILE).abs() < 1.0
                 })
             {
                 continue;
             }
-            self.blit(&painter, rect.min, cam_x, cam_y, scale, &cell.asset_id, cell.x as f32 * TILE, cell.y as f32 * TILE, false);
+            self.blit(
+                &painter,
+                rect.min,
+                cam_x,
+                cam_y,
+                scale,
+                &cell.asset_id,
+                cell.x as f32 * TILE,
+                cell.y as f32 * TILE,
+                false,
+            );
         }
         for enemy in sim.enemies.iter().filter(|e| e.alive) {
-            self.blit(&painter, rect.min, cam_x, cam_y, scale, &enemy.asset_id, enemy.x - 1.0, enemy.y - 2.0, enemy.dir < 0);
+            self.blit(
+                &painter,
+                rect.min,
+                cam_x,
+                cam_y,
+                scale,
+                &enemy.asset_id,
+                enemy.x - 1.0,
+                enemy.y - 2.0,
+                enemy.dir < 0,
+            );
         }
-        if let Some(player) = self.project.assets.iter().find(|a| a.kind == AssetKind::Player) {
+        if let Some(player) = self
+            .project
+            .assets
+            .iter()
+            .find(|a| a.kind == AssetKind::Player)
+        {
             self.blit(
                 &painter,
                 rect.min,
@@ -1288,13 +1705,24 @@ impl NestApp {
         painter.text(
             rect.min + Vec2::new(8.0, 6.0),
             egui::Align2::LEFT_TOP,
-            &level.name,
+            &level_name,
             FontId::new(16.0, FontFamily::Name("serif".into())),
             paper(),
         );
     }
 
-    fn blit(&self, painter: &egui::Painter, origin: Pos2, cam_x: f32, cam_y: f32, scale: f32, id: &str, x: f32, y: f32, flip: bool) {
+    fn blit(
+        &self,
+        painter: &egui::Painter,
+        origin: Pos2,
+        cam_x: f32,
+        cam_y: f32,
+        scale: f32,
+        id: &str,
+        x: f32,
+        y: f32,
+        flip: bool,
+    ) {
         let p = origin + Vec2::new((x - cam_x) * scale, (y - cam_y) * scale);
         let size = Vec2::splat(TILE * scale);
         let rect = Rect::from_min_size(p, size);
@@ -1312,7 +1740,9 @@ impl NestApp {
         ui.label(RichText::new("Export").font(serif(26.0)));
         ui.label("The desktop app is the editor and the Linux and Windows player. Android play is the browser build: open index.html in Chrome, Firefox, or Edge. Add to Home Screen needs https. A file open is enough to play. This does not build an Android package.");
         if crate::READY {
-            ui.label("The wasm player is embedded in this build and will be written into the folder.");
+            ui.label(
+                "The wasm player is embedded in this build and will be written into the folder.",
+            );
         } else {
             ui.label(RichText::new(crate::FAILURE).color(Color32::from_rgb(232, 180, 120)));
         }
@@ -1324,7 +1754,10 @@ impl NestApp {
                 }
             }
             if ui.button("Export game").clicked() {
-                match export_game::export_folder(std::path::Path::new(&self.export_path), &self.project) {
+                match export_game::export_folder(
+                    std::path::Path::new(&self.export_path),
+                    &self.project,
+                ) {
                     Ok(note) => {
                         self.export_note = note.clone();
                         self.status = note;
@@ -1336,7 +1769,10 @@ impl NestApp {
                 }
             }
             if ui.button("Save project JSON…").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Project", &["json"]).save_file() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Project", &["json"])
+                    .save_file()
+                {
                     match serde_json::to_string_pretty(&self.project) {
                         Ok(text) => match std::fs::write(&path, text) {
                             Ok(()) => self.status = format!("Saved {}", path.display()),
@@ -1347,9 +1783,13 @@ impl NestApp {
                 }
             }
             if ui.button("Open project JSON…").clicked() {
-                if let Some(path) = rfd::FileDialog::new().add_filter("Project", &["json"]).pick_file() {
+                if let Some(path) = rfd::FileDialog::new()
+                    .add_filter("Project", &["json"])
+                    .pick_file()
+                {
                     match std::fs::read_to_string(&path).and_then(|text| {
-                        serde_json::from_str::<Project>(&text).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                        serde_json::from_str::<Project>(&text)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
                     }) {
                         Ok(project) => {
                             self.project = project;
@@ -1376,20 +1816,44 @@ impl NestApp {
     }
 
     fn assist(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Workshop assistant").font(serif(22.0)).color(ember()));
+        ui.label(
+            RichText::new("Workshop assistant")
+                .font(serif(22.0))
+                .color(ember()),
+        );
         ui.label("This chat edits the project. It does not draw. The Image maker is a separate window with its own key.");
-        egui::ScrollArea::vertical().stick_to_bottom(true).max_height(420.0).show(ui, |ui| {
-            for (role, text) in &self.chat {
-                let title = if role == "assistant" { "Assistant" } else if role == "tool" { "Tool" } else { "You" };
-                ui.label(RichText::new(title).color(ember()).font(serif(14.0)));
-                ui.label(text);
-                ui.add_space(4.0);
-            }
-        });
-        ui.add(egui::TextEdit::multiline(&mut self.chat_input).desired_rows(3).desired_width(f32::INFINITY).hint_text("Ask for a course edit"));
+        egui::ScrollArea::vertical()
+            .stick_to_bottom(true)
+            .max_height(420.0)
+            .show(ui, |ui| {
+                for (role, text) in &self.chat {
+                    let title = if role == "assistant" {
+                        "Assistant"
+                    } else if role == "tool" {
+                        "Tool"
+                    } else {
+                        "You"
+                    };
+                    ui.label(RichText::new(title).color(ember()).font(serif(14.0)));
+                    ui.label(text);
+                    ui.add_space(4.0);
+                }
+            });
+        ui.add(
+            egui::TextEdit::multiline(&mut self.chat_input)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY)
+                .hint_text("Ask for a course edit"),
+        );
         ui.horizontal(|ui| {
             let busy = self.assist_busy;
-            if ui.add_enabled(!busy, egui::Button::new(if busy { "Working…" } else { "Send" })).clicked() {
+            if ui
+                .add_enabled(
+                    !busy,
+                    egui::Button::new(if busy { "Working…" } else { "Send" }),
+                )
+                .clicked()
+            {
                 let text = self.chat_input.trim().to_string();
                 if !text.is_empty() {
                     self.chat.push(("user".into(), text));
@@ -1410,7 +1874,11 @@ impl NestApp {
         ui.label(format!(
             "Provider {} · model {}",
             self.keys.assistant_provider,
-            if self.keys.assistant_model.is_empty() { self.keys.suggested_assistant_model() } else { self.keys.assistant_model.as_str() }
+            if self.keys.assistant_model.is_empty() {
+                self.keys.suggested_assistant_model()
+            } else {
+                self.keys.assistant_model.as_str()
+            }
         ));
     }
 
@@ -1545,7 +2013,11 @@ impl NestApp {
     fn load_rom_bytes(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
         let name = name.into();
         if bytes.len() > MAX_ROM_BYTES {
-            self.status = format!("{} is {} bytes. Nesticles stops at 64 MB.", name, bytes.len());
+            self.status = format!(
+                "{} is {} bytes. Nesticles stops at 64 MB.",
+                name,
+                bytes.len()
+            );
             return;
         }
         let info = detect_rom(&bytes, &name);
@@ -1556,9 +2028,22 @@ impl NestApp {
         self.selected = Some(1);
         self.strings = find_strings(&bytes, 80);
         self.disasm_index_text = format!("{:X}", info.prg_start);
-        self.disasm_base_text = if info.format == RomFormat::Nes { "8000" } else { "0" }.into();
-        let style_name = if info.title.trim().is_empty() { name.clone() } else { info.title.clone() };
-        self.rom = Some(RomSession { name: name.clone(), bytes, info });
+        self.disasm_base_text = if info.format == RomFormat::Nes {
+            "8000"
+        } else {
+            "0"
+        }
+        .into();
+        let style_name = if info.title.trim().is_empty() {
+            name.clone()
+        } else {
+            info.title.clone()
+        };
+        self.rom = Some(RomSession {
+            name: name.clone(),
+            bytes,
+            info,
+        });
         let style_id = self.project.adopt_style(&style_name, &name);
         self.active_style = style_id;
         self.tray_filter.clear();
@@ -1603,7 +2088,11 @@ impl NestApp {
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("audio");
         match import_audio(&bytes, name) {
             Ok((samples, rate)) => {
-                let wav = if read_pcm_wav(&bytes).is_ok() { bytes } else { wav_from_samples(&samples, rate) };
+                let wav = if read_pcm_wav(&bytes).is_ok() {
+                    bytes
+                } else {
+                    wav_from_samples(&samples, rate)
+                };
                 let style_id = self.part_style();
                 self.project.assets.push(Asset {
                     id: nid("sfx-"),
@@ -1638,12 +2127,15 @@ impl NestApp {
         for ty in 0..stamp {
             for tx in 0..stamp {
                 let tile = selected + ty * self.columns.max(1) + tx;
-                let decoded = self.tile_indices(page_origin, tile).unwrap_or_else(|| vec![0; 64]);
+                let decoded = self
+                    .tile_indices(page_origin, tile)
+                    .unwrap_or_else(|| vec![0; 64]);
                 let dest = (ty * stamp + tx) * 64;
                 indices[dest..dest + 64].copy_from_slice(&decoded[..64]);
             }
         }
-        let (w, h, rgba) = indices_to_rgba(&indices, stamp, stamp, &self.palette, self.transparent_zero);
+        let (w, h, rgba) =
+            indices_to_rgba(&indices, stamp, stamp, &self.palette, self.transparent_zero);
         let png = nesticles_core::pngutil::rgba_to_png(&rgba, w, h).unwrap_or_default();
         Some((w, h, rgba, png))
     }
@@ -1653,7 +2145,10 @@ impl NestApp {
             self.status = "Select a tile first.".into();
             return;
         };
-        let Some(path) = rfd::FileDialog::new().add_filter("PNG", &["png"]).save_file() else {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("PNG", &["png"])
+            .save_file()
+        else {
             return;
         };
         match std::fs::write(&path, png) {
@@ -1663,7 +2158,9 @@ impl NestApp {
     }
 
     fn export_asset_png(&mut self, id: &str) {
-        let Some(asset) = self.project.asset(id) else { return };
+        let Some(asset) = self.project.asset(id) else {
+            return;
+        };
         let bytes = if !asset.png_base64.is_empty() {
             b64_decode(&asset.png_base64).unwrap_or_default()
         } else if !asset.rgba_base64.is_empty() {
@@ -1676,7 +2173,10 @@ impl NestApp {
             self.status = "That asset has no picture.".into();
             return;
         }
-        let Some(path) = rfd::FileDialog::new().add_filter("PNG", &["png"]).save_file() else {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("PNG", &["png"])
+            .save_file()
+        else {
             return;
         };
         match std::fs::write(&path, bytes) {
@@ -1685,7 +2185,15 @@ impl NestApp {
         }
     }
 
-    fn add_rgba_asset(&mut self, name: &str, kind: AssetKind, w: u32, h: u32, rgba: Vec<u8>, png: Vec<u8>) {
+    fn add_rgba_asset(
+        &mut self,
+        name: &str,
+        kind: AssetKind,
+        w: u32,
+        h: u32,
+        rgba: Vec<u8>,
+        png: Vec<u8>,
+    ) {
         let id = nid("sprite-");
         let style_id = self.part_style();
         self.project.assets.push(Asset {
@@ -1708,16 +2216,29 @@ impl NestApp {
 
     fn ensure_textures(&mut self, ctx: &egui::Context) {
         for asset in &self.project.assets {
-            if self.textures.contains_key(&asset.id) || asset.rgba_base64.is_empty() || asset.w == 0 || asset.h == 0 {
+            if self.textures.contains_key(&asset.id)
+                || asset.rgba_base64.is_empty()
+                || asset.w == 0
+                || asset.h == 0
+            {
                 continue;
             }
-            let Ok(rgba) = b64_decode(&asset.rgba_base64) else { continue };
+            let Ok(rgba) = b64_decode(&asset.rgba_base64) else {
+                continue;
+            };
             let need = asset.w as usize * asset.h as usize * 4;
             if rgba.len() < need {
                 continue;
             }
-            let image = egui::ColorImage::from_rgba_unmultiplied([asset.w as usize, asset.h as usize], &rgba[..need]);
-            let tex = ctx.load_texture(format!("{}-{}", asset.id, self.tex_epoch), image, TextureOptions::NEAREST);
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [asset.w as usize, asset.h as usize],
+                &rgba[..need],
+            );
+            let tex = ctx.load_texture(
+                format!("{}-{}", asset.id, self.tex_epoch),
+                image,
+                TextureOptions::NEAREST,
+            );
             self.textures.insert(asset.id.clone(), tex);
         }
     }
@@ -1744,9 +2265,15 @@ impl NestApp {
 
     fn start_level(&mut self, level_id: String, keep_cleared: bool) {
         let cleared = if keep_cleared {
-            self.play.as_ref().map(|p| p.cleared.clone()).unwrap_or_default()
+            self.play
+                .as_ref()
+                .map(|p| p.cleared.clone())
+                .unwrap_or_default()
         } else {
-            self.play.as_ref().map(|p| p.cleared.clone()).unwrap_or_default()
+            self.play
+                .as_ref()
+                .map(|p| p.cleared.clone())
+                .unwrap_or_default()
         };
         let Some(level) = self.project.level(&level_id).cloned() else {
             self.status = "Pick a course first.".into();
@@ -1784,7 +2311,9 @@ impl NestApp {
             if id.is_empty() || !seen.insert(id.clone()) {
                 continue;
             }
-            let Some(node) = self.project.nodes.iter().find(|n| n.id == id) else { continue };
+            let Some(node) = self.project.nodes.iter().find(|n| n.id == id) else {
+                continue;
+            };
             open.push(id);
             if cleared.map(|c| c.contains(&node.level_id)).unwrap_or(false) {
                 queue.extend(node.links.iter().cloned());
@@ -1798,14 +2327,18 @@ impl NestApp {
             // still play the first jump
         }
         self.last_cue = Instant::now();
-        let Some(asset) = self.project.assets.iter().find(|a| a.cue == name) else { return };
+        let Some(asset) = self.project.assets.iter().find(|a| a.cue == name) else {
+            return;
+        };
         if let Ok(bytes) = b64_decode(&asset.wav_base64) {
             let _ = audio_out::preview_wav(&bytes);
         }
     }
 
     fn preview_asset_wav(&mut self, id: &str) {
-        let Some(asset) = self.project.asset(id) else { return };
+        let Some(asset) = self.project.asset(id) else {
+            return;
+        };
         match b64_decode(&asset.wav_base64) {
             Ok(bytes) => {
                 if let Err(err) = audio_out::preview_wav(&bytes) {
@@ -1851,11 +2384,15 @@ fn install_theme(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "liberation".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/LiberationSerif-Regular.ttf"))),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/LiberationSerif-Regular.ttf"
+        ))),
     );
     fonts.font_data.insert(
         "liberation_bold".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/LiberationSerif-Bold.ttf"))),
+        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+            "../assets/LiberationSerif-Bold.ttf"
+        ))),
     );
     fonts.families.insert(
         FontFamily::Name("serif".into()),
@@ -1903,7 +2440,10 @@ fn visual_kinds() -> [AssetKind; 8] {
 }
 fn parse_hex_or_dec(text: &str) -> usize {
     // Offset and address fields are labeled hex. "4010" is 0x4010, not four thousand ten.
-    let t = text.trim().trim_start_matches("0x").trim_start_matches("0X");
+    let t = text
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X");
     usize::from_str_radix(t, 16).unwrap_or_else(|_| t.parse().unwrap_or(0))
 }
 fn parse_hex_color(text: &str) -> Color32 {
@@ -1917,14 +2457,25 @@ fn parse_hex_color(text: &str) -> Color32 {
         Color32::from_rgb(36, 52, 60)
     }
 }
-fn page_sig(origin: usize, codec: Codec, palette: &[[u8; 3]], cols: usize, rows: usize, clear: bool, len: usize) -> u64 {
+fn page_sig(
+    origin: usize,
+    codec: Codec,
+    palette: &[[u8; 3]],
+    cols: usize,
+    rows: usize,
+    clear: bool,
+    len: usize,
+) -> u64 {
     let mut h = origin as u64 ^ (cols as u64) << 16 ^ (rows as u64) << 24 ^ len as u64;
     h ^= codec as u64;
     if clear {
         h ^= 0x9e37;
     }
     for color in palette {
-        h = h.wrapping_mul(0x100000001b3) ^ color[0] as u64 ^ ((color[1] as u64) << 8) ^ ((color[2] as u64) << 16);
+        h = h.wrapping_mul(0x100000001b3)
+            ^ color[0] as u64
+            ^ ((color[1] as u64) << 8)
+            ^ ((color[2] as u64) << 16);
     }
     h
 }
@@ -1965,9 +2516,9 @@ Tiles are uncompressed only: NES 2bpp with separated planes, Game Boy 2bpp with 
 
 Audio can preview NES DPCM (least-significant bit first, starting at level 64, stepping by 2, clamped to 0–126), Game Boy 16-byte wave tables, and Super NES BRR. A kept clip becomes a sound or music. You can also import PCM WAV, and Ogg or MP3 when the file decodes.
 
-Notes show ASCII strings and, for NES, a linear 6502 disassembly. That listing does not follow banks and it will read data as code. Scripts are custom per game. Physics is not extracted. Play uses an original engine: gravity, acceleration, friction, a variable jump, coyote time, a jump buffer, AABB tile collision, patrol enemies that turn at walls and ledges, a stomp, hazard and fall respawns, and a goal.
+Notes show ASCII strings and, for NES, a linear 6502 disassembly. That listing does not follow banks and it will read data as code. Scripts are custom per game. Physics is not extracted. Play can use the fixed-point Super Mario Bros. 1 (NES) character preset or the original Nesticles float controller: gravity, acceleration, friction, a variable jump, coyote time, a jump buffer, AABB tile collision, patrol enemies, a stomp, hazard and fall respawns, and a goal. Enemy AI Style picks the enemy brain. Inherit Level Style on one enemy uses the course style.
 
-Each cartridge becomes a style, the way a maker keeps several game looks in one tray. Dropping in another game adds a style and leaves the earlier parts where they are. A course has a home style, and the tray can show that style or every style. Drag a part onto the grid. Parts from more than one style can share a course. Play uses those parts with Nesticles physics, not the cartridge's code. The overworld nodes link to courses. Clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, a web manifest, and icon.png for the browser tab and home screen. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
+Each cartridge becomes a style, the way a maker keeps several game looks in one tray. Dropping in another game adds a style and leaves the earlier parts where they are. A course has a home style, and the tray can show that style or every style. Drag a part onto the grid. Parts from more than one style can share a course. Character Game Style Physics chooses the controller used in Play, not the cartridge's code. The overworld nodes link to courses. Clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, a web manifest, and icon.png for the browser tab and home screen. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
 
 Nesticles does not replace tools that already understand compressed graphics or a particular game's formats:
 

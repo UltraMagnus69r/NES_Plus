@@ -11,7 +11,8 @@ pub fn export_folder(dest: &Path, project: &Project) -> Result<String, String> {
     fs::write(dest.join("project.json"), &project_json).map_err(|e| e.to_string())?;
     fs::write(dest.join("icon.png"), crate::icon::PNG).map_err(|e| e.to_string())?;
     fs::write(dest.join("manifest.webmanifest"), manifest(project)).map_err(|e| e.to_string())?;
-    fs::write(dest.join("README.txt"), readme(project, READY, FAILURE)).map_err(|e| e.to_string())?;
+    fs::write(dest.join("README.txt"), readme(project, READY, FAILURE))
+        .map_err(|e| e.to_string())?;
     let html = if READY {
         fs::write(dest.join("nesticles_player.js"), JS).map_err(|e| e.to_string())?;
         fs::write(dest.join("nesticles_player_bg.wasm"), WASM).map_err(|e| e.to_string())?;
@@ -71,7 +72,7 @@ fn readme(project: &Project, ready: bool, failure: &str) -> String {
 {player}
 {failure}
 
-Controls: Arrow keys or A/D to move, Z, W, Up, or Space to jump. The on-screen buttons work with a finger.
+Controls: Arrow keys or A/D to move, Z, W, Up, or Space to jump (A). Run is Left Shift, X, or the Run button. The on-screen buttons work with a finger.
 
 Add to Home Screen on Android needs a site served over https. A file open is enough to play; the home-screen install is the extra step that needs https. icon.png in this folder is the tab icon and the home-screen icon.
 
@@ -92,9 +93,10 @@ fn icon_links() -> String {
 }
 
 fn html_with_player(project: &Project, wasm_b64: &str) -> String {
-    let project_js = serde_json::to_string(&serde_json::to_string(project).unwrap_or_else(|_| "{}".into()))
-        .unwrap_or_else(|_| "\"{}\"".into())
-        .replace('<', "\\u003c");
+    let project_js =
+        serde_json::to_string(&serde_json::to_string(project).unwrap_or_else(|_| "{}".into()))
+            .unwrap_or_else(|_| "\"{}\"".into())
+            .replace('<', "\\u003c");
     let wasm_js = serde_json::to_string(wasm_b64)
         .unwrap_or_else(|_| "\"\"".into())
         .replace('<', "\\u003c");
@@ -128,13 +130,14 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
     <button id="left" type="button">Left</button>
     <button id="right" type="button">Right</button>
     <button id="jump" type="button">Jump</button>
+    <button id="run" type="button">Run</button>
   </div>
-  <p id="note">Arrow keys or A/D, jump with Z, W, Up, or Space. File open is enough to play. Add to Home Screen needs https.</p>
+  <p id="note">Arrow keys or A/D. Jump (A) is Z, W, Up, or Space. Run is Left Shift, X, or the Run button. File open is enough to play. Add to Home Screen needs https.</p>
   <script src="nesticles_player.js"></script>
   <script>
     const projectText = {project_js};
     const wasmB64 = {wasm_js};
-    const keys = {{ left: false, right: false, jump: false, jumpPressed: false }};
+    const keys = {{ left: false, right: false, jump: false, jumpPressed: false, run: false }};
     function setKey(name, down) {{
       if (name === "jump" && down && !keys.jump) keys.jumpPressed = true;
       keys[name] = down;
@@ -143,6 +146,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
       const k = e.key;
       if (k === "ArrowLeft" || k === "a" || k === "A") setKey("left", true);
       if (k === "ArrowRight" || k === "d" || k === "D") setKey("right", true);
+      if (k === "Shift" || k === "x" || k === "X") setKey("run", true);
       if (k === "ArrowUp" || k === "w" || k === "W" || k === "z" || k === "Z" || k === " ") {{
         setKey("jump", true);
         e.preventDefault();
@@ -152,6 +156,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
       const k = e.key;
       if (k === "ArrowLeft" || k === "a" || k === "A") setKey("left", false);
       if (k === "ArrowRight" || k === "d" || k === "D") setKey("right", false);
+      if (k === "Shift" || k === "x" || k === "X") setKey("run", false);
       if (k === "ArrowUp" || k === "w" || k === "W" || k === "z" || k === "Z" || k === " ") setKey("jump", false);
     }});
     function hold(id, name) {{
@@ -166,6 +171,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
     hold("left", "left");
     hold("right", "right");
     hold("jump", "jump");
+    hold("run", "run");
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const loops = {{}};
     window.nesticlesPlayWav = function (b64, looped) {{
@@ -206,6 +212,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
       last = now;
       const pressed = keys.jumpPressed;
       keys.jumpPressed = false;
+      if (window.wasm_bindgen && wasm_bindgen.set_run) wasm_bindgen.set_run(!!keys.run);
       if (window.wasm_bindgen && wasm_bindgen.frame) {{
         wasm_bindgen.frame(keys.left, keys.right, keys.jump, pressed, dt);
       }}
@@ -260,7 +267,8 @@ mod tests {
 
     #[test]
     fn export_embeds_the_program_icon() {
-        let dest = std::env::temp_dir().join(format!("nesticles-icon-export-{}", std::process::id()));
+        let dest =
+            std::env::temp_dir().join(format!("nesticles-icon-export-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dest);
         export_folder(&dest, &demo_project()).expect("export");
         let png = fs::read(dest.join("icon.png")).expect("icon.png");
@@ -270,8 +278,10 @@ mod tests {
         assert!(html.contains("rel=\"apple-touch-icon\""));
         assert!(html.contains("href=\"icon.png\""));
         assert!(!html.contains("href=\"http"));
-        let manifest_text = fs::read_to_string(dest.join("manifest.webmanifest")).expect("manifest");
-        let manifest: serde_json::Value = serde_json::from_str(&manifest_text).expect("manifest json");
+        let manifest_text =
+            fs::read_to_string(dest.join("manifest.webmanifest")).expect("manifest");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&manifest_text).expect("manifest json");
         assert_eq!(manifest["icons"][0]["src"], "icon.png");
         assert_eq!(manifest["icons"][0]["type"], "image/png");
         let (width, height) = crate::icon::png_size();
