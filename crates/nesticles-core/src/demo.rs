@@ -337,6 +337,7 @@ pub fn demo_project() -> Project {
         power_up_style: crate::project::PowerUpStyle::Smb1,
         format: 1,
         blueprints: Vec::new(),
+        blueprint_cutover: false,
     }
 }
 

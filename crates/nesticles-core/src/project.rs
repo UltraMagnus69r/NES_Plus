@@ -239,7 +239,7 @@ pub struct Cell {
     #[serde(default)]
     pub warp: Option<WarpTarget>,
     /// Behavior record for this placement. Missing on old courses.
-    /// The sim does not read it; names and tags still decide play.
+    /// When set, `World::from_level` uses that blueprint and ignores the asset name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blueprint_id: Option<String>,
 }
@@ -331,9 +331,18 @@ pub struct Project {
     #[serde(default = "default_format")]
     pub format: u32,
     /// Shared behavior records. Old files omit it and load empty.
-    /// Play does not read this vector.
     #[serde(default)]
     pub blueprints: Vec<Blueprint>,
+    /// Set when [`crate::blueprint::ensure_legacy_blueprints`] has captured the
+    /// placements that existed at migration time. Old files omit it and load false.
+    /// After it is true, a cell with no `blueprint_id` is decorative: the sim does
+    /// not invent gameplay from the asset name or kind.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub blueprint_cutover: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn default_format() -> u32 {
@@ -354,6 +363,7 @@ impl Project {
             power_up_style: PowerUpStyle::Smb1,
             format: default_format(),
             blueprints: Vec::new(),
+            blueprint_cutover: false,
         }
     }
 

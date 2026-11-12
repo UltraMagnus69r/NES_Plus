@@ -479,9 +479,9 @@ fn brick_role_survives_asset_rename() {
         Some(id.as_str())
     );
 
-    // The live reader still uses the name. The stored blueprint does not follow it.
+    // The stored blueprint stays brick. Name inference would now say solid, and play ignores it.
     let after = World::from_level(&project, &project.levels[0], CharacterId::Mario);
-    assert_eq!(after.solids[0].block, BlockKind::Solid);
+    assert_eq!(after.solids[0].block, BlockKind::Brick);
     assert_eq!(
         infer_legacy(&project.assets[0], &project.levels[0].cells[0]).block(),
         Some(LegacyBlock::Solid)
@@ -768,6 +768,218 @@ fn authored_refs_and_future_fields_stay_put() {
         serde_json::from_str(r#"{"name":"old","unrelated_future":true}"#).unwrap();
     assert_eq!(with_format.format, 1);
     assert!(with_format.blueprints.is_empty());
+    assert!(!with_format.blueprint_cutover);
+}
+
+#[test]
+fn seed_spirit_world_matches_after_migration() {
+    let bare = demo_project();
+    let mut migrated = bare.clone();
+    ensure_legacy_blueprints(&mut migrated);
+    assert!(migrated.blueprint_cutover);
+    for level in &bare.levels {
+        let left = World::from_level(&bare, level, CharacterId::Mario);
+        let right = World::from_level(
+            &migrated,
+            migrated.level(&level.id).unwrap(),
+            CharacterId::Mario,
+        );
+        assert!(
+            right.blueprint_faults.is_empty(),
+            "{:?}",
+            right.blueprint_faults
+        );
+        assert_eq!(actor_keys(&left), actor_keys(&right), "{}", level.id);
+    }
+}
+
+#[test]
+fn renamed_brick_keeps_the_stored_blueprint() {
+    let mut project = project_with(
+        vec![asset("brick", "Brick", AssetKind::Terrain)],
+        vec![cell("brick", 4, 10)],
+    );
+    ensure_legacy_blueprints(&mut project);
+    project.assets[0].name = "Stone".into();
+    project.assets[0].kind = AssetKind::Background;
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.blueprint_faults.is_empty());
+    assert!(world.enemies.is_empty());
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Brick);
+    assert_eq!(world.solids[0].cell_x, 4);
+
+    let saved = serde_json::to_string_pretty(&project).unwrap();
+    let loaded = load_project_json(&saved).unwrap();
+    assert!(loaded.blueprint_cutover);
+    assert_eq!(loaded.blueprints, project.blueprints);
+    assert_eq!(cell_refs(&loaded), cell_refs(&project));
+    let again = World::from_level(&loaded, &loaded.levels[0], CharacterId::Mario);
+    assert_eq!(again.solids.len(), 1);
+    assert_eq!(again.solids[0].block, BlockKind::Brick);
+}
+
+#[test]
+fn two_blueprints_share_art_and_differ_at_runtime() {
+    let mut project = project_with(
+        vec![asset("art", "Goomba Brick", AssetKind::Enemy)],
+        vec![cell("art", 3, 11), cell("art", 8, 11)],
+    );
+    project.blueprint_cutover = true;
+    project.blueprints.push(Blueprint {
+        id: "walker".into(),
+        visual_id: "art".into(),
+        origin: BlueprintOrigin::Authored,
+        organizational_label: OrganizationalLabel::Enemy,
+        legacy_role: LegacyRole::Enemy {
+            kind: LegacyEnemy::Goomba,
+            archetype: EnemyArchetype::Walker,
+            enemy_ai: None,
+            warp: None,
+        },
+        notes: String::new(),
+    });
+    project.blueprints.push(Blueprint {
+        id: "brick".into(),
+        visual_id: "art".into(),
+        origin: BlueprintOrigin::Authored,
+        organizational_label: OrganizationalLabel::Terrain,
+        legacy_role: LegacyRole::Fixture {
+            block: Some(LegacyBlock::Brick),
+            item: None,
+            hazard: None,
+            warp: None,
+        },
+        notes: String::new(),
+    });
+    project.levels[0].cells[0].blueprint_id = Some("walker".into());
+    project.levels[0].cells[1].blueprint_id = Some("brick".into());
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.blueprint_faults.is_empty());
+    assert_eq!(world.enemies.len(), 1);
+    assert_eq!(world.enemies[0].kind, Kind::Goomba);
+    assert_eq!(world.enemies[0].cell_x, 3);
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Brick);
+    assert_eq!(world.solids[0].cell_x, 8);
+}
+
+#[test]
+fn new_art_after_cutover_does_not_inherit_a_name() {
+    let mut project = project_with(vec![asset("sod", "Sod", AssetKind::Terrain)], vec![]);
+    ensure_legacy_blueprints(&mut project);
+    assert!(project.blueprint_cutover);
+    project
+        .assets
+        .push(asset("deco", "Brick Goomba", AssetKind::Enemy));
+    project.levels[0].cells.push(cell("deco", 6, 12));
+    ensure_legacy_blueprints(&mut project);
+    assert!(project.levels[0].cells[0].blueprint_id.is_none());
+    assert_eq!(project.blueprints.len(), 0);
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.enemies.is_empty());
+    assert!(world.solids.is_empty());
+    assert!(world.hazards.is_empty());
+    assert!(world.items.is_empty());
+    assert!(world.goals.is_empty());
+    assert!(world.blueprint_faults.is_empty());
+}
+
+#[test]
+fn missing_blueprint_is_omitted_and_the_id_is_kept() {
+    let mut project = project_with(
+        vec![asset("art", "Goomba", AssetKind::Enemy)],
+        vec![cell("art", 5, 12)],
+    );
+    project.blueprint_cutover = true;
+    project.levels[0].cells[0].blueprint_id = Some("missing-bp".into());
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.enemies.is_empty());
+    assert!(world.solids.is_empty());
+    assert_eq!(world.blueprint_faults.len(), 1);
+    assert!(world.blueprint_faults[0].contains("missing-bp"));
+    assert!(world.blueprint_faults[0].contains("omitted"));
+    assert_eq!(
+        project.levels[0].cells[0].blueprint_id.as_deref(),
+        Some("missing-bp")
+    );
+
+    project.blueprints.push(Blueprint {
+        id: "missing-bp".into(),
+        visual_id: "other".into(),
+        origin: BlueprintOrigin::Authored,
+        organizational_label: OrganizationalLabel::Enemy,
+        legacy_role: LegacyRole::Enemy {
+            kind: LegacyEnemy::Bowser,
+            archetype: EnemyArchetype::Boss,
+            enemy_ai: None,
+            warp: None,
+        },
+        notes: String::new(),
+    });
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.enemies.is_empty());
+    assert!(world.blueprint_faults[0].contains("other"));
+    assert!(world.blueprint_faults[0].contains("art"));
+}
+
+#[test]
+fn load_project_json_migrates_without_rewriting_the_source_text() {
+    let original = demo_project();
+    let mut value = serde_json::to_value(&original).unwrap();
+    strip_blueprint_fields(&mut value);
+    let source = serde_json::to_string_pretty(&value).unwrap();
+    let loaded = load_project_json(&source).unwrap();
+    assert_eq!(source, serde_json::to_string_pretty(&value).unwrap());
+    assert!(loaded.blueprint_cutover);
+    assert!(loaded
+        .levels
+        .iter()
+        .flat_map(|level| &level.cells)
+        .any(|cell| cell.asset_id == "pebble" && cell.blueprint_id.is_some()));
+    let moss = loaded.level("moss").unwrap();
+    let world = World::from_level(&loaded, moss, CharacterId::Mario);
+    assert!(world.blueprint_faults.is_empty());
+    assert!(world.enemies.iter().any(|enemy| enemy.kind == Kind::Goomba));
+    assert!(world.enemies.iter().all(|enemy| enemy.asset_id == "pebble"));
+}
+
+fn actor_keys(world: &World) -> Vec<String> {
+    let mut keys = Vec::new();
+    for solid in &world.solids {
+        keys.push(format!(
+            "solid {:?} {},{}",
+            solid.block, solid.cell_x, solid.cell_y
+        ));
+    }
+    for enemy in &world.enemies {
+        keys.push(format!(
+            "enemy {:?} {},{} {}",
+            enemy.kind, enemy.cell_x, enemy.cell_y, enemy.asset_id
+        ));
+    }
+    for hazard in &world.hazards {
+        keys.push(format!(
+            "hazard {:?} {},{} {} {} {} {}",
+            hazard.kind,
+            hazard.cell_x,
+            hazard.cell_y,
+            hazard.balls,
+            hazard.warp_set,
+            hazard.warp_level,
+            hazard.warp_x
+        ));
+    }
+    for item in &world.items {
+        keys.push(format!(
+            "item {:?} {},{}",
+            item.kind, item.cell_x, item.cell_y
+        ));
+    }
+    for goal in &world.goals {
+        keys.push(format!("goal {},{}", goal.x, goal.y));
+    }
+    keys
 }
 
 fn blueprint_json(blueprint: &Blueprint) -> String {

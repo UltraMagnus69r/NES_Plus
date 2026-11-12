@@ -1,13 +1,13 @@
-//! Legacy behavior records.
+//! Gameplay records for Maker placements.
 //!
 //! A blueprint points at one visual [`crate::project::Asset`] and stores the
-//! behavior that asset-plus-placement had when it was migrated or authored.
-//! Many cells may reference one blueprint. Pixel bytes stay on the asset.
+//! behavior that placement should execute. Many cells may reference one blueprint.
+//! Pixel bytes stay on the asset.
 //!
-//! [`ensure_legacy_blueprints`] writes those records. [`crate::physics::Sim::tick_play`]
-//! and [`crate::engine::res_1080p::World::tick`] do not read them. Play still
-//! infers enemies, blocks, items, and hazards from names, tags, kind, layer,
-//! archetype, and warp through [`crate::engine::res_1080p::interpret_cell`].
+//! [`ensure_legacy_blueprints`] captures the legacy name and tag reading once.
+//! After that, [`crate::engine::res_1080p::World::from_level`] executes the stored
+//! role. [`crate::engine::res_1080p::World::tick`] does not re-read asset names.
+//! A cell added after the cutover, with no blueprint id, is decorative.
 
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::engine::res_1080p::interpret_cell;
@@ -283,18 +283,26 @@ fn role_or_inert(
     }
 }
 
-/// Give every unassigned placement a stable blueprint id.
+/// Capture legacy behavior for placements that do not yet have a blueprint.
 ///
+/// Call this when a project is loaded into the editor. Do not call it from
+/// `World::tick`. It does not write a file.
+///
+/// - The first call records every current cell that has an asset and no
+///   `blueprint_id`, then sets [`Project::blueprint_cutover`].
 /// - Cells that already have `blueprint_id` are left alone.
 /// - An existing blueprint with the computed id is reused and not rewritten,
 ///   including when its origin is [`BlueprintOrigin::Authored`].
 /// - Ids are a hash of the visual id plus the inferred role, so a second run
 ///   and a later load do not mint new ids.
 /// - Asset names, kinds, tags, and gameplay settings are not modified.
-/// - Safe to call twice. The second call does not add a duplicate or retarget a ref.
-///
-/// This does not change tick results. The sim keeps its own inference.
+/// - After the cutover, a later call returns immediately. Cells placed after
+///   that stay unassigned, and the sim treats them as decorative instead of
+///   reading their names.
 pub fn ensure_legacy_blueprints(project: &mut Project) {
+    if project.blueprint_cutover {
+        return;
+    }
     let mut pending = Vec::new();
     for (level_index, level) in project.levels.iter().enumerate() {
         for (cell_index, cell) in level.cells.iter().enumerate() {
@@ -335,6 +343,17 @@ pub fn ensure_legacy_blueprints(project: &mut Project) {
         }
         project.levels[level_index].cells[cell_index].blueprint_id = Some(id);
     }
+    project.blueprint_cutover = true;
+}
+
+/// Parse project JSON and capture legacy blueprints in memory.
+///
+/// The returned project is the editor copy. This function does not write the
+/// source file, the ROM, or any other path.
+pub fn load_project_json(text: &str) -> Result<Project, serde_json::Error> {
+    let mut project = serde_json::from_str(text)?;
+    ensure_legacy_blueprints(&mut project);
+    Ok(project)
 }
 
 fn deterministic_id(visual_id: &str, role: &LegacyRole) -> String {

@@ -1,9 +1,11 @@
 //! One 1080p course. The stored grid stays 16px cells; this converts each cell
 //! into a 72×72 tile while the field is running.
 //!
-//! Placement rules still come from asset names, tags, kind, layer, archetype,
-//! and warp. [`crate::blueprint`] records that reading for later. `World::tick`
-//! does not consult blueprints.
+//! `from_level` builds actors from an explicit blueprint when the cell has one.
+//! Asset names and kinds do not override that record. A cell with no blueprint
+//! still uses [`interpret_cell`] only while the project has not been cut over.
+//! After [`crate::blueprint::ensure_legacy_blueprints`], a missing id is decorative.
+//! `tick` does not classify cells again.
 
 use super::character_physics::{apply_stomp, params_for, step_motion, Body, Power};
 use super::powerups::smb1::{
@@ -19,9 +21,10 @@ use super::{
     overlaps, CharacterId, Rect, FP, HIT_H, HIT_TALL, HIT_W, INSET, SCREEN_H_FP, SCREEN_W_FP,
     TILE_FP,
 };
+use crate::blueprint::{LegacyBlock, LegacyEnemy, LegacyHazard, LegacyItem, LegacyRole};
 use crate::engine::Pad;
 use crate::project::{
-    Asset, AssetKind, BlockTag, HazardTag, ItemTag, Layer, Level, Project, WarpTarget,
+    Asset, AssetKind, BlockTag, Cell, HazardTag, ItemTag, Layer, Level, Project, WarpTarget,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -60,6 +63,10 @@ pub struct World {
     pub bump_marks: Vec<(i32, i32, i32)>,
     pub hidden: Vec<(i32, i32)>,
     pub hide_player: bool,
+    /// Explicit blueprint ids that did not resolve. The cell reference is left
+    /// on the project. No actor is built for that placement, and the asset name
+    /// is not consulted.
+    pub blueprint_faults: Vec<String>,
 }
 
 impl World {
@@ -69,16 +76,26 @@ impl World {
         let mut hazards = Vec::new();
         let mut items = Vec::new();
         let mut goals = Vec::new();
+        let mut blueprint_faults = Vec::new();
         for cell in &level.cells {
             let Some(asset) = project
                 .assets
                 .iter()
                 .find(|asset| asset.id == cell.asset_id)
             else {
+                if cell.blueprint_id.is_some() {
+                    blueprint_faults.push(missing_asset_fault(cell));
+                }
                 continue;
             };
-            // Same reading `blueprint::infer_legacy` records. Do not fork it.
-            let read = interpret_cell(asset, cell);
+            let read = match resolve_placement(project, cell, asset) {
+                Placement::Skip => continue,
+                Placement::Fault(message) => {
+                    blueprint_faults.push(message);
+                    continue;
+                }
+                Placement::Read(read) => read,
+            };
             if read.audio {
                 continue;
             }
@@ -99,8 +116,8 @@ impl World {
                 goals.push(cell_rect(cell.x, cell.y));
                 continue;
             }
-            if read.item.is_some() {
-                items.push(placed_item(cell.x, cell.y, asset));
+            if let Some(kind) = read.item {
+                items.push(placed_item(cell.x, cell.y, &asset.id, kind));
             }
             if let Some(block) = read.block {
                 solids.push(Solid::at_cell(cell.x, cell.y, block));
@@ -155,6 +172,7 @@ impl World {
             bump_marks: Vec::new(),
             hidden: Vec::new(),
             hide_player: false,
+            blueprint_faults,
         };
         world.update_camera();
         world
@@ -719,8 +737,7 @@ fn units_from_cell(cell: f32) -> i32 {
     (f64::from(cell) * f64::from(TILE_FP)).round() as i32
 }
 
-fn placed_item(cell_x: i32, cell_y: i32, asset: &Asset) -> ItemActor {
-    let kind = resolve_item(asset);
+fn placed_item(cell_x: i32, cell_y: i32, asset_id: &str, kind: ItemKind) -> ItemActor {
     let origin_y = cell_y.saturating_mul(TILE_FP);
     let vx = match kind {
         ItemKind::Mushroom | ItemKind::OneUp => 18432,
@@ -742,7 +759,166 @@ fn placed_item(cell_x: i32, cell_y: i32, asset: &Asset) -> ItemActor {
         cell_y,
         origin_y,
         placed: true,
-        asset_id: asset.id.clone(),
+        asset_id: asset_id.to_string(),
+    }
+}
+
+enum Placement {
+    /// No actor. Decorative cells and inert roles use this.
+    Skip,
+    Read(CellRead),
+    /// The blueprint id stays on the cell. Name inference is not a fallback.
+    Fault(String),
+}
+
+/// Blueprint first. Name and kind inference remains only for a project that
+/// has never been cut over, and only when the cell has no blueprint id.
+fn resolve_placement(project: &Project, cell: &Cell, asset: &Asset) -> Placement {
+    let Some(id) = cell.blueprint_id.as_deref() else {
+        if project.blueprint_cutover {
+            return Placement::Skip;
+        }
+        return Placement::Read(interpret_cell(asset, cell));
+    };
+    let Some(blueprint) = project
+        .blueprints
+        .iter()
+        .find(|blueprint| blueprint.id == id)
+    else {
+        return Placement::Fault(format!(
+            "cell ({}, {}) blueprint \"{id}\" was not found; gameplay for this placement was omitted",
+            cell.x, cell.y
+        ));
+    };
+    if blueprint.visual_id != cell.asset_id {
+        return Placement::Fault(format!(
+            "cell ({}, {}) blueprint \"{id}\" points at visual \"{}\" but the placement uses asset \"{}\"; gameplay for this placement was omitted",
+            cell.x, cell.y, blueprint.visual_id, cell.asset_id
+        ));
+    }
+    Placement::Read(read_from_role(&blueprint.legacy_role))
+}
+
+fn missing_asset_fault(cell: &Cell) -> String {
+    format!(
+        "cell ({}, {}) blueprint \"{}\" has no asset \"{}\"; gameplay for this placement was omitted",
+        cell.x,
+        cell.y,
+        cell.blueprint_id.as_deref().unwrap_or(""),
+        cell.asset_id
+    )
+}
+
+fn read_from_role(role: &LegacyRole) -> CellRead {
+    let mut read = CellRead {
+        audio: false,
+        podoboo: false,
+        enemy: None,
+        goal: false,
+        item: None,
+        block: None,
+        hazard: None,
+        balls: 0,
+        warp_set: false,
+        warp_level: String::new(),
+        warp_x: 0,
+        warp_y: 0,
+    };
+    match role {
+        LegacyRole::Inert => read.audio = true,
+        LegacyRole::Enemy { kind, warp, .. } => {
+            if *kind == LegacyEnemy::Podoboo {
+                read.podoboo = true;
+            } else {
+                read.enemy = Some(kind_from_legacy(*kind));
+            }
+            apply_warp(&mut read, warp);
+        }
+        LegacyRole::Goal { warp } => {
+            read.goal = true;
+            apply_warp(&mut read, warp);
+        }
+        LegacyRole::Fixture {
+            block,
+            item,
+            hazard,
+            warp,
+        } => {
+            read.block = block.map(block_from_legacy);
+            read.item = item.map(item_from_legacy);
+            if let Some(hazard) = hazard {
+                let (kind, balls) = hazard_from_legacy(*hazard);
+                read.hazard = Some(kind);
+                read.balls = balls;
+            }
+            apply_warp(&mut read, warp);
+        }
+    }
+    read
+}
+
+fn apply_warp(read: &mut CellRead, warp: &Option<crate::blueprint::LegacyWarp>) {
+    if let Some(warp) = warp {
+        read.warp_set = true;
+        read.warp_level = warp.level_id.clone();
+        read.warp_x = warp.x;
+        read.warp_y = warp.y;
+    }
+}
+
+fn kind_from_legacy(kind: LegacyEnemy) -> Kind {
+    match kind {
+        LegacyEnemy::Goomba => Kind::Goomba,
+        LegacyEnemy::GreenKoopa => Kind::GreenKoopa,
+        LegacyEnemy::Buzzy => Kind::Buzzy,
+        LegacyEnemy::RedKoopa => Kind::RedKoopa,
+        LegacyEnemy::GreenPara => Kind::GreenPara,
+        LegacyEnemy::RedPara => Kind::RedPara,
+        LegacyEnemy::Piranha => Kind::Piranha,
+        LegacyEnemy::Lakitu => Kind::Lakitu,
+        LegacyEnemy::HammerBro => Kind::HammerBro,
+        LegacyEnemy::Blaster => Kind::Blaster,
+        LegacyEnemy::Blooper => Kind::Blooper,
+        LegacyEnemy::CheepGreen => Kind::CheepGreen,
+        LegacyEnemy::CheepRed => Kind::CheepRed,
+        LegacyEnemy::CheepLeap => Kind::CheepLeap,
+        LegacyEnemy::Podoboo => Kind::Podoboo,
+        LegacyEnemy::Bowser => Kind::Bowser,
+        LegacyEnemy::Spiny => Kind::Spiny,
+        LegacyEnemy::Bill => Kind::Bill,
+        LegacyEnemy::Shell => Kind::Shell,
+        LegacyEnemy::Hammer => Kind::Hammer,
+        LegacyEnemy::SpinyEgg => Kind::SpinyEgg,
+    }
+}
+
+fn block_from_legacy(kind: LegacyBlock) -> BlockKind {
+    match kind {
+        LegacyBlock::Solid => BlockKind::Solid,
+        LegacyBlock::Question => BlockKind::Question,
+        LegacyBlock::Brick => BlockKind::Brick,
+        LegacyBlock::Coin => BlockKind::Coin,
+    }
+}
+
+fn item_from_legacy(kind: LegacyItem) -> ItemKind {
+    match kind {
+        LegacyItem::Mushroom => ItemKind::Mushroom,
+        LegacyItem::OneUp => ItemKind::OneUp,
+        LegacyItem::Flower => ItemKind::Flower,
+        LegacyItem::Star => ItemKind::Star,
+        LegacyItem::Plain => ItemKind::Plain,
+    }
+}
+
+fn hazard_from_legacy(kind: LegacyHazard) -> (HazardKind, i32) {
+    match kind {
+        LegacyHazard::Contact => (HazardKind::Contact, 0),
+        LegacyHazard::Spring => (HazardKind::Spring, 0),
+        LegacyHazard::Vine => (HazardKind::Vine, 0),
+        LegacyHazard::FireBar { balls } => (HazardKind::FireBar, balls),
+        LegacyHazard::PipeDown => (HazardKind::PipeDown, 0),
+        LegacyHazard::PipeRight => (HazardKind::PipeRight, 0),
     }
 }
 
