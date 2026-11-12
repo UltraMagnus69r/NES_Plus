@@ -434,6 +434,9 @@ impl Sim {
     }
 
     /// One 60 Hz maker tick. The play loop owns the accumulator and calls this once per slice.
+    ///
+    /// Blueprints are not an input. The 1080p world still classifies cells from
+    /// names, tags, kind, layer, archetype, and warp.
     pub fn tick_play(&mut self, preset: CharacterPhysics, power: PowerUpStyle, input: &Input) {
         let Some(field) = self.field.as_mut() else {
             return;

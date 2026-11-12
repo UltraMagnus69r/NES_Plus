@@ -1,5 +1,9 @@
 //! One 1080p course. The stored grid stays 16px cells; this converts each cell
 //! into a 72×72 tile while the field is running.
+//!
+//! Placement rules still come from asset names, tags, kind, layer, archetype,
+//! and warp. [`crate::blueprint`] records that reading for later. `World::tick`
+//! does not consult blueprints.
 
 use super::character_physics::{apply_stomp, params_for, step_motion, Body, Power};
 use super::powerups::smb1::{
@@ -73,11 +77,12 @@ impl World {
             else {
                 continue;
             };
-            if asset.kind.is_audio() {
+            // Same reading `blueprint::infer_legacy` records. Do not fork it.
+            let read = interpret_cell(asset, cell);
+            if read.audio {
                 continue;
             }
-            let (warp_set, warp_level, warp_x, warp_y) = warp_of(cell, asset);
-            if is_podoboo(asset) {
+            if read.podoboo {
                 enemies.push(EnemyActor::at_cell(
                     Kind::Podoboo,
                     cell.x,
@@ -86,43 +91,21 @@ impl World {
                 ));
                 continue;
             }
-            if asset.kind == AssetKind::Enemy {
-                enemies.push(EnemyActor::at_cell(
-                    kind_of(&cell.archetype, &asset.name),
-                    cell.x,
-                    cell.y,
-                    asset.id.clone(),
-                ));
+            if let Some(kind) = read.enemy {
+                enemies.push(EnemyActor::at_cell(kind, cell.x, cell.y, asset.id.clone()));
                 continue;
             }
-            if asset.kind == AssetKind::Goal {
+            if read.goal {
                 goals.push(cell_rect(cell.x, cell.y));
                 continue;
             }
-            if asset.kind == AssetKind::Item {
+            if read.item.is_some() {
                 items.push(placed_item(cell.x, cell.y, asset));
             }
-            let solid_terrain =
-                asset.kind == AssetKind::Terrain && (asset.solid || cell.layer == Layer::Main);
-            let hazard_kind = resolve_hazard(asset);
-            let pipe = matches!(
-                hazard_kind,
-                Some(HazardKind::PipeDown | HazardKind::PipeRight)
-            );
-            if solid_terrain || pipe {
-                let block = if solid_terrain {
-                    resolve_block(asset)
-                } else {
-                    BlockKind::Solid
-                };
+            if let Some(block) = read.block {
                 solids.push(Solid::at_cell(cell.x, cell.y, block));
             }
-            if let Some(kind) = hazard_kind {
-                let balls = if kind == HazardKind::FireBar {
-                    firebar_balls(asset)
-                } else {
-                    0
-                };
+            if let Some(kind) = read.hazard {
                 hazards.push(Hazard {
                     kind,
                     x: cell.x.saturating_mul(TILE_FP),
@@ -132,12 +115,12 @@ impl World {
                     cell_x: cell.x,
                     cell_y: cell.y,
                     awake: false,
-                    warp_level,
-                    warp_x,
-                    warp_y,
-                    warp_set,
+                    warp_level: read.warp_level.clone(),
+                    warp_x: read.warp_x,
+                    warp_y: read.warp_y,
+                    warp_set: read.warp_set,
                     angle: 0,
-                    balls,
+                    balls: read.balls,
                 });
             }
         }
@@ -647,6 +630,80 @@ fn player_rect(body: &Body) -> Rect {
         w: body.w,
         h: body.h,
     }
+}
+
+/// What `World::from_level` builds from one cell. Blueprint migration records this
+/// reading; it is not a second ruleset.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CellRead {
+    pub audio: bool,
+    pub podoboo: bool,
+    pub enemy: Option<Kind>,
+    pub goal: bool,
+    pub item: Option<ItemKind>,
+    pub block: Option<BlockKind>,
+    pub hazard: Option<HazardKind>,
+    pub balls: i32,
+    pub warp_set: bool,
+    pub warp_level: String,
+    pub warp_x: i32,
+    pub warp_y: i32,
+}
+
+pub(crate) fn interpret_cell(asset: &Asset, cell: &crate::project::Cell) -> CellRead {
+    let (warp_set, warp_level, warp_x, warp_y) = warp_of(cell, asset);
+    let mut read = CellRead {
+        audio: false,
+        podoboo: false,
+        enemy: None,
+        goal: false,
+        item: None,
+        block: None,
+        hazard: None,
+        balls: 0,
+        warp_set,
+        warp_level,
+        warp_x,
+        warp_y,
+    };
+    if asset.kind.is_audio() {
+        read.audio = true;
+        return read;
+    }
+    if is_podoboo(asset) {
+        read.podoboo = true;
+        return read;
+    }
+    if asset.kind == AssetKind::Enemy {
+        read.enemy = Some(kind_of(&cell.archetype, &asset.name));
+        return read;
+    }
+    if asset.kind == AssetKind::Goal {
+        read.goal = true;
+        return read;
+    }
+    if asset.kind == AssetKind::Item {
+        read.item = Some(resolve_item(asset));
+    }
+    let solid_terrain =
+        asset.kind == AssetKind::Terrain && (asset.solid || cell.layer == Layer::Main);
+    let hazard_kind = resolve_hazard(asset);
+    let pipe = matches!(
+        hazard_kind,
+        Some(HazardKind::PipeDown | HazardKind::PipeRight)
+    );
+    if solid_terrain {
+        read.block = Some(resolve_block(asset));
+    } else if pipe {
+        read.block = Some(BlockKind::Solid);
+    }
+    if let Some(kind) = hazard_kind {
+        read.hazard = Some(kind);
+        if kind == HazardKind::FireBar {
+            read.balls = firebar_balls(asset);
+        }
+    }
+    read
 }
 
 fn cell_rect(x: i32, y: i32) -> Rect {

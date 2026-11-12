@@ -335,6 +335,8 @@ pub fn demo_project() -> Project {
         enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
         character_physics: crate::physics::CharacterPhysics::Smb1Mario,
         power_up_style: crate::project::PowerUpStyle::Smb1,
+        format: 1,
+        blueprints: Vec::new(),
     }
 }
 
