@@ -282,15 +282,15 @@ impl Game {
             self.accum %= frame;
         }
         let warp = self.sim.as_mut().and_then(|sim| sim.take_warp());
-        if let Some((level, x, y)) = warp {
-            let same = level == self.level_id;
-            let known = self.project.levels.iter().any(|l| l.id == level);
+        if let Some(arrival) = warp {
+            let same = arrival.level_id == self.level_id;
+            let known = self.project.levels.iter().any(|l| l.id == arrival.level_id);
             if !same && known {
-                self.enter(&level);
+                self.enter(&arrival.level_id);
             }
             if same || known {
                 if let Some(sim) = self.sim.as_mut() {
-                    sim.place_at_cell(x, y);
+                    sim.place_at_cell_facing(arrival.x, arrival.y, arrival.facing);
                 }
             }
         }

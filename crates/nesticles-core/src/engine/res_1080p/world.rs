@@ -27,6 +27,7 @@ use crate::project::PlacementWarp;
 use crate::project::{
     Asset, AssetKind, BlockTag, Cell, HazardTag, ItemTag, Layer, Level, Project, WarpTarget,
 };
+use crate::transition::{named_exit, NamedExit};
 
 #[derive(Clone, Debug, Default)]
 pub struct Events {
@@ -56,9 +57,12 @@ pub struct World {
     pub won: bool,
     pub events: Events,
     pub warp_lock: i32,
+    /// False after an arrival until the player leaves every pipe opening.
+    pub pipe_armed: bool,
     pub pending_level: String,
     pub pending_x: i32,
     pub pending_y: i32,
+    pub pending_facing: i32,
     pub pending: bool,
     pub source_enemies: usize,
     pub bump_marks: Vec<(i32, i32, i32)>,
@@ -97,6 +101,23 @@ impl World {
                 }
                 Placement::Read(mut read) => {
                     apply_placement_warp(&mut read, cell);
+                    match named_exit(project, &level.id, cell) {
+                        NamedExit::Absent => {}
+                        NamedExit::Ready(exit) => {
+                            read.warp_set = true;
+                            read.warp_level = exit.level_id;
+                            read.warp_x = exit.x;
+                            read.warp_y = exit.y;
+                            read.arrival_facing = exit.facing;
+                        }
+                        NamedExit::Fault(message) => {
+                            read.warp_set = false;
+                            read.warp_level.clear();
+                            read.warp_x = 0;
+                            read.warp_y = 0;
+                            blueprint_faults.push(message);
+                        }
+                    }
                     read
                 }
             };
@@ -151,6 +172,7 @@ impl World {
                     warp_x: read.warp_x,
                     warp_y: read.warp_y,
                     warp_set: read.warp_set,
+                    arrival_facing: read.arrival_facing,
                     angle: 0,
                     balls: read.balls,
                 });
@@ -179,9 +201,11 @@ impl World {
             won: false,
             events: Events::default(),
             warp_lock: 0,
+            pipe_armed: true,
             pending_level: String::new(),
             pending_x: 0,
             pending_y: 0,
+            pending_facing: 1,
             pending: false,
             source_enemies,
             bump_marks: Vec::new(),
@@ -194,13 +218,23 @@ impl World {
     }
 
     pub fn place(&mut self, cell_x: i32, cell_y: i32) {
+        self.place_facing(cell_x, cell_y, self.body.facing);
+    }
+
+    /// Put the player on a cell. Velocity from the trip is cleared. Power and
+    /// the rest of the running world stay as they are. The pipe stays shut
+    /// until the player walks off its opening, so a return pipe cannot fire
+    /// on the arrival frame.
+    pub fn place_facing(&mut self, cell_x: i32, cell_y: i32, facing: i32) {
         self.body.x = cell_x.saturating_mul(TILE_FP) + INSET;
         self.body.y = cell_y.saturating_mul(TILE_FP);
         self.body.vx = 0;
         self.body.vy = 0;
+        self.body.facing = if facing < 0 { -1 } else { 1 };
         self.body.climbing = false;
         self.body.spring_timer = 0;
         self.warp_lock = 30;
+        self.pipe_armed = false;
         self.pending = false;
         self.update_camera();
     }
@@ -442,25 +476,45 @@ impl World {
     fn try_pipe(&mut self, pad: &Pad) {
         if self.warp_lock > 0 {
             self.warp_lock -= 1;
-            return;
-        }
-        if !pad.down && !pad.right {
-            return;
         }
         let body = player_rect(&self.body);
-        let mut chosen: Option<(String, i32, i32)> = None;
-        for hazard in &self.hazards {
-            let vertical = hazard.kind == HazardKind::PipeDown && pad.down;
-            let horizontal = hazard.kind == HazardKind::PipeRight && pad.right;
-            if !(vertical || horizontal) || !hazard.warp_set {
-                continue;
-            }
-            if overlaps(body, hazard.rect()) {
-                chosen = Some((hazard.warp_level.clone(), hazard.warp_x, hazard.warp_y));
-                break;
+        let in_opening = self.hazards.iter().any(|hazard| {
+            hazard.is_pipe() && hazard.warp_set && center_in(body, hazard.entry_rect())
+        });
+        if !self.pipe_armed {
+            if !in_opening {
+                self.pipe_armed = true;
+            } else {
+                return;
             }
         }
-        let Some((level, x, y)) = chosen else {
+        if self.warp_lock > 0 {
+            return;
+        }
+        let mut chosen: Option<(String, i32, i32, i32)> = None;
+        for hazard in &self.hazards {
+            if !hazard.warp_set || !center_in(body, hazard.entry_rect()) {
+                continue;
+            }
+            let open = match hazard.kind {
+                HazardKind::PipeDown => pad.down,
+                HazardKind::PipeUp => pad.up,
+                HazardKind::PipeLeft => pad.left,
+                HazardKind::PipeRight => pad.right,
+                _ => false,
+            };
+            if !open {
+                continue;
+            }
+            chosen = Some((
+                hazard.warp_level.clone(),
+                hazard.warp_x,
+                hazard.warp_y,
+                hazard.arrival_facing,
+            ));
+            break;
+        }
+        let Some((level, x, y, facing)) = chosen else {
             return;
         };
         if level.is_empty() {
@@ -471,16 +525,20 @@ impl World {
             }
         }
         self.warp_lock = 30;
+        self.pipe_armed = false;
         self.body.vx = 0;
         self.body.vy = 0;
+        self.body.facing = if facing < 0 { -1 } else { 1 };
         if level.is_empty() {
             self.body.x = x.saturating_mul(TILE_FP) + INSET;
             self.body.y = y.saturating_mul(TILE_FP);
+            self.update_camera();
         } else {
             self.pending = true;
             self.pending_level = level;
             self.pending_x = x;
             self.pending_y = y;
+            self.pending_facing = if facing < 0 { -1 } else { 1 };
         }
     }
 
@@ -707,6 +765,7 @@ pub(crate) struct CellRead {
     pub hazard: Option<HazardKind>,
     pub balls: i32,
     pub coin: bool,
+    pub arrival_facing: i32,
     pub warp_set: bool,
     pub warp_level: String,
     pub warp_x: i32,
@@ -725,6 +784,7 @@ pub(crate) fn interpret_cell(asset: &Asset, cell: &crate::project::Cell) -> Cell
         hazard: None,
         balls: 0,
         coin: false,
+        arrival_facing: 1,
         warp_set,
         warp_level,
         warp_x,
@@ -866,6 +926,7 @@ fn read_from_role(role: &LegacyRole) -> CellRead {
         hazard: None,
         balls: 0,
         coin: false,
+        arrival_facing: 1,
         warp_set: false,
         warp_level: String::new(),
         warp_x: 0,
@@ -908,6 +969,12 @@ fn read_from_role(role: &LegacyRole) -> CellRead {
         }
     }
     read
+}
+
+fn center_in(body: Rect, region: Rect) -> bool {
+    let cx = body.x.saturating_add(body.w / 2);
+    let cy = body.y.saturating_add(body.h / 2);
+    cx >= region.x && cx < region.right() && cy >= region.y && cy < region.bottom()
 }
 
 fn apply_placement_warp(read: &mut CellRead, cell: &Cell) {
@@ -990,6 +1057,8 @@ fn hazard_from_legacy(kind: LegacyHazard) -> (HazardKind, i32) {
         LegacyHazard::Vine => (HazardKind::Vine, 0),
         LegacyHazard::FireBar { balls } => (HazardKind::FireBar, balls),
         LegacyHazard::PipeDown => (HazardKind::PipeDown, 0),
+        LegacyHazard::PipeUp => (HazardKind::PipeUp, 0),
+        LegacyHazard::PipeLeft => (HazardKind::PipeLeft, 0),
         LegacyHazard::PipeRight => (HazardKind::PipeRight, 0),
     }
 }

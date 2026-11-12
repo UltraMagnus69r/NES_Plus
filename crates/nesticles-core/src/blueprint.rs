@@ -133,6 +133,8 @@ pub enum LegacyHazard {
     },
     PipeDown,
     PipeRight,
+    PipeUp,
+    PipeLeft,
 }
 
 fn default_firebar_balls() -> i32 {
@@ -398,6 +400,14 @@ pub fn gameplay_options() -> Vec<(&'static str, LegacyRole)> {
                 None,
                 Some(LegacyHazard::PipeRight),
             ),
+        ),
+        (
+            "Pipe up",
+            fixture(Some(LegacyBlock::Solid), None, Some(LegacyHazard::PipeUp)),
+        ),
+        (
+            "Pipe left",
+            fixture(Some(LegacyBlock::Solid), None, Some(LegacyHazard::PipeLeft)),
         ),
         ("Goal", LegacyRole::Goal { warp: None }),
     ];
@@ -818,7 +828,13 @@ fn describe_fixture(
     item: Option<LegacyItem>,
     hazard: Option<LegacyHazard>,
 ) -> String {
-    if let Some(pipe @ (LegacyHazard::PipeDown | LegacyHazard::PipeRight)) = hazard {
+    if let Some(
+        pipe @ (LegacyHazard::PipeDown
+        | LegacyHazard::PipeUp
+        | LegacyHazard::PipeLeft
+        | LegacyHazard::PipeRight),
+    ) = hazard
+    {
         return hazard_label(pipe).to_string();
     }
     match (block, item, hazard) {
@@ -911,6 +927,8 @@ fn hazard_label(kind: LegacyHazard) -> &'static str {
         LegacyHazard::FireBar { balls: 12 } => "Long fire bar",
         LegacyHazard::FireBar { .. } => "Fire bar",
         LegacyHazard::PipeDown => "Pipe down",
+        LegacyHazard::PipeUp => "Pipe up",
+        LegacyHazard::PipeLeft => "Pipe left",
         LegacyHazard::PipeRight => "Pipe right",
     }
 }
@@ -1032,6 +1050,8 @@ fn legacy_hazard(kind: HazardKind, balls: i32) -> LegacyHazard {
         HazardKind::Vine => LegacyHazard::Vine,
         HazardKind::FireBar => LegacyHazard::FireBar { balls },
         HazardKind::PipeDown => LegacyHazard::PipeDown,
+        HazardKind::PipeUp => LegacyHazard::PipeUp,
+        HazardKind::PipeLeft => LegacyHazard::PipeLeft,
         HazardKind::PipeRight => LegacyHazard::PipeRight,
     }
 }

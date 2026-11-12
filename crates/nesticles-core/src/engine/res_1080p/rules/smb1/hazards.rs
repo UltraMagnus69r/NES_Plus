@@ -11,6 +11,8 @@ pub enum HazardKind {
     Vine,
     FireBar,
     PipeDown,
+    PipeUp,
+    PipeLeft,
     PipeRight,
 }
 
@@ -28,6 +30,8 @@ pub struct Hazard {
     pub warp_x: i32,
     pub warp_y: i32,
     pub warp_set: bool,
+    /// Facing applied when this exit is taken. 1 is right, -1 is left.
+    pub arrival_facing: i32,
     pub angle: i32,
     pub balls: i32,
 }
@@ -40,6 +44,49 @@ impl Hazard {
             w: self.w,
             h: self.h,
         }
+    }
+
+    /// The tile in front of the opening. The player enters from here, not by
+    /// overlapping the solid pipe body.
+    pub fn entry_rect(&self) -> Rect {
+        let tile = TILE_FP;
+        match self.kind {
+            HazardKind::PipeDown => Rect {
+                x: self.x,
+                y: self.y - tile,
+                w: tile,
+                h: tile,
+            },
+            HazardKind::PipeUp => Rect {
+                x: self.x,
+                y: self.y + tile,
+                w: tile,
+                h: tile,
+            },
+            HazardKind::PipeLeft => Rect {
+                x: self.x + tile,
+                y: self.y,
+                w: tile,
+                h: tile,
+            },
+            HazardKind::PipeRight => Rect {
+                x: self.x - tile,
+                y: self.y,
+                w: tile,
+                h: tile,
+            },
+            _ => self.rect(),
+        }
+    }
+
+    pub fn is_pipe(&self) -> bool {
+        matches!(
+            self.kind,
+            HazardKind::PipeDown
+                | HazardKind::PipeUp
+                | HazardKind::PipeLeft
+                | HazardKind::PipeRight
+        )
     }
 }
 

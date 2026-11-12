@@ -54,6 +54,7 @@ fn course(cells: Vec<Cell>) -> Level {
         player: Spawn { x: 2.0, y: 12.0 },
         cells,
         enemy_ai: EnemyAiStyle::Smb1Nes,
+        entrances: Vec::new(),
     }
 }
 
@@ -1409,8 +1410,8 @@ fn same_course_and_cross_course_warps_follow_the_placement() {
     )
     .unwrap();
     let mut here = World::from_level(&project, &project.levels[0], CharacterId::Mario);
-    here.solids.clear();
-    overlap_hazard(&mut here, 0);
+    assert!(!here.solids.is_empty());
+    stand_at_opening(&mut here, 0);
     here.tick(&Pad {
         down: true,
         ..Pad::default()
@@ -1420,8 +1421,8 @@ fn same_course_and_cross_course_warps_follow_the_placement() {
     assert_eq!(here.body.y, 4 * 72 * 4096);
 
     let mut away = World::from_level(&project, &project.levels[0], CharacterId::Mario);
-    away.solids.clear();
-    overlap_hazard(&mut away, 1);
+    assert!(away.solids.iter().any(|solid| !solid.broken));
+    stand_at_opening(&mut away, 1);
     away.tick(&Pad {
         down: true,
         ..Pad::default()
@@ -1490,8 +1491,8 @@ fn invalid_warp_destinations_are_refused() {
         y: 80,
     });
     let mut world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
-    world.solids.clear();
-    overlap_hazard(&mut world, 0);
+    assert!(world.solids.iter().any(|solid| !solid.broken));
+    stand_at_opening(&mut world, 0);
     let before_y = world.body.y;
     world.tick(&Pad {
         down: true,
@@ -1519,11 +1520,19 @@ fn rise_into(world: &mut World, solid_index: usize) {
     world.tick(&Pad::default());
 }
 
-fn overlap_hazard(world: &mut World, hazard_index: usize) {
-    world.body.x = world.hazards[hazard_index].x + 4096;
-    world.body.y = world.hazards[hazard_index].y + 4096;
+fn stand_at_opening(world: &mut World, hazard_index: usize) {
+    let hazard = &world.hazards[hazard_index];
+    let (x, y) = match hazard.kind {
+        HazardKind::PipeUp => (hazard.cell_x, hazard.cell_y + 1),
+        HazardKind::PipeLeft => (hazard.cell_x + 1, hazard.cell_y),
+        HazardKind::PipeRight => (hazard.cell_x - 1, hazard.cell_y),
+        _ => (hazard.cell_x, hazard.cell_y - 1),
+    };
+    world.body.x = x * 72 * 4096 + 9 * 4096;
+    world.body.y = y * 72 * 4096;
     world.body.vx = 0;
     world.body.vy = 0;
+    world.pipe_armed = true;
 }
 
 fn fixture_brick() -> LegacyRole {

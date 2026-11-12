@@ -98,6 +98,72 @@ impl PlacementWarp {
     }
 }
 
+/// Which way the player faces after appearing at an entrance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Facing {
+    Left,
+    #[default]
+    Right,
+}
+
+impl Facing {
+    pub fn sign(self) -> i32 {
+        match self {
+            Self::Left => -1,
+            Self::Right => 1,
+        }
+    }
+}
+
+/// Which input opens a pipe. This is gameplay, not a picture name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl EntryDirection {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Up => "Pipe up",
+            Self::Down => "Pipe down",
+            Self::Left => "Pipe left",
+            Self::Right => "Pipe right",
+        }
+    }
+}
+
+/// Where the player appears. It does not send them anywhere by itself.
+/// Coordinates are course cells, the same grid as placements.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entrance {
+    pub id: String,
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    #[serde(default)]
+    pub facing: Facing,
+}
+
+/// One directed link from a placed exit to an entrance.
+/// A return trip is a second transition, with its own source and entrance.
+/// Empty `destination_level_id` means the source course.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Transition {
+    pub id: String,
+    pub source_level_id: String,
+    pub source_x: i32,
+    pub source_y: i32,
+    #[serde(default)]
+    pub destination_level_id: String,
+    pub destination_entrance_id: String,
+    pub entry: EntryDirection,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
@@ -269,6 +335,10 @@ pub struct Cell {
     /// When set, `World::from_level` uses that blueprint and ignores the asset name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blueprint_id: Option<String>,
+    /// Named exit for this placement. When set, it wins over [`PlacementWarp`].
+    /// A missing or invalid exit does not fall back to a coordinate warp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition_id: Option<String>,
 }
 
 impl Default for Cell {
@@ -283,6 +353,7 @@ impl Default for Cell {
             warp: None,
             warp_choice: PlacementWarp::Inherit,
             blueprint_id: None,
+            transition_id: None,
         }
     }
 }
@@ -316,6 +387,9 @@ pub struct Level {
     /// Enemy brain for this course. Old projects load as SMB1.
     #[serde(default)]
     pub enemy_ai: EnemyAiStyle,
+    /// Named places the player can appear. The course start in `player` stays.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entrances: Vec<Entrance>,
 }
 
 fn default_sky() -> String {
@@ -367,6 +441,9 @@ pub struct Project {
     /// not invent gameplay from the asset name or kind.
     #[serde(default, skip_serializing_if = "is_false")]
     pub blueprint_cutover: bool,
+    /// Directed exits. Old files omit this and keep coordinate warps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<Transition>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -392,6 +469,7 @@ impl Project {
             format: default_format(),
             blueprints: Vec::new(),
             blueprint_cutover: false,
+            transitions: Vec::new(),
         }
     }
 

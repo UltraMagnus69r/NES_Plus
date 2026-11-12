@@ -59,6 +59,7 @@ fn course(cells: Vec<Cell>, px: f32, py: f32) -> Level {
         player: Spawn { x: px, y: py },
         cells,
         enemy_ai: EnemyAiStyle::Smb1Nes,
+        entrances: Vec::new(),
     }
 }
 
