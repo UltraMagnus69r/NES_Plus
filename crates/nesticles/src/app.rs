@@ -39,6 +39,8 @@ use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
+use crate::studio::{self, ExitChoice, ExitStep, UnmakerView, Workspace};
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Cartridge,
@@ -190,6 +192,18 @@ pub struct NestApp {
     dirty: bool,
     stamp_at: Instant,
     import_kind: AssetKind,
+    workspace: Workspace,
+    unmaker: UnmakerView,
+    drawer_open: bool,
+    app_menu: bool,
+    assist_open: bool,
+    godot_open: bool,
+    exit_dialog: bool,
+    close_when_clean: bool,
+    allow_close: bool,
+    startup_frames: u8,
+    palette_query: String,
+    rail: &'static str,
 }
 
 #[derive(Clone)]
@@ -350,6 +364,18 @@ impl NestApp {
             dirty: true,
             stamp_at: Instant::now(),
             import_kind: AssetKind::Player,
+            workspace: Workspace::Maker,
+            unmaker: UnmakerView::Tiles,
+            drawer_open: false,
+            app_menu: false,
+            assist_open: false,
+            godot_open: false,
+            exit_dialog: false,
+            close_when_clean: false,
+            allow_close: false,
+            startup_frames: 0,
+            palette_query: String::new(),
+            rail: "Paint",
         }
     }
 
@@ -402,6 +428,8 @@ impl NestApp {
                     self.image_busy = false;
                     self.image_status = "Added the sprite to the library.".into();
                     self.tab = Tab::Library;
+                    self.workspace = Workspace::Unmaker;
+                    self.unmaker = UnmakerView::Library;
                 }
                 Resp::Image {
                     result: Err(err), ..
@@ -567,46 +595,56 @@ impl NestApp {
 
 impl eframe::App for NestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_visuals(studio::visuals());
         self.poll(ctx);
         self.take_drops(ctx);
         self.refresh_dirty();
-        if self.godot_busy {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        self.ensure_fullscreen(ctx);
+        self.handle_close_request(ctx);
+        self.handle_shortcuts(ctx);
+        if self.close_when_clean && !self.dirty {
+            self.close_when_clean = false;
+            self.allow_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if self.godot_busy || self.tab == Tab::Play {
+            ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         if self.tab == Tab::Play {
             self.step_play(ctx);
         }
         self.ensure_textures(ctx);
-        egui::TopBottomPanel::top("bar").show(ctx, |ui| self.top_bar(ui));
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.label(RichText::new(&self.status).color(paper()));
-        });
-        egui::SidePanel::right("assist")
-            .resizable(true)
-            .default_width(320.0)
-            .show(ctx, |ui| self.assist(ui));
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.tabs(ui);
-            ui.separator();
-            egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
-                Tab::Cartridge => self.cartridge(ui),
-                Tab::Tiles => self.tiles(ui, ctx),
-                Tab::Audio => self.audio(ui),
-                Tab::Notes => self.notes(ui),
-                Tab::Library => self.library(ui),
-                Tab::Courses => self.courses(ui),
-                Tab::Overworld => self.overworld(ui),
-                Tab::Play => self.play_view(ui),
-                Tab::Export => self.export_tab(ui),
-                Tab::Guide => self.guide(ui),
-            });
-        });
+        self.shell_bar(ctx);
+        let playing = self.workspace == Workspace::Maker && self.tab == Tab::Play;
+        if playing {
+            self.play_shell(ctx);
+        } else if self.workspace == Workspace::Maker {
+            self.maker_shell(ctx);
+        } else {
+            self.unmaker_shell(ctx);
+        }
         self.keys_window(ctx);
         self.image_window(ctx);
+        self.app_menu_window(ctx);
+        self.exit_window(ctx);
+        if self.assist_open {
+            egui::Window::new("Workshop assistant")
+                .default_width(360.0)
+                .show(ctx, |ui| self.assist(ui));
+        }
+        if self.godot_open {
+            egui::Window::new("Godot preview")
+                .default_width(420.0)
+                .show(ctx, |ui| {
+                    ui.label("Experimental. This is not the full game. Rust Play is the test that runs from the Play button.");
+                    self.godot_preview_ui(ui);
+                });
+        }
     }
 }
 
 impl NestApp {
+    #[allow(dead_code)]
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.add(
@@ -650,6 +688,7 @@ impl NestApp {
         });
     }
 
+    #[allow(dead_code)]
     fn tabs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             for (tab, label) in [
@@ -676,7 +715,7 @@ impl NestApp {
 
     fn cartridge(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Cartridge").font(serif(26.0)));
-        ui.label("Open an NES, Game Boy, Game Boy Color, Super NES, or Game Boy Advance image you supply, or drop the file on this window. Nesticles keeps tiles and sounds only. It does not import the cartridge's gameplay. Each file becomes its own style. A second game adds a style and does not replace the first. Files over 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted. A file with no known header still opens as a tile pager, and the status line says so.");
+        ui.label("Open a cartridge you supply, or drop it on this window. Nesticles keeps the pictures and sounds. It does not copy the gameplay.");
         ui.horizontal(|ui| {
             if ui.button("Open file…").clicked() {
                 if let Some(path) = rfd::FileDialog::new()
@@ -734,8 +773,8 @@ impl NestApp {
     }
 
     fn tiles(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.label(RichText::new("Tile pager").font(serif(26.0)));
-        ui.label("Uncompressed tiles, nearest-neighbor. A suggestion is only a guess. You choose the tag, because a cartridge does not label player or enemy.");
+        ui.label(RichText::new("Tiles").font(serif(26.0)));
+        ui.label("Pick a tile, then add it as a part. The picture does not decide what it does in the game.");
         if self.rom.is_none() {
             ui.label("Open a cartridge or the demo image first.");
             return;
@@ -810,19 +849,7 @@ impl NestApp {
                 }
             }
             if ui.button("Use in Maker Engine").clicked() {
-                if let Some(id) = self.paint_asset.clone() {
-                    let name = self
-                        .project
-                        .asset(&id)
-                        .map(|asset| asset.name.clone())
-                        .unwrap_or_else(|| "That picture".into());
-                    self.tab = Tab::Courses;
-                    self.status = format!(
-                        "{name} is selected in Courses. Paint with it, or create a Player Blueprint."
-                    );
-                } else {
-                    self.status = "Add the stamp as a part first. The project was not changed.".into();
-                }
+                self.use_in_maker();
             }
             if ui.button("Export PNG").clicked() {
                 self.export_stamp_png(page_origin);
@@ -1046,13 +1073,7 @@ impl NestApp {
                 self.import_png_dialog();
             }
             if ui.button("Use in Maker Engine").clicked() {
-                if let Some(id) = self.lib_sel.clone() {
-                    self.paint_asset = Some(id);
-                    self.tab = Tab::Courses;
-                    self.status = "That picture is selected in Courses.".into();
-                } else {
-                    self.status = "Select a picture first.".into();
-                }
+                self.use_in_maker();
             }
         });
         let mut remove = None;
@@ -1114,7 +1135,7 @@ impl NestApp {
             ui.horizontal(|ui| {
                 if ui.button("Use as paint").clicked() {
                     self.paint_asset = Some(id.clone());
-                    self.tab = Tab::Courses;
+                    self.use_in_maker();
                 }
                 if ui.button("Export PNG").clicked() {
                     self.export_asset_png(&id);
@@ -1212,11 +1233,9 @@ impl NestApp {
         self.gameplay_controls(ui);
         self.terrain_panel(ui);
         self.entrance_editor(ui, &level_id);
-        self.parts_tray(ui);
-        ui.label("Select a terrain brush to paint connected ground. Right click erases terrain and leaves enemies, items, and other parts. With no terrain brush selected, right click still removes the whole square. Dragging Pip moves the start.");
-        self.paint_grid(ui);
     }
 
+    #[allow(dead_code)]
     fn parts_tray(&mut self, ui: &mut egui::Ui) {
         let course_style = self
             .project
@@ -1322,7 +1341,8 @@ impl NestApp {
         if self.level_sel >= self.project.levels.len() {
             return;
         }
-        let cell = EDITOR_CELL_PX;
+        // 20px cells disappear on a 1080p screen. 48px keeps the course large and the hit test aligned.
+        let cell = 48.0_f32;
         let w = self.project.levels[self.level_sel].w;
         let h = self.project.levels[self.level_sel].h;
         let size = Vec2::new(w as f32 * cell, h as f32 * cell);
@@ -1330,6 +1350,21 @@ impl NestApp {
         let painter = ui.painter_at(rect);
         let sky = parse_hex_color(&self.project.levels[self.level_sel].sky);
         painter.rect_filled(rect, 0.0, sky);
+        let grid = Color32::from_rgba_unmultiplied(255, 255, 255, 48);
+        for x in 0..=w {
+            let px = rect.left() + x as f32 * cell;
+            painter.line_segment(
+                [Pos2::new(px, rect.top()), Pos2::new(px, rect.bottom())],
+                egui::Stroke::new(1.0_f32, grid),
+            );
+        }
+        for y in 0..=h {
+            let py = rect.top() + y as f32 * cell;
+            painter.line_segment(
+                [Pos2::new(rect.left(), py), Pos2::new(rect.right(), py)],
+                egui::Stroke::new(1.0_f32, grid),
+            );
+        }
         let level = &self.project.levels[self.level_sel];
         for cell_ref in &level.cells {
             let color = self
@@ -1383,7 +1418,10 @@ impl NestApp {
                 .or(ui.input(|i| i.pointer.interact_pos()))
             {
                 let local = pos - rect.min;
-                let (x, y) = pointer_cell(local.x, local.y);
+                let (x, y) = pointer_cell(
+                    local.x * EDITOR_CELL_PX / cell,
+                    local.y * EDITOR_CELL_PX / cell,
+                );
                 self.place_at(x, y, (*payload).clone(), false);
             }
         } else if response.clicked()
@@ -1396,7 +1434,10 @@ impl NestApp {
                 .or(ui.input(|input| input.pointer.interact_pos()))
             {
                 let local = pos - rect.min;
-                let (x, y) = pointer_cell(local.x, local.y);
+                let (x, y) = pointer_cell(
+                    local.x * EDITOR_CELL_PX / cell,
+                    local.y * EDITOR_CELL_PX / cell,
+                );
                 let erase = ui.input(|i| i.pointer.secondary_down());
                 match course_pointer(
                     self.edit_placement,
@@ -1439,7 +1480,10 @@ impl NestApp {
         if self.terrain_brush.is_some() {
             if let Some(pos) = response.hover_pos() {
                 let local = pos - rect.min;
-                let (x, y) = pointer_cell(local.x, local.y);
+                let (x, y) = pointer_cell(
+                    local.x * EDITOR_CELL_PX / cell,
+                    local.y * EDITOR_CELL_PX / cell,
+                );
                 if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
                     let hover = Rect::from_min_size(
                         rect.min + Vec2::new(x as f32 * cell, y as f32 * cell),
@@ -3354,21 +3398,6 @@ impl NestApp {
     }
 
     fn play_view(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Play").font(serif(26.0)));
-        self.godot_preview_ui(ui);
-        self.physics_dropdown(ui);
-        self.powerup_dropdown(ui);
-        let level_index = self
-            .play
-            .as_ref()
-            .and_then(|play| {
-                self.project
-                    .levels
-                    .iter()
-                    .position(|level| level.id == play.level_id)
-            })
-            .unwrap_or(self.level_sel);
-        self.enemy_ai_dropdown(ui, level_index, false);
         if self.play.is_none() {
             self.start_level(self.current_level_id(), false);
         }
@@ -3984,7 +4013,9 @@ impl NestApp {
         self.saved_stamp = None;
         self.dirty = true;
         self.tab = Tab::Library;
-        self.status = "New project. Import a PNG or open a cartridge, then save.".into();
+        self.workspace = Workspace::Unmaker;
+        self.unmaker = UnmakerView::Library;
+        self.status = "New project. Import a picture or open a cartridge, then save.".into();
     }
 
     fn save_project_quick(&mut self) {
@@ -4000,6 +4031,7 @@ impl NestApp {
             .add_filter("Project", &["json"])
             .save_file()
         else {
+            self.close_when_clean = false;
             return;
         };
         self.write_project(&path);
@@ -4015,10 +4047,14 @@ impl NestApp {
                     self.status = format!("Saved {}", path.display());
                 }
                 Err(err) => {
+                    self.close_when_clean = false;
                     self.status = format!("Could not save the project: {err}");
                 }
             },
-            Err(err) => self.status = format!("Could not prepare the project file: {err}"),
+            Err(err) => {
+                self.close_when_clean = false;
+                self.status = format!("Could not prepare the project file: {err}");
+            }
         }
     }
 
@@ -4062,6 +4098,7 @@ impl NestApp {
                     .map(|style| style.id.clone())
                     .unwrap_or_default();
                 self.tab = Tab::Courses;
+                self.workspace = Workspace::Maker;
                 self.status = format!("Opened {label}");
             }
             Err(err) => {
@@ -4677,21 +4714,901 @@ fn brand_texture(ctx: &egui::Context) -> TextureHandle {
     ctx.load_texture("nesticles-icon", image, TextureOptions::NEAREST)
 }
 
+impl NestApp {
+    fn ensure_fullscreen(&mut self, ctx: &egui::Context) {
+        if !studio::STARTS_FULLSCREEN || self.startup_frames >= 8 {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+        if let Some(size) = ctx.input(|input| input.viewport().monitor_size) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+        }
+        self.startup_frames += 1;
+    }
+
+    fn handle_close_request(&mut self, ctx: &egui::Context) {
+        let requested = ctx.input(|input| input.viewport().close_requested());
+        if !requested {
+            return;
+        }
+        if self.allow_close || !self.dirty {
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        self.exit_dialog = true;
+    }
+
+    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        let typing = ctx.wants_keyboard_input();
+        let (save, open, undo, redo, play, flip) = ctx.input(|input| {
+            let command = input.modifiers.command;
+            (
+                command && input.key_pressed(egui::Key::S),
+                command && input.key_pressed(egui::Key::O),
+                command && input.key_pressed(egui::Key::Z) && !input.modifiers.shift,
+                command
+                    && (input.key_pressed(egui::Key::Y)
+                        || (input.key_pressed(egui::Key::Z) && input.modifiers.shift)),
+                input.key_pressed(egui::Key::F5),
+                input.key_pressed(egui::Key::F6),
+            )
+        });
+        if save {
+            self.save_project_quick();
+        }
+        if open && !typing {
+            self.open_project_dialog();
+        }
+        if !typing && self.tab != Tab::Play {
+            if undo {
+                self.undo_terrain();
+            }
+            if redo {
+                self.redo_terrain();
+            }
+        }
+        if play && !typing {
+            self.toggle_play();
+        }
+        if flip && !typing {
+            self.flip_workspace();
+        }
+    }
+
+    fn request_exit(&mut self, ctx: &egui::Context) {
+        match studio::exit_step(self.dirty, None, false) {
+            ExitStep::Close => {
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            ExitStep::Ask => self.exit_dialog = true,
+            ExitStep::Stay => {}
+        }
+    }
+
+    fn flip_workspace(&mut self) {
+        if self.tab == Tab::Play {
+            self.stop_music();
+            self.tab = Tab::Courses;
+        }
+        self.workspace = self.workspace.flip();
+        self.drawer_open = false;
+    }
+
+    fn toggle_play(&mut self) {
+        if self.tab == Tab::Play {
+            self.stop_music();
+            self.tab = Tab::Courses;
+            self.workspace = Workspace::Maker;
+            self.status = "Back in the editor. The test did not change the course.".into();
+            return;
+        }
+        self.workspace = Workspace::Maker;
+        self.drawer_open = false;
+        self.start_level(self.current_level_id(), false);
+        self.tab = Tab::Play;
+    }
+
+    fn use_in_maker(&mut self) {
+        if self.paint_asset.is_none() {
+            if let Some(id) = self.lib_sel.clone() {
+                self.paint_asset = Some(id);
+            }
+        }
+        let Some(id) = self.paint_asset.clone() else {
+            self.status =
+                "Select a picture, or add a tile as a part, first. Nothing was changed.".into();
+            return;
+        };
+        let name = self
+            .project
+            .asset(&id)
+            .map(|asset| asset.name.clone())
+            .unwrap_or_else(|| "That picture".into());
+        self.workspace = Workspace::Maker;
+        self.tab = Tab::Courses;
+        self.terrain_brush = None;
+        self.edit_placement = false;
+        self.rail = "Paint";
+        self.terrain_tool = TerrainTool::Freehand;
+        self.status =
+            format!("{name} is in Maker Engine. The picture does not choose the gameplay.");
+    }
+
+    fn undo_terrain(&mut self) {
+        self.cancel_terrain_stroke();
+        if undo_edit(
+            &mut self.terrain_undo,
+            &mut self.terrain_redo,
+            &mut self.project.levels,
+        ) {
+            self.dirty = true;
+            self.status = "Undid the terrain stroke.".into();
+        }
+    }
+
+    fn redo_terrain(&mut self) {
+        self.cancel_terrain_stroke();
+        if redo_edit(
+            &mut self.terrain_undo,
+            &mut self.terrain_redo,
+            &mut self.project.levels,
+        ) {
+            self.dirty = true;
+            self.status = "Redid the terrain stroke.".into();
+        }
+    }
+
+    fn shell_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("shell")
+            .exact_height(studio::BAR_H)
+            .frame(navy_frame())
+            .show(ctx, |ui| {
+                let full = ui.max_rect();
+                ui.horizontal(|ui| {
+                    let flip = egui::Button::new(
+                        RichText::new(self.workspace.other_label())
+                            .color(studio::ink())
+                            .size(18.0),
+                    )
+                    .fill(studio::parchment())
+                    .min_size(Vec2::new(168.0, 40.0));
+                    if ui.add(flip).on_hover_text("Flip workspace (F6)").clicked() {
+                        self.flip_workspace();
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let exit = egui::Button::new(
+                            RichText::new("Exit").color(studio::cream()).size(18.0),
+                        )
+                        .fill(studio::clay())
+                        .min_size(Vec2::new(84.0, 40.0));
+                        if ui.add(exit).on_hover_text("Exit to Desktop").clicked() {
+                            self.request_exit(ctx);
+                        }
+                        let menu = egui::Button::new(
+                            RichText::new("Menu").color(studio::ink()).size(18.0),
+                        )
+                        .fill(studio::parchment())
+                        .min_size(Vec2::new(88.0, 40.0));
+                        if ui.add(menu).clicked() {
+                            self.app_menu = !self.app_menu;
+                        }
+                        let save_label = if self.dirty { "Save ●" } else { "Save" };
+                        let save = egui::Button::new(
+                            RichText::new(save_label).color(studio::cream()).size(18.0),
+                        )
+                        .fill(studio::grass())
+                        .min_size(Vec2::new(110.0, 40.0));
+                        if ui.add(save).on_hover_text("Save (Ctrl+S)").clicked() {
+                            self.save_project_quick();
+                        }
+                    });
+                });
+                ui.painter().text(
+                    full.center(),
+                    egui::Align2::CENTER_CENTER,
+                    self.workspace.title(),
+                    serif(22.0),
+                    studio::cream(),
+                );
+            });
+    }
+
+    fn maker_shell(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("dock")
+            .exact_height(studio::BOTTOM_H)
+            .frame(navy_frame())
+            .show(ctx, |ui| self.maker_dock(ui));
+        if self.drawer_open {
+            egui::TopBottomPanel::bottom("drawer")
+                .exact_height(300.0)
+                .resizable(true)
+                .frame(paper_frame())
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.courses(ui));
+                });
+        }
+        egui::TopBottomPanel::top("palette")
+            .exact_height(studio::STRIP_H)
+            .frame(paper_frame())
+            .show(ctx, |ui| self.maker_palette(ui));
+        egui::SidePanel::left("rail")
+            .exact_width(studio::RAIL_W)
+            .resizable(false)
+            .frame(paper_frame())
+            .show(ctx, |ui| self.maker_rail(ui));
+        if self.placement_pick.is_some() {
+            egui::SidePanel::right("inspect")
+                .exact_width(studio::INSPECTOR_W)
+                .resizable(false)
+                .frame(paper_frame())
+                .show(ctx, |ui| self.maker_inspector(ui));
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(studio::sky()).inner_margin(8.0))
+            .show(ctx, |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.paint_grid(ui);
+                    });
+            });
+    }
+
+    fn play_shell(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("dock")
+            .exact_height(studio::BOTTOM_H)
+            .frame(navy_frame())
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(&self.status)
+                            .color(studio::cream())
+                            .size(16.0),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let back = egui::Button::new(
+                            RichText::new("Edit").color(studio::cream()).size(20.0),
+                        )
+                        .fill(studio::grass())
+                        .min_size(Vec2::new(160.0, 48.0));
+                        if ui
+                            .add(back)
+                            .on_hover_text("Return to the editor (F5)")
+                            .clicked()
+                        {
+                            self.toggle_play();
+                        }
+                    });
+                });
+            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(studio::sky()).inner_margin(8.0))
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.play_view(ui));
+            });
+    }
+
+    fn unmaker_shell(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("dock")
+            .exact_height(studio::BOTTOM_H)
+            .frame(navy_frame())
+            .show(ctx, |ui| self.unmaker_dock(ui));
+        egui::TopBottomPanel::top("palette")
+            .exact_height(studio::STRIP_H)
+            .frame(paper_frame())
+            .show(ctx, |ui| self.unmaker_strip(ui));
+        egui::SidePanel::left("assets")
+            .exact_width(220.0)
+            .resizable(false)
+            .frame(paper_frame())
+            .show(ctx, |ui| self.unmaker_assets(ui));
+        if self.lib_sel.is_some() || self.selected.is_some() {
+            egui::SidePanel::right("inspect")
+                .exact_width(studio::INSPECTOR_W)
+                .resizable(false)
+                .frame(paper_frame())
+                .show(ctx, |ui| self.unmaker_inspector(ui));
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::NONE.fill(studio::sky()).inner_margin(8.0))
+            .show(ctx, |ui| {
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.unmaker_center(ui, ctx);
+                    });
+            });
+    }
+
+    fn maker_palette(&mut self, ui: &mut egui::Ui) {
+        let query = self.palette_query.to_lowercase();
+        let brushes: Vec<(String, String, String)> = self
+            .project
+            .terrain_brushes
+            .iter()
+            .filter(|brush| query.is_empty() || brush.name.to_lowercase().contains(&query))
+            .map(|brush| {
+                let art = brush
+                    .variants
+                    .get(&TerrainSlot::HorizontalMiddle)
+                    .cloned()
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| brush.variants.get(&TerrainSlot::Isolated).cloned())
+                    .unwrap_or_else(|| brush.fallback_asset.clone());
+                (brush.id.clone(), brush.name.clone(), art)
+            })
+            .collect();
+        let parts: Vec<(String, String, AssetKind)> = self
+            .project
+            .assets
+            .iter()
+            .filter(|asset| {
+                !matches!(asset.kind, AssetKind::Sfx | AssetKind::Music)
+                    && (query.is_empty() || asset.name.to_lowercase().contains(&query))
+            })
+            .map(|asset| (asset.id.clone(), asset.name.clone(), asset.kind))
+            .collect();
+        egui::ScrollArea::horizontal()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.palette_query)
+                            .hint_text("Search parts")
+                            .desired_width(160.0)
+                            .min_size(Vec2::new(160.0, 40.0)),
+                    );
+                    for (id, name, art) in brushes {
+                        let on = self.terrain_brush.as_deref() == Some(id.as_str());
+                        let label = if name.is_empty() {
+                            "Ground".to_string()
+                        } else {
+                            name
+                        };
+                        if self.part_thumb(ui, &art, &label, on) {
+                            self.terrain_brush = Some(id);
+                            self.edit_placement = false;
+                            self.rail = "Paint";
+                            self.terrain_tool = TerrainTool::Freehand;
+                            self.status = format!("{label} brush. Paint it on the course.");
+                        }
+                    }
+                    for (id, name, kind) in parts {
+                        let on = self.terrain_brush.is_none()
+                            && self.paint_asset.as_deref() == Some(id.as_str());
+                        if self.part_thumb(ui, &id, &name, on) {
+                            self.terrain_brush = None;
+                            self.paint_asset = Some(id);
+                            self.paint_start = kind == AssetKind::Player;
+                            self.edit_placement = false;
+                            self.rail = "Paint";
+                            self.terrain_tool = TerrainTool::Freehand;
+                            self.status = format!("{name} selected. Place it on the course.");
+                        }
+                    }
+                });
+            });
+    }
+
+    fn part_thumb(
+        &mut self,
+        ui: &mut egui::Ui,
+        asset_id: &str,
+        name: &str,
+        selected: bool,
+    ) -> bool {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(studio::THUMB), Sense::click());
+        ui.painter()
+            .rect_filled(rect, 8.0, Color32::from_rgb(255, 248, 236));
+        if let Some(tex) = self.textures.get(asset_id) {
+            ui.painter().image(
+                tex.id(),
+                rect.shrink(8.0),
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        } else if !asset_id.is_empty() {
+            ui.painter()
+                .rect_filled(rect.shrink(16.0), 4.0, studio::amber());
+        }
+        let stroke = if selected {
+            studio::amber()
+        } else {
+            Color32::from_rgb(180, 156, 120)
+        };
+        ui.painter().rect_stroke(
+            rect,
+            8.0,
+            egui::Stroke::new(if selected { 3.0_f32 } else { 1.0_f32 }, stroke),
+            egui::StrokeKind::Inside,
+        );
+        response.on_hover_text(name).clicked()
+    }
+
+    fn maker_rail(&mut self, ui: &mut egui::Ui) {
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.vertical(|ui| {
+                for name in studio::RAIL_TOOLS {
+                    if self.rail_button(ui, name) {
+                        self.apply_rail(name);
+                    }
+                }
+                ui.add_space(8.0);
+                if self.rail_button(ui, "Undo") {
+                    self.undo_terrain();
+                }
+                if self.rail_button(ui, "Redo") {
+                    self.redo_terrain();
+                }
+            });
+        });
+    }
+
+    fn rail_button(&self, ui: &mut egui::Ui, name: &str) -> bool {
+        let (rect, response) = ui.allocate_exact_size(Vec2::splat(studio::TOOL), Sense::click());
+        let on = self.rail == name;
+        let fill = if on {
+            studio::amber()
+        } else if response.hovered() {
+            Color32::from_rgb(255, 214, 140)
+        } else {
+            Color32::from_rgb(255, 248, 236)
+        };
+        ui.painter().rect_filled(rect, 8.0, fill);
+        draw_tool_icon(ui.painter(), rect, name);
+        response.on_hover_text(format!("{name}")).clicked()
+    }
+
+    fn apply_rail(&mut self, name: &'static str) {
+        self.rail = name;
+        match name {
+            "Select" | "Inspect" => {
+                self.edit_placement = true;
+                self.terrain_tool = TerrainTool::Inspect;
+                self.status = "Select a placed part to open its settings.".into();
+            }
+            "Erase" => {
+                self.edit_placement = false;
+                self.terrain_tool = TerrainTool::Erase;
+                self.status = "Erase. Right click still removes a whole square when you are not using a brush.".into();
+            }
+            "Line" => {
+                self.edit_placement = false;
+                self.terrain_tool = TerrainTool::Horizontal;
+                self.status = "Horizontal line.".into();
+            }
+            "Vertical" => {
+                self.edit_placement = false;
+                self.terrain_tool = TerrainTool::Vertical;
+                self.status = "Vertical line.".into();
+            }
+            "Rectangle" => {
+                self.edit_placement = false;
+                self.terrain_tool = TerrainTool::Rectangle;
+                self.status = "Rectangle.".into();
+            }
+            _ => {
+                self.edit_placement = false;
+                if self.terrain_tool == TerrainTool::Erase
+                    || self.terrain_tool == TerrainTool::Inspect
+                {
+                    self.terrain_tool = TerrainTool::Freehand;
+                }
+                self.status = "Paint.".into();
+            }
+        }
+    }
+
+    fn maker_dock(&mut self, ui: &mut egui::Ui) {
+        let tool = self.rail;
+        let object = self
+            .terrain_brush
+            .as_ref()
+            .and_then(|id| {
+                self.project
+                    .terrain_brushes
+                    .iter()
+                    .find(|brush| &brush.id == id)
+                    .map(|brush| {
+                        if brush.name.is_empty() {
+                            "Ground brush".to_string()
+                        } else {
+                            format!("{} brush", brush.name)
+                        }
+                    })
+            })
+            .or_else(|| {
+                self.paint_asset
+                    .as_ref()
+                    .and_then(|id| self.project.asset(id).map(|asset| asset.name.clone()))
+            })
+            .unwrap_or_else(|| "Nothing selected".into());
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{tool}  ·  {object}  ·  100%"))
+                    .color(studio::cream())
+                    .size(16.0),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let play =
+                    egui::Button::new(RichText::new("PLAY").color(studio::cream()).size(22.0))
+                        .fill(studio::grass())
+                        .min_size(Vec2::new(160.0, 48.0));
+                if ui
+                    .add(play)
+                    .on_hover_text("Play this course (F5)")
+                    .clicked()
+                {
+                    self.toggle_play();
+                }
+                ui.add_space(24.0);
+                let more = egui::Button::new(RichText::new("More").color(studio::ink()).size(16.0))
+                    .fill(studio::parchment())
+                    .min_size(Vec2::new(72.0, 48.0));
+                if ui
+                    .add(more)
+                    .on_hover_text("Course settings, blueprints, and terrain slots")
+                    .clicked()
+                {
+                    self.drawer_open = !self.drawer_open;
+                }
+            });
+        });
+    }
+
+    fn maker_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Selected").font(serif(22.0)));
+        let Some((x, y)) = self.placement_pick else {
+            return;
+        };
+        ui.label(format!("Cell {x}, {y}"));
+        let found = self.project.levels.get(self.level_sel).and_then(|level| {
+            level
+                .cells
+                .iter()
+                .find(|cell| cell.x == x && cell.y == y)
+                .map(|cell| cell.asset_id.clone())
+        });
+        if let Some(id) = found {
+            let name = self
+                .project
+                .asset(&id)
+                .map(|asset| format!("{}  ·  {}", asset.name, asset.kind.label()))
+                .unwrap_or_else(|| "Missing picture".into());
+            let _ = self.part_thumb(ui, &id, &name, true);
+            ui.label(name);
+        } else {
+            ui.label("No part on this cell.");
+        }
+        if ui.button("Blueprint and terrain settings").clicked() {
+            self.drawer_open = true;
+        }
+        if ui.button("Close").clicked() {
+            self.placement_pick = None;
+        }
+    }
+
+    fn unmaker_strip(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if strip_button(ui, "Import ROM", false).clicked() {
+                self.pick_rom();
+            }
+            if strip_button(ui, "Import Image", false).clicked() {
+                self.import_png_dialog();
+                self.unmaker = UnmakerView::Library;
+            }
+            for (view, label) in [
+                (UnmakerView::Tiles, "Tiles"),
+                (UnmakerView::Library, "Library"),
+                (UnmakerView::Audio, "Audio"),
+                (UnmakerView::Notes, "Notes"),
+                (UnmakerView::Overworld, "Overworld"),
+                (UnmakerView::Export, "Export"),
+            ] {
+                if strip_button(ui, label, self.unmaker == view).clicked() {
+                    self.unmaker = view;
+                }
+            }
+        });
+    }
+
+    fn pick_rom(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter(
+                "Images and data",
+                &["nes", "gb", "gbc", "gba", "sfc", "smc", "bin", "rom"],
+            )
+            .pick_file()
+        else {
+            return;
+        };
+        self.rom_path = path.display().to_string();
+        self.load_rom_path();
+        self.unmaker = UnmakerView::Tiles;
+    }
+
+    fn unmaker_assets(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Assets").font(serif(18.0)));
+        let ids: Vec<(String, String)> = self
+            .project
+            .assets
+            .iter()
+            .filter(|asset| !matches!(asset.kind, AssetKind::Sfx | AssetKind::Music))
+            .map(|asset| (asset.id.clone(), asset.name.clone()))
+            .collect();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for (id, name) in ids {
+                let on = self.lib_sel.as_deref() == Some(id.as_str());
+                if self.part_thumb(ui, &id, &name, on) {
+                    self.lib_sel = Some(id.clone());
+                    self.paint_asset = Some(id);
+                }
+                ui.label(name);
+            }
+        });
+    }
+
+    fn unmaker_center(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        match self.unmaker {
+            UnmakerView::Tiles => {
+                self.cartridge(ui);
+                ui.separator();
+                self.tiles(ui, ctx);
+            }
+            UnmakerView::Audio => self.audio(ui),
+            UnmakerView::Library => self.library(ui),
+            UnmakerView::Notes => self.notes(ui),
+            UnmakerView::Overworld => self.overworld(ui),
+            UnmakerView::Export => self.export_tab(ui),
+            UnmakerView::Guide => self.guide(ui),
+        }
+    }
+
+    fn unmaker_inspector(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Selected").font(serif(22.0)));
+        if let Some(id) = self.lib_sel.clone() {
+            if let Some(asset) = self.project.asset(&id) {
+                ui.label(format!("{}×{}", asset.w, asset.h));
+            }
+            if let Some(asset) = self.project.asset_mut(&id) {
+                ui.label("Name");
+                ui.text_edit_singleline(&mut asset.name);
+                let mut kind = asset.kind;
+                egui::ComboBox::from_id_salt("studio-kind")
+                    .selected_text(kind.label())
+                    .show_ui(ui, |ui| {
+                        for item in visual_kinds() {
+                            ui.selectable_value(&mut kind, item, item.label());
+                        }
+                    });
+                if kind != asset.kind {
+                    asset.kind = kind;
+                    asset.solid = kind.default_solid();
+                    self.dirty = true;
+                }
+            }
+            let _ = self.part_thumb(ui, &id, "Selected picture", true);
+        }
+        if let Some(index) = self.selected {
+            ui.label(format!("Tile {index} on the current page."));
+            ui.label("Palette");
+            ui.horizontal(|ui| {
+                for color in &mut self.palette {
+                    ui.color_edit_button_srgb(color);
+                }
+            });
+        }
+    }
+
+    fn unmaker_dock(&mut self, ui: &mut egui::Ui) {
+        let name = self
+            .lib_sel
+            .as_ref()
+            .and_then(|id| self.project.asset(id).map(|asset| asset.name.clone()))
+            .unwrap_or_else(|| {
+                if self.rom.is_some() {
+                    "Cartridge open".into()
+                } else {
+                    "No picture selected".into()
+                }
+            });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).color(studio::cream()).size(16.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let use_it = egui::Button::new(
+                    RichText::new("Use in Maker")
+                        .color(studio::cream())
+                        .size(20.0),
+                )
+                .fill(studio::grass())
+                .min_size(Vec2::new(200.0, 48.0));
+                if ui.add(use_it).clicked() {
+                    self.use_in_maker();
+                }
+            });
+        });
+    }
+
+    fn app_menu_window(&mut self, ctx: &egui::Context) {
+        if !self.app_menu {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Menu")
+            .collapsible(false)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                if ui.button("New project").clicked() {
+                    self.new_project();
+                    self.app_menu = false;
+                }
+                if ui.button("Open…  Ctrl+O").clicked() {
+                    self.open_project_dialog();
+                    self.app_menu = false;
+                }
+                if ui.button("Save  Ctrl+S").clicked() {
+                    self.save_project_quick();
+                }
+                if ui.button("Guide").clicked() {
+                    self.workspace = Workspace::Unmaker;
+                    self.unmaker = UnmakerView::Guide;
+                    self.app_menu = false;
+                }
+                if ui.button("Workshop assistant").clicked() {
+                    self.assist_open = true;
+                    self.app_menu = false;
+                }
+                if ui.button("API keys").clicked() {
+                    self.keys_open = true;
+                    self.app_menu = false;
+                }
+                if ui.button("Image maker").clicked() {
+                    self.image_open = true;
+                    self.app_menu = false;
+                }
+                if ui.button("Godot preview (experimental)").clicked() {
+                    self.godot_open = true;
+                    self.app_menu = false;
+                }
+                if ui.button("Exit to Desktop").clicked() {
+                    self.request_exit(ctx);
+                    self.app_menu = false;
+                }
+            });
+        if !open {
+            self.app_menu = false;
+        }
+    }
+
+    fn exit_window(&mut self, ctx: &egui::Context) {
+        if !self.exit_dialog {
+            return;
+        }
+        egui::Window::new("Exit to Desktop")
+            .collapsible(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label("This project has unsaved changes.");
+                ui.horizontal(|ui| {
+                    if ui.button("Save and Exit").clicked() {
+                        match studio::exit_step(self.dirty, Some(ExitChoice::Save), false) {
+                            ExitStep::Stay => {
+                                self.close_when_clean = true;
+                                self.exit_dialog = false;
+                                self.save_project_quick();
+                            }
+                            ExitStep::Close => {
+                                self.allow_close = true;
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            ExitStep::Ask => {}
+                        }
+                    }
+                    if ui.button("Exit Without Saving").clicked()
+                        && studio::exit_step(true, Some(ExitChoice::Discard), false)
+                            == ExitStep::Close
+                    {
+                        self.allow_close = true;
+                        self.exit_dialog = false;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        let _ = studio::exit_step(true, Some(ExitChoice::Cancel), false);
+                        self.close_when_clean = false;
+                        self.exit_dialog = false;
+                    }
+                });
+            });
+    }
+}
+
+fn navy_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(studio::navy())
+        .inner_margin(egui::Margin::symmetric(12, 8))
+}
+
+fn paper_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(studio::parchment())
+        .inner_margin(egui::Margin::symmetric(8, 6))
+}
+
+fn strip_button(ui: &mut egui::Ui, label: &str, on: bool) -> egui::Response {
+    let fill = if on {
+        studio::amber()
+    } else {
+        Color32::from_rgb(255, 248, 236)
+    };
+    ui.add(
+        egui::Button::new(RichText::new(label).color(studio::ink()).size(16.0))
+            .fill(fill)
+            .min_size(Vec2::new(132.0, 64.0)),
+    )
+}
+
+fn draw_tool_icon(painter: &egui::Painter, rect: Rect, name: &str) {
+    let color = studio::ink();
+    let stroke = egui::Stroke::new(2.0_f32, color);
+    let c = rect.center();
+    match name {
+        "Select" | "Inspect" => {
+            painter.line_segment(
+                [c + Vec2::new(-8.0, -10.0), c + Vec2::new(-8.0, 8.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [c + Vec2::new(-8.0, -10.0), c + Vec2::new(8.0, -2.0)],
+                stroke,
+            );
+            painter.line_segment([c + Vec2::new(-8.0, 8.0), c + Vec2::new(2.0, 2.0)], stroke);
+        }
+        "Paint" => {
+            painter.line_segment([c + Vec2::new(-8.0, 8.0), c + Vec2::new(8.0, -8.0)], stroke);
+            painter.circle_filled(c + Vec2::new(8.0, -8.0), 3.0, color);
+        }
+        "Erase" => {
+            painter.rect_stroke(
+                Rect::from_center_size(c, Vec2::new(16.0, 12.0)),
+                2.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        "Line" => {
+            painter.line_segment(
+                [c + Vec2::new(-10.0, 0.0), c + Vec2::new(10.0, 0.0)],
+                stroke,
+            );
+        }
+        "Vertical" => {
+            painter.line_segment(
+                [c + Vec2::new(0.0, -10.0), c + Vec2::new(0.0, 10.0)],
+                stroke,
+            );
+        }
+        "Rectangle" => {
+            painter.rect_stroke(
+                Rect::from_center_size(c, Vec2::splat(16.0)),
+                2.0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        "Undo" => {
+            painter.line_segment([c + Vec2::new(6.0, -4.0), c + Vec2::new(-6.0, 6.0)], stroke);
+        }
+        "Redo" => {
+            painter.line_segment([c + Vec2::new(-6.0, -4.0), c + Vec2::new(6.0, 6.0)], stroke);
+        }
+        _ => {}
+    }
+}
+
 fn install_theme(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
-    visuals.window_fill = Color32::from_rgb(36, 28, 25);
-    visuals.panel_fill = Color32::from_rgb(43, 34, 30);
-    visuals.extreme_bg_color = Color32::from_rgb(20, 16, 14);
-    visuals.faint_bg_color = Color32::from_rgb(54, 42, 36);
-    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(48, 38, 33);
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(70, 50, 40);
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(176, 84, 42);
-    visuals.widgets.active.bg_fill = Color32::from_rgb(204, 102, 52);
-    visuals.selection.bg_fill = Color32::from_rgb(140, 68, 36);
-    visuals.hyperlink_color = Color32::from_rgb(232, 168, 96);
-    visuals.override_text_color = Some(paper());
-    visuals.window_stroke = egui::Stroke::new(1.0_f32, Color32::from_rgb(120, 72, 48));
-    ctx.set_visuals(visuals);
+    ctx.set_visuals(studio::visuals());
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
         "liberation".to_owned(),
