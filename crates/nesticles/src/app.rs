@@ -74,6 +74,11 @@ enum Req {
         side: u32,
         kind: AssetKind,
     },
+    Godot {
+        executable: std::path::PathBuf,
+        project_dir: std::path::PathBuf,
+        version: String,
+    },
 }
 
 enum Resp {
@@ -81,6 +86,11 @@ enum Resp {
     Image {
         result: Result<ImageDone, String>,
         kind: AssetKind,
+    },
+    Godot {
+        result: Result<Child, String>,
+        version: String,
+        executable: std::path::PathBuf,
     },
 }
 
@@ -158,6 +168,9 @@ pub struct NestApp {
     tex_epoch: u64,
     export_path: String,
     export_note: String,
+    godot_path: String,
+    godot_child: Option<Child>,
+    godot_busy: bool,
     music: Option<Child>,
     last_cue: Instant,
 }
@@ -184,6 +197,22 @@ impl NestApp {
                         result: net::run_image(&keys, &prompt, side),
                         kind,
                     },
+                    Req::Godot {
+                        executable,
+                        project_dir,
+                        version,
+                    } => {
+                        let result =
+                            nesticles_core::godot::import_project(&executable, &project_dir)
+                                .and_then(|_| {
+                                    nesticles_core::godot::launch_preview(&executable, &project_dir)
+                                });
+                        Resp::Godot {
+                            result,
+                            version,
+                            executable,
+                        }
+                    }
                 };
                 if tx_resp.send(resp).is_err() {
                     break;
@@ -277,12 +306,31 @@ impl NestApp {
             tex_epoch: 1,
             export_path: "export/seed-spirit".into(),
             export_note: String::new(),
+            godot_path: String::new(),
+            godot_child: None,
+            godot_busy: false,
             music: None,
             last_cue: Instant::now(),
         }
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        let godot_wait = self.godot_child.as_mut().map(|child| child.try_wait());
+        match godot_wait {
+            Some(Ok(Some(status))) => {
+                if !status.success() {
+                    self.status = format!(
+                        "Godot preview exited ({status}). The browser exporter was not used."
+                    );
+                }
+                self.godot_child = None;
+            }
+            Some(Err(err)) => {
+                self.status = format!("Could not check the Godot preview: {err}");
+                self.godot_child = None;
+            }
+            _ => {}
+        }
         while let Ok(resp) = self.rx.try_recv() {
             match resp {
                 Resp::Assist(Ok(done)) => {
@@ -321,6 +369,29 @@ impl NestApp {
                 } => {
                     self.image_busy = false;
                     self.image_status = err;
+                }
+                Resp::Godot {
+                    result,
+                    version,
+                    executable,
+                } => {
+                    self.godot_busy = false;
+                    match result {
+                        Ok(child) => {
+                            if let Some(mut old) = self.godot_child.take() {
+                                std::thread::spawn(move || {
+                                    let _ = old.wait();
+                                });
+                            }
+                            self.godot_child = Some(child);
+                            self.status = format!(
+                                "Experimental Godot preview launched with {} ({}). It is only the player picture, solid fixtures, movement, jump, and a camera.",
+                                executable.display(),
+                                version
+                            );
+                        }
+                        Err(err) => self.status = err,
+                    }
                 }
             }
         }
@@ -445,6 +516,9 @@ impl NestApp {
 impl eframe::App for NestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
+        if self.godot_busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         if self.tab == Tab::Play {
             self.step_play(ctx);
         }
@@ -2354,6 +2428,7 @@ impl NestApp {
 
     fn play_view(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Play").font(serif(26.0)));
+        self.godot_preview_ui(ui);
         self.physics_dropdown(ui);
         self.powerup_dropdown(ui);
         let level_index = self
@@ -2664,6 +2739,8 @@ impl NestApp {
 
     fn export_tab(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Export").font(serif(26.0)));
+        self.godot_preview_ui(ui);
+        ui.separator();
         ui.label("The desktop app is the editor and the Linux and Windows player. Android play is the browser build: open index.html in Chrome, Firefox, or Edge. Add to Home Screen needs https. A file open is enough to play. This does not build an Android package.");
         if crate::READY {
             ui.label(
@@ -3188,6 +3265,59 @@ impl NestApp {
         let id = self.project.adopt_style("Original drawings", "generated");
         self.active_style = id.clone();
         id
+    }
+
+    fn godot_preview_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label("Experimental Godot preview. It writes a small Godot scene from this course: the player picture, placed solid fixtures, gravity, horizontal movement, jump, and a following camera. Enemies, items, pipes, entrances, and transitions stay in the Rust Play view. This is not the full game.");
+        ui.horizontal(|ui| {
+            ui.label("Godot 4.7.2");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.godot_path)
+                    .desired_width(280.0)
+                    .hint_text("executable, or blank to search"),
+            );
+            if ui.button("Preview in Godot (Experimental)").clicked() {
+                self.launch_godot_preview();
+            }
+        });
+    }
+
+    fn launch_godot_preview(&mut self) {
+        let configured = {
+            let text = self.godot_path.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(text))
+            }
+        };
+        let tool = match nesticles_core::godot::discover(configured.as_deref()) {
+            Ok(tool) => tool,
+            Err(err) => {
+                self.status = err;
+                return;
+            }
+        };
+        let dest = nesticles_core::godot::preview_dir();
+        let level_id = self.current_level_id();
+        if let Err(err) = nesticles_core::godot::generate_proof(&self.project, &level_id, &dest) {
+            self.status = err;
+            return;
+        }
+        self.godot_busy = true;
+        self.status = "Importing the experimental Godot preview.".into();
+        if self
+            .tx
+            .send(Req::Godot {
+                executable: tool.executable,
+                project_dir: dest,
+                version: tool.version,
+            })
+            .is_err()
+        {
+            self.godot_busy = false;
+            self.status = "Could not start the Godot preview.".into();
+        }
     }
 
     fn current_level_id(&self) -> String {

@@ -13,6 +13,7 @@ pub mod detect;
 pub mod disasm;
 pub mod enemy_ai;
 pub mod engine;
+pub mod godot;
 pub mod guard;
 pub mod physics;
 pub mod pngutil;
