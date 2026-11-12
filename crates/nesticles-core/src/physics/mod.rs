@@ -86,6 +86,16 @@ impl<'de> Deserialize<'de> for CharacterPhysics {
     }
 }
 
+/// A cross-course exit the play loop still has to finish.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WarpArrival {
+    pub level_id: String,
+    pub x: i32,
+    pub y: i32,
+    /// 1 faces right. -1 faces left.
+    pub facing: i32,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
     pub left: bool,
@@ -230,7 +240,7 @@ pub struct Sim {
     pub markers: Vec<Marker>,
     pub hide_player: bool,
     /// Cross-course pipe exit, consumed by the play loop.
-    pub pending_warp: Option<(String, i32, i32)>,
+    pub pending_warp: Option<WarpArrival>,
     smb1: smb1_nes::Smb1Body,
     enemy_rt: Vec<EnemyRuntime>,
     level_enemy_ai: EnemyAiStyle,
@@ -463,13 +473,18 @@ impl Sim {
 
     /// Move the 1080p body to a course cell. Used after a pipe warp.
     pub fn place_at_cell(&mut self, cell_x: i32, cell_y: i32) {
+        self.place_at_cell_facing(cell_x, cell_y, 1);
+    }
+
+    /// Move the body and face it. Velocity from the trip is cleared.
+    pub fn place_at_cell_facing(&mut self, cell_x: i32, cell_y: i32, facing: i32) {
         if let Some(world) = self.field.as_mut().and_then(|field| field.world_1080_mut()) {
-            world.place(cell_x, cell_y);
+            world.place_facing(cell_x, cell_y, facing);
         }
         self.mirror_1080();
     }
 
-    pub fn take_warp(&mut self) -> Option<(String, i32, i32)> {
+    pub fn take_warp(&mut self) -> Option<WarpArrival> {
         let warp = self.pending_warp.take();
         if let Some(world) = self.field.as_mut().and_then(|field| field.world_1080_mut()) {
             world.pending = false;
@@ -711,11 +726,12 @@ impl Sim {
                     .collect(),
                 hidden: world.hidden.clone(),
                 pending: if world.pending {
-                    Some((
-                        world.pending_level.clone(),
-                        world.pending_x,
-                        world.pending_y,
-                    ))
+                    Some(WarpArrival {
+                        level_id: world.pending_level.clone(),
+                        x: world.pending_x,
+                        y: world.pending_y,
+                        facing: world.pending_facing,
+                    })
                 } else {
                     None
                 },
@@ -783,7 +799,7 @@ struct MirrorSnap {
     collect: bool,
     bumps: Vec<(i32, i32, f32)>,
     hidden: Vec<(i32, i32)>,
-    pending: Option<(String, i32, i32)>,
+    pending: Option<WarpArrival>,
     enemies: Vec<(f32, f32, bool, i32)>,
     items: Vec<(i32, i32, bool, res_1080p::powerups::smb1::ItemKind)>,
     markers: Vec<Marker>,

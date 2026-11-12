@@ -266,6 +266,7 @@ pub fn demo_project() -> Project {
         player: Spawn { x: 2.0, y: 11.0 },
         cells: Vec::new(),
         enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
+        entrances: Vec::new(),
     };
     for x in [1, 6, 22, 28] {
         put(&mut moss, "hill", Layer::Back, x, 8);
@@ -291,6 +292,7 @@ pub fn demo_project() -> Project {
         player: Spawn { x: 2.0, y: 12.0 },
         cells: Vec::new(),
         enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
+        entrances: Vec::new(),
     };
     for x in [2, 16, 26] {
         put(&mut lantern, "hill", Layer::Back, x, 6);
@@ -338,6 +340,7 @@ pub fn demo_project() -> Project {
         format: 1,
         blueprints: Vec::new(),
         blueprint_cutover: false,
+        transitions: Vec::new(),
     }
 }
 

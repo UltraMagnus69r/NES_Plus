@@ -222,6 +222,7 @@ fn paint_rect_changes_cells() {
         player: Spawn { x: 1.0, y: 1.0 },
         cells: vec![CellStub::one()],
         enemy_ai: nesticles_core::EnemyAiStyle::Smb1Nes,
+        entrances: Vec::new(),
     });
     // The stub cell is a different layer so the paint is a real change either way.
     let note = execute_tool_json(

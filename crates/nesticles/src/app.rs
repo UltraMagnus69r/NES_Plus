@@ -16,13 +16,16 @@ use nesticles_core::enemy_ai::{archetype_label, override_label, EnemyAiStyle, SM
 use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, TILE};
 use nesticles_core::pngutil::{b64_decode, b64_encode};
 use nesticles_core::project::{
-    audit_course, nid, Asset, AssetKind, Cell, Layer, PlacementWarp, Project, WarpTarget,
+    audit_course, nid, Asset, AssetKind, Cell, EntryDirection, Facing, Layer, PlacementWarp,
+    Project, WarpTarget,
 };
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
 use nesticles_core::{
-    assign_cell, compose_fixture, demo_project, demo_rom, enemy_from_archetype, enemy_role,
-    ensure_legacy_blueprints, gameplay_options, load_project_json, placed_fixture, placement_label,
-    resolve_warp_arrival, set_placement_warp, suggest_kind, LegacyBlock, LegacyHazard, LegacyItem,
+    add_entrance, add_return, assign_cell, clear_exit, clear_named_exit, compose_fixture,
+    demo_project, demo_rom, enemy_from_archetype, enemy_role, ensure_legacy_blueprints,
+    ensure_legacy_transitions, gameplay_options, load_project_json, placed_fixture,
+    placement_label, remove_entrance, remove_return, resolve_warp_arrival, set_exit,
+    set_placement_warp, suggest_kind, update_entrance, LegacyBlock, LegacyHazard, LegacyItem,
 };
 use std::collections::{HashMap, HashSet};
 use std::process::Child;
@@ -132,6 +135,10 @@ pub struct NestApp {
     /// "inherit", "cleared", "here", or a course id.
     warp_level_draft: String,
     warp_draft_for: Option<(String, i32, i32)>,
+    entrance_pick: Option<String>,
+    exit_level_draft: String,
+    exit_entrance_draft: String,
+    exit_draft_for: Option<(String, i32, i32)>,
     keys_open: bool,
     image_open: bool,
     keys: KeyFile,
@@ -244,6 +251,10 @@ impl NestApp {
             warp_y_text: "0".into(),
             warp_level_draft: "inherit".into(),
             warp_draft_for: None,
+            entrance_pick: None,
+            exit_level_draft: String::new(),
+            exit_entrance_draft: String::new(),
+            exit_draft_for: None,
             keys_open: false,
             image_open: false,
             keys: KeyFile::load(),
@@ -385,14 +396,20 @@ impl NestApp {
             let warp = play.sim.as_mut().and_then(|sim| sim.take_warp());
             (jumped, stomped, hurt, goal, play.level_id.clone(), warp)
         };
-        if let Some((level, x, y)) = warp {
-            match resolve_warp_arrival(&self.project, &level_id, &level, x, y) {
+        if let Some(arrival) = warp {
+            match resolve_warp_arrival(
+                &self.project,
+                &level_id,
+                &arrival.level_id,
+                arrival.x,
+                arrival.y,
+            ) {
                 Ok((dest, dx, dy)) => {
                     if dest != level_id {
                         self.start_level(dest, true);
                     }
                     if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
-                        sim.place_at_cell(dx, dy);
+                        sim.place_at_cell_facing(dx, dy, arrival.facing);
                     }
                 }
                 Err(err) => self.status = err,
@@ -971,6 +988,7 @@ impl NestApp {
                     player: nesticles_core::project::Spawn { x: 2.0, y: 2.0 },
                     cells: Vec::new(),
                     enemy_ai: EnemyAiStyle::Smb1Nes,
+                    entrances: Vec::new(),
                 });
                 self.level_sel = self.project.levels.len() - 1;
             }
@@ -1006,6 +1024,7 @@ impl NestApp {
         self.powerup_dropdown(ui);
         self.enemy_ai_dropdown(ui, self.level_sel, true);
         self.gameplay_controls(ui);
+        self.entrance_editor(ui, &level_id);
         self.parts_tray(ui);
         ui.label("Right click erases. Dragging Pip, or any player part, moves the start.");
         self.paint_grid(ui);
@@ -1380,6 +1399,8 @@ impl NestApp {
             (Some(LegacyHazard::FireBar { balls: 6 }), "Fire bar"),
             (Some(LegacyHazard::FireBar { balls: 12 }), "Long fire bar"),
             (Some(LegacyHazard::PipeDown), "Pipe down"),
+            (Some(LegacyHazard::PipeUp), "Pipe up"),
+            (Some(LegacyHazard::PipeLeft), "Pipe left"),
             (Some(LegacyHazard::PipeRight), "Pipe right"),
         ];
         let mut next_block = None;
@@ -1457,14 +1478,18 @@ impl NestApp {
             .unwrap_or(parts.hazard);
         let pipe = matches!(
             hazard,
-            Some(LegacyHazard::PipeDown | LegacyHazard::PipeRight)
+            Some(
+                LegacyHazard::PipeDown
+                    | LegacyHazard::PipeUp
+                    | LegacyHazard::PipeLeft
+                    | LegacyHazard::PipeRight
+            )
         );
         if !pipe {
-            ui.label(
-                "A destination is used by a downward or rightward pipe. Other hazards do not warp.",
-            );
+            ui.label("A pipe up, down, left, or right can send the player to an entrance.");
             return;
         }
+        self.exit_editor(ui, level_id, x, y);
         self.load_warp_draft(level_id, x, y);
         let levels: Vec<(String, String)> = self
             .project
@@ -1530,14 +1555,19 @@ impl NestApp {
             }
         });
         ui.label(
-            "An empty course means this course. Warp off does not fall back to a blueprint exit.",
+            "A named exit wins over this coordinate warp. Warp off clears both. An empty course means this course.",
         );
         if let Some(mode) = picked_mode {
             self.warp_level_draft = mode.clone();
+            if mode == "cleared" {
+                self.status = match clear_exit(&mut self.project, level_id, x, y) {
+                    Ok(()) => "Exit cleared.".into(),
+                    Err(err) => err,
+                };
+                return;
+            }
             let choice = if mode == "inherit" {
                 PlacementWarp::Inherit
-            } else if mode == "cleared" {
-                PlacementWarp::Cleared
             } else {
                 let Ok(dest_x) = self.warp_x_text.trim().parse::<i32>() else {
                     self.status = "Warp X and Y need whole numbers.".into();
@@ -1556,6 +1586,399 @@ impl NestApp {
             match set_placement_warp(&mut self.project, level_id, x, y, choice) {
                 Ok(()) => self.status = "Warp updated.".into(),
                 Err(err) => self.status = err,
+            }
+        }
+    }
+
+    fn entrance_editor(&mut self, ui: &mut egui::Ui, level_id: &str) {
+        ui.label(RichText::new("Entrances").color(ember()));
+        ui.label("An entrance is where the player appears. It does not send them anywhere.");
+        let snapshot: Vec<(String, String, i32, i32, Facing)> = self
+            .project
+            .level(level_id)
+            .map(|level| {
+                level
+                    .entrances
+                    .iter()
+                    .map(|entrance| {
+                        (
+                            entrance.id.clone(),
+                            entrance.name.clone(),
+                            entrance.x,
+                            entrance.y,
+                            entrance.facing,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if snapshot.is_empty() {
+            ui.label("This course has no extra entrances. Play still starts at the course start.");
+        }
+        let mut remove_id = None;
+        let mut facing_edit = None;
+        for (id, name, x, y, facing) in &snapshot {
+            ui.horizontal_wrapped(|ui| {
+                let selected = self.entrance_pick.as_deref() == Some(id.as_str());
+                if ui
+                    .selectable_label(selected, format!("{name} at {x},{y}"))
+                    .clicked()
+                {
+                    self.entrance_pick = Some(id.clone());
+                }
+                let face = if *facing == Facing::Left {
+                    "Face left"
+                } else {
+                    "Face right"
+                };
+                if ui.button(face).clicked() {
+                    facing_edit = Some((
+                        id.clone(),
+                        if *facing == Facing::Left {
+                            Facing::Right
+                        } else {
+                            Facing::Left
+                        },
+                        name.clone(),
+                        *x,
+                        *y,
+                    ));
+                }
+                if ui.button("Remove").clicked() {
+                    remove_id = Some(id.clone());
+                }
+            });
+        }
+        if let Some((id, facing, name, x, y)) = facing_edit {
+            self.status =
+                match update_entrance(&mut self.project, level_id, &id, &name, x, y, facing) {
+                    Ok(()) => "Entrance updated.".into(),
+                    Err(err) => err,
+                };
+        }
+        if let Some(id) = remove_id {
+            self.status = match remove_entrance(&mut self.project, level_id, &id) {
+                Ok(()) => {
+                    if self.entrance_pick.as_deref() == Some(id.as_str()) {
+                        self.entrance_pick = None;
+                    }
+                    "Entrance removed.".into()
+                }
+                Err(err) => err,
+            };
+        }
+        if let Some(id) = self.entrance_pick.clone() {
+            let bounds = self
+                .project
+                .level(level_id)
+                .map(|level| {
+                    (
+                        level.w.saturating_sub(1) as i32,
+                        level.h.saturating_sub(1) as i32,
+                    )
+                })
+                .unwrap_or((0, 0));
+            if let Some(level) = self.project.level_mut(level_id) {
+                if let Some(entrance) = level
+                    .entrances
+                    .iter_mut()
+                    .find(|entrance| entrance.id == id)
+                {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Name");
+                        ui.add(egui::TextEdit::singleline(&mut entrance.name).desired_width(140.0));
+                        ui.label("X");
+                        ui.add(egui::DragValue::new(&mut entrance.x));
+                        ui.label("Y");
+                        ui.add(egui::DragValue::new(&mut entrance.y));
+                    });
+                    entrance.x = entrance.x.clamp(0, bounds.0);
+                    entrance.y = entrance.y.clamp(0, bounds.1);
+                    if entrance.name.trim().is_empty() {
+                        entrance.name = "Entrance".into();
+                    }
+                }
+            }
+        }
+        if ui.button("Turn coordinate warps into entrances").clicked() {
+            ensure_legacy_transitions(&mut self.project);
+            self.status =
+                "Coordinate warps now have entrances. Return trips were not added.".into();
+        }
+        if ui.button("Add entrance").clicked() {
+            let level = self.project.level(level_id);
+            let (w, h) = level.map(|level| (level.w, level.h)).unwrap_or((1, 1));
+            let x = 2.min(w.saturating_sub(1) as i32);
+            let y = 2.min(h.saturating_sub(1) as i32);
+            match add_entrance(&mut self.project, level_id, "Entrance", x, y, Facing::Right) {
+                Ok(id) => {
+                    self.entrance_pick = Some(id);
+                    self.status = "Entrance added.".into();
+                }
+                Err(err) => self.status = err,
+            }
+        }
+    }
+
+    fn exit_editor(&mut self, ui: &mut egui::Ui, level_id: &str, x: i32, y: i32) {
+        ui.label(RichText::new("Exit destination").color(ember()));
+        let current = self
+            .project
+            .level(level_id)
+            .and_then(|level| {
+                level
+                    .cells
+                    .iter()
+                    .rev()
+                    .find(|cell| cell.x == x && cell.y == y)
+            })
+            .and_then(|cell| cell.transition_id.clone());
+        let summary = current.as_ref().and_then(|id| {
+            self.project
+                .transitions
+                .iter()
+                .find(|link| &link.id == id)
+                .map(|link| {
+                    let dest = if link.destination_level_id.is_empty() {
+                        level_id.to_string()
+                    } else {
+                        link.destination_level_id.clone()
+                    };
+                    let name = self
+                        .project
+                        .level(&dest)
+                        .and_then(|level| {
+                            level
+                                .entrances
+                                .iter()
+                                .find(|entrance| entrance.id == link.destination_entrance_id)
+                        })
+                        .map(|entrance| entrance.name.clone())
+                        .unwrap_or_else(|| "missing entrance".into());
+                    format!("Sends the player to {name}.")
+                })
+        });
+        ui.label(
+            summary.unwrap_or_else(|| "No named exit. A coordinate warp can still apply.".into()),
+        );
+        self.load_exit_draft(level_id, x, y);
+        let levels: Vec<(String, String)> = self
+            .project
+            .levels
+            .iter()
+            .map(|level| (level.id.clone(), level.name.clone()))
+            .collect();
+        let entrances: Vec<(String, String)> = self
+            .project
+            .level(&self.exit_level_draft)
+            .map(|level| {
+                level
+                    .entrances
+                    .iter()
+                    .map(|entrance| {
+                        (
+                            entrance.id.clone(),
+                            format!("{} at {},{}", entrance.name, entrance.x, entrance.y),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut use_exit = false;
+        let mut make_return = false;
+        let mut drop_return = false;
+        let mut use_coordinates = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Destination level");
+            let level_name = levels
+                .iter()
+                .find(|(id, _)| id == &self.exit_level_draft)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| "Pick a course".into());
+            egui::ComboBox::from_id_salt("exit-level")
+                .selected_text(level_name)
+                .show_ui(ui, |ui| {
+                    for (id, name) in &levels {
+                        if ui
+                            .selectable_label(self.exit_level_draft == *id, name)
+                            .clicked()
+                        {
+                            self.exit_level_draft = id.clone();
+                            self.exit_entrance_draft.clear();
+                        }
+                    }
+                });
+            ui.label("Destination entrance");
+            let entrance_name = entrances
+                .iter()
+                .find(|(id, _)| id == &self.exit_entrance_draft)
+                .map(|(_, name)| name.clone())
+                .unwrap_or_else(|| "Pick an entrance".into());
+            egui::ComboBox::from_id_salt("exit-entrance")
+                .selected_text(entrance_name)
+                .show_ui(ui, |ui| {
+                    for (id, name) in &entrances {
+                        if ui
+                            .selectable_label(self.exit_entrance_draft == *id, name)
+                            .clicked()
+                        {
+                            self.exit_entrance_draft = id.clone();
+                        }
+                    }
+                });
+        });
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Use this entrance").clicked() {
+                use_exit = true;
+            }
+            if ui.button("Create return connection").clicked() {
+                make_return = true;
+            }
+            if ui.button("Remove return connection").clicked() {
+                drop_return = true;
+            }
+            if ui.button("Use coordinate warp instead").clicked() {
+                use_coordinates = true;
+            }
+        });
+        ui.label("One-way is the default. A return connection uses the pipe in front of the destination entrance and comes back to this pipe's opening.");
+        if use_exit {
+            let entry = pipe_entry(hazard_of(&self.project, level_id, x, y));
+            let dest_level = if self.exit_level_draft == level_id {
+                String::new()
+            } else {
+                self.exit_level_draft.clone()
+            };
+            self.status = match set_exit(
+                &mut self.project,
+                level_id,
+                x,
+                y,
+                &dest_level,
+                &self.exit_entrance_draft,
+                entry,
+            ) {
+                Ok(_) => "Exit updated.".into(),
+                Err(err) => err,
+            };
+        }
+        if make_return {
+            let Some(forward) = current.clone().or_else(|| {
+                self.project
+                    .level(level_id)
+                    .and_then(|level| {
+                        level
+                            .cells
+                            .iter()
+                            .rev()
+                            .find(|cell| cell.x == x && cell.y == y)
+                    })
+                    .and_then(|cell| cell.transition_id.clone())
+            }) else {
+                self.status = "Set a named exit before adding a return.".into();
+                return;
+            };
+            let forward_link = self
+                .project
+                .transitions
+                .iter()
+                .find(|link| link.id == forward)
+                .cloned();
+            let Some(forward_link) = forward_link else {
+                self.status = "That named exit is missing.".into();
+                return;
+            };
+            let dest_level = if forward_link.destination_level_id.is_empty() {
+                level_id.to_string()
+            } else {
+                forward_link.destination_level_id.clone()
+            };
+            let spot = self.project.level(&dest_level).and_then(|level| {
+                level
+                    .entrances
+                    .iter()
+                    .find(|entrance| entrance.id == forward_link.destination_entrance_id)
+                    .map(|entrance| (entrance.x, entrance.y))
+            });
+            let Some((ex, ey)) = spot else {
+                self.status = "The destination entrance is missing.".into();
+                return;
+            };
+            let Some((rx, ry, back)) = pipe_at_opening(&self.project, &dest_level, ex, ey) else {
+                self.status =
+                    "Place a pipe in front of the destination entrance before adding a return."
+                        .into();
+                return;
+            };
+            let (hx, hy) = opening_cell(hazard_of(&self.project, level_id, x, y), x, y);
+            let home_entrance = self.project.level(level_id).and_then(|level| {
+                level
+                    .entrances
+                    .iter()
+                    .find(|entrance| entrance.x == hx && entrance.y == hy)
+                    .map(|entrance| entrance.id.clone())
+            });
+            let home_entrance = if let Some(id) = home_entrance {
+                id
+            } else {
+                match add_entrance(&mut self.project, level_id, "Return", hx, hy, Facing::Right) {
+                    Ok(id) => id,
+                    Err(err) => {
+                        self.status = err;
+                        return;
+                    }
+                }
+            };
+            self.status =
+                match add_return(&mut self.project, &forward, rx, ry, &home_entrance, back) {
+                    Ok(_) => "Return connection added.".into(),
+                    Err(err) => err,
+                };
+        }
+        if drop_return {
+            if let Some(id) = current.clone() {
+                self.status = match remove_return(&mut self.project, &id) {
+                    Ok(()) => "Return connection removed.".into(),
+                    Err(err) => err,
+                };
+            }
+        }
+        if use_coordinates {
+            self.status = match clear_named_exit(&mut self.project, level_id, x, y) {
+                Ok(()) => "Named exit cleared. The coordinate warp applies again.".into(),
+                Err(err) => err,
+            };
+        }
+    }
+
+    fn load_exit_draft(&mut self, level_id: &str, x: i32, y: i32) {
+        if self
+            .exit_draft_for
+            .as_ref()
+            .map(|(id, cx, cy)| id == level_id && *cx == x && *cy == y)
+            == Some(true)
+        {
+            return;
+        }
+        self.exit_draft_for = Some((level_id.to_string(), x, y));
+        self.exit_level_draft = level_id.to_string();
+        self.exit_entrance_draft.clear();
+        let transition_id = self.project.level(level_id).and_then(|level| {
+            level
+                .cells
+                .iter()
+                .rev()
+                .find(|cell| cell.x == x && cell.y == y)
+                .and_then(|cell| cell.transition_id.clone())
+        });
+        if let Some(id) = transition_id {
+            if let Some(link) = self.project.transitions.iter().find(|link| link.id == id) {
+                self.exit_level_draft = if link.destination_level_id.is_empty() {
+                    level_id.to_string()
+                } else {
+                    link.destination_level_id.clone()
+                };
+                self.exit_entrance_draft = link.destination_entrance_id.clone();
             }
         }
     }
@@ -2872,6 +3295,60 @@ impl NestApp {
             let _ = child.wait();
         }
     }
+}
+
+fn hazard_of(project: &Project, level_id: &str, x: i32, y: i32) -> Option<LegacyHazard> {
+    placed_fixture(project, level_id, x, y)
+        .ok()
+        .flatten()
+        .and_then(|parts| parts.hazard)
+}
+
+fn pipe_entry(hazard: Option<LegacyHazard>) -> EntryDirection {
+    match hazard {
+        Some(LegacyHazard::PipeUp) => EntryDirection::Up,
+        Some(LegacyHazard::PipeLeft) => EntryDirection::Left,
+        Some(LegacyHazard::PipeRight) => EntryDirection::Right,
+        _ => EntryDirection::Down,
+    }
+}
+
+fn opening_cell(hazard: Option<LegacyHazard>, x: i32, y: i32) -> (i32, i32) {
+    match hazard {
+        Some(LegacyHazard::PipeUp) => (x, y + 1),
+        Some(LegacyHazard::PipeLeft) => (x + 1, y),
+        Some(LegacyHazard::PipeRight) => (x - 1, y),
+        _ => (x, y - 1),
+    }
+}
+
+fn pipe_at_opening(
+    project: &Project,
+    level_id: &str,
+    entrance_x: i32,
+    entrance_y: i32,
+) -> Option<(i32, i32, EntryDirection)> {
+    let level = project.level(level_id)?;
+    for cell in &level.cells {
+        let Some(hazard) = hazard_of(project, level_id, cell.x, cell.y) else {
+            continue;
+        };
+        let (ox, oy) = opening_cell(Some(hazard), cell.x, cell.y);
+        if ox == entrance_x && oy == entrance_y {
+            return Some((cell.x, cell.y, pipe_entry(Some(hazard))));
+        }
+    }
+    let hazard = hazard_of(project, level_id, entrance_x, entrance_y)?;
+    if matches!(
+        hazard,
+        LegacyHazard::PipeDown
+            | LegacyHazard::PipeUp
+            | LegacyHazard::PipeLeft
+            | LegacyHazard::PipeRight
+    ) {
+        return Some((entrance_x, entrance_y, pipe_entry(Some(hazard))));
+    }
+    None
 }
 
 fn brand_texture(ctx: &egui::Context) -> TextureHandle {

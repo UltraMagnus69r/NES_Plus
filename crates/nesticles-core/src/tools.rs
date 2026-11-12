@@ -69,6 +69,7 @@ fn create_course(project: &mut Project, args: &Value) -> Result<String, String> 
         player: Spawn { x: 2.0, y: 2.0 },
         cells: Vec::new(),
         enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
+        entrances: Vec::new(),
     });
     Ok(format!("created course {id}"))
 }
