@@ -3,6 +3,7 @@
 use crate::blueprint::Blueprint;
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::physics::CharacterPhysics;
+use crate::terrain::{TerrainBrush, TerrainCell};
 use serde::{Deserialize, Serialize};
 
 /// Power-up rules for play. Old projects omit the field and load SMB1.
@@ -312,7 +313,7 @@ pub struct Asset {
     pub warp: Option<WarpTarget>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cell {
     pub x: i32,
     pub y: i32,
@@ -339,6 +340,10 @@ pub struct Cell {
     /// A missing or invalid exit does not fall back to a coordinate warp.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition_id: Option<String>,
+    /// Connected-terrain membership. Absent on courses saved before Phase 7.
+    /// A picture without this field stays an ordinary stamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terrain: Option<TerrainCell>,
 }
 
 impl Default for Cell {
@@ -354,6 +359,7 @@ impl Default for Cell {
             warp_choice: PlacementWarp::Inherit,
             blueprint_id: None,
             transition_id: None,
+            terrain: None,
         }
     }
 }
@@ -444,6 +450,10 @@ pub struct Project {
     /// Directed exits. Old files omit this and keep coordinate warps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<Transition>,
+    /// Connected materials. Old projects omit this and load none.
+    /// Opening a project does not turn existing stamps into terrain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub terrain_brushes: Vec<TerrainBrush>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -470,6 +480,7 @@ impl Project {
             blueprints: Vec::new(),
             blueprint_cutover: false,
             transitions: Vec::new(),
+            terrain_brushes: Vec::new(),
         }
     }
 

@@ -18,6 +18,7 @@ pub mod guard;
 pub mod physics;
 pub mod pngutil;
 pub mod project;
+pub mod terrain;
 pub mod tools;
 pub mod transition;
 pub mod wav;

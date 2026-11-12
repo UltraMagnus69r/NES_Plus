@@ -341,6 +341,7 @@ pub fn demo_project() -> Project {
         blueprints: Vec::new(),
         blueprint_cutover: false,
         transitions: Vec::new(),
+        terrain_brushes: Vec::new(),
     }
 }
 

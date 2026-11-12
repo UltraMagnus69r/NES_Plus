@@ -19,6 +19,12 @@ use nesticles_core::project::{
     audit_course, nid, Asset, AssetKind, Cell, EntryDirection, Facing, Layer, PlacementWarp,
     Project, WarpTarget,
 };
+use nesticles_core::terrain::{
+    apply_stroke, clear_manual_override, commit_edit, connection_group, inspect_terrain,
+    missing_slots, paint_cells, pointer_cell, redo_edit, refresh_brush_art, refresh_connections,
+    retain_inside, set_manual_override, slot_key, slot_label, tool_label, undo_edit, NeighborMode,
+    TerrainBrush, TerrainEdit, TerrainSlot, TerrainTool, ALL_SLOTS, ALL_TOOLS, EDITOR_CELL_PX,
+};
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
 use nesticles_core::{
     add_entrance, add_return, assign_cell, clear_exit, clear_named_exit, compose_fixture,
@@ -27,7 +33,7 @@ use nesticles_core::{
     placement_label, remove_entrance, remove_return, resolve_warp_arrival, set_exit,
     set_placement_warp, suggest_kind, update_entrance, LegacyBlock, LegacyHazard, LegacyItem,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
@@ -173,6 +179,23 @@ pub struct NestApp {
     godot_busy: bool,
     music: Option<Child>,
     last_cue: Instant,
+    terrain_tool: TerrainTool,
+    terrain_brush: Option<String>,
+    terrain_undo: Vec<TerrainEdit>,
+    terrain_redo: Vec<TerrainEdit>,
+    terrain_stroke: Option<TerrainStroke>,
+}
+
+#[derive(Clone)]
+struct TerrainStroke {
+    level_index: usize,
+    before: Vec<Cell>,
+    anchor: (i32, i32),
+    last: (i32, i32),
+    samples: Vec<(i32, i32)>,
+    tool: TerrainTool,
+    brush_id: String,
+    missing: usize,
 }
 
 impl NestApp {
@@ -311,6 +334,11 @@ impl NestApp {
             godot_busy: false,
             music: None,
             last_cue: Instant::now(),
+            terrain_tool: TerrainTool::Freehand,
+            terrain_brush: None,
+            terrain_undo: Vec::new(),
+            terrain_redo: Vec::new(),
+            terrain_stroke: None,
         }
     }
 
@@ -1098,9 +1126,10 @@ impl NestApp {
         self.powerup_dropdown(ui);
         self.enemy_ai_dropdown(ui, self.level_sel, true);
         self.gameplay_controls(ui);
+        self.terrain_panel(ui);
         self.entrance_editor(ui, &level_id);
         self.parts_tray(ui);
-        ui.label("Right click erases. Dragging Pip, or any player part, moves the start.");
+        ui.label("Select a terrain brush to paint connected ground. Right click erases terrain and leaves enemies, items, and other parts. With no terrain brush selected, right click still removes the whole square. Dragging Pip moves the start.");
         self.paint_grid(ui);
     }
 
@@ -1209,7 +1238,7 @@ impl NestApp {
         if self.level_sel >= self.project.levels.len() {
             return;
         }
-        let cell = 20.0;
+        let cell = EDITOR_CELL_PX;
         let w = self.project.levels[self.level_sel].w;
         let h = self.project.levels[self.level_sel].h;
         let size = Vec2::new(w as f32 * cell, h as f32 * cell);
@@ -1270,18 +1299,20 @@ impl NestApp {
                 .or(ui.input(|i| i.pointer.interact_pos()))
             {
                 let local = pos - rect.min;
-                self.place_at(
-                    (local.x / cell) as i32,
-                    (local.y / cell) as i32,
-                    (*payload).clone(),
-                    false,
-                );
+                let (x, y) = pointer_cell(local.x, local.y);
+                self.place_at(x, y, (*payload).clone(), false);
             }
-        } else if response.clicked() || response.dragged() {
-            if let Some(pos) = response.interact_pointer_pos() {
+        } else if response.clicked()
+            || response.dragged()
+            || response.drag_started()
+            || response.drag_stopped()
+        {
+            if let Some(pos) = response
+                .interact_pointer_pos()
+                .or(ui.input(|input| input.pointer.interact_pos()))
+            {
                 let local = pos - rect.min;
-                let x = (local.x / cell) as i32;
-                let y = (local.y / cell) as i32;
+                let (x, y) = pointer_cell(local.x, local.y);
                 let erase = ui.input(|i| i.pointer.secondary_down());
                 if self.edit_placement && !erase {
                     if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
@@ -1301,10 +1332,582 @@ impl NestApp {
                         self.project.levels[self.level_sel].player.x = x as f32;
                         self.project.levels[self.level_sel].player.y = y as f32;
                     }
+                } else if self.terrain_engaged() {
+                    self.terrain_pointer(x, y, &response, erase);
                 } else if let Some(asset_id) = self.paint_asset.clone() {
                     self.place_at(x, y, asset_id, erase);
                 } else if erase {
                     self.place_at(x, y, String::new(), true);
+                }
+            }
+        }
+        if self.terrain_brush.is_some() {
+            if let Some(pos) = response.hover_pos() {
+                let local = pos - rect.min;
+                let (x, y) = pointer_cell(local.x, local.y);
+                if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+                    let hover = Rect::from_min_size(
+                        rect.min + Vec2::new(x as f32 * cell, y as f32 * cell),
+                        Vec2::splat(cell - 1.0),
+                    );
+                    painter.rect_stroke(
+                        hover,
+                        0.0,
+                        egui::Stroke::new(1.0_f32, paper()),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+        }
+    }
+
+    fn terrain_engaged(&self) -> bool {
+        if self.terrain_tool == TerrainTool::Inspect || self.terrain_tool == TerrainTool::Erase {
+            return true;
+        }
+        self.terrain_brush.is_some()
+    }
+
+    fn terrain_pointer(&mut self, x: i32, y: i32, response: &egui::Response, secondary: bool) {
+        let tool = if secondary {
+            TerrainTool::Erase
+        } else {
+            self.terrain_tool
+        };
+        if tool == TerrainTool::Inspect {
+            if response.drag_started() || response.clicked() {
+                self.inspect_terrain_at(x, y);
+            }
+            return;
+        }
+        if self
+            .terrain_stroke
+            .as_ref()
+            .is_some_and(|stroke| stroke.level_index != self.level_sel)
+        {
+            self.cancel_terrain_stroke();
+        }
+        if response.drag_started() {
+            self.begin_terrain(x, y, tool);
+        }
+        if response.dragged() {
+            self.extend_terrain(x, y);
+        }
+        if response.drag_stopped() {
+            self.commit_terrain();
+        } else if response.clicked() && self.terrain_stroke.is_none() {
+            self.begin_terrain(x, y, tool);
+            self.commit_terrain();
+        }
+    }
+
+    fn begin_terrain(&mut self, x: i32, y: i32, tool: TerrainTool) {
+        if self.level_sel >= self.project.levels.len() {
+            return;
+        }
+        if tool != TerrainTool::Erase && self.terrain_brush.is_none() {
+            self.status = "Select a terrain brush before painting.".into();
+            return;
+        }
+        let before = self.project.levels[self.level_sel].cells.clone();
+        self.terrain_stroke = Some(TerrainStroke {
+            level_index: self.level_sel,
+            before,
+            anchor: (x, y),
+            last: (x, y),
+            samples: vec![(x, y)],
+            tool,
+            brush_id: self.terrain_brush.clone().unwrap_or_default(),
+            missing: 0,
+        });
+        self.preview_terrain();
+    }
+
+    fn extend_terrain(&mut self, x: i32, y: i32) {
+        let changed = {
+            let Some(stroke) = self.terrain_stroke.as_mut() else {
+                return;
+            };
+            if stroke.tool == TerrainTool::Single || stroke.last == (x, y) {
+                false
+            } else {
+                stroke.last = (x, y);
+                stroke.samples.push((x, y));
+                true
+            }
+        };
+        if changed {
+            self.preview_terrain();
+        }
+    }
+
+    fn preview_terrain(&mut self) {
+        let Some(stroke) = self.terrain_stroke.clone() else {
+            return;
+        };
+        if stroke.level_index >= self.project.levels.len() {
+            self.terrain_stroke = None;
+            return;
+        }
+        let brushes = self.project.terrain_brushes.clone();
+        let level = &mut self.project.levels[stroke.level_index];
+        level.cells = stroke.before.clone();
+        let coords = retain_inside(
+            paint_cells(stroke.tool, stroke.anchor, stroke.last, &stroke.samples),
+            level.w,
+            level.h,
+        );
+        let erase = stroke.tool == TerrainTool::Erase;
+        let report = match apply_stroke(level, &brushes, &stroke.brush_id, &coords, erase, None) {
+            Ok(report) => report,
+            Err(err) => {
+                self.project.levels[stroke.level_index].cells = stroke.before;
+                self.terrain_stroke = None;
+                self.status = err;
+                return;
+            }
+        };
+        let created = report.created;
+        if let Some(active) = self.terrain_stroke.as_mut() {
+            active.missing = report.missing.len();
+        }
+        if erase {
+            return;
+        }
+        let Some(role) = self
+            .project
+            .terrain_brushes
+            .iter()
+            .find(|brush| brush.id == stroke.brush_id)
+            .map(|brush| brush.default_role.clone())
+        else {
+            return;
+        };
+        let level_id = self.project.levels[stroke.level_index].id.clone();
+        for (x, y) in created {
+            if let Err(err) = assign_cell(&mut self.project, &level_id, x, y, role.clone()) {
+                self.status = err;
+                return;
+            }
+        }
+    }
+
+    fn commit_terrain(&mut self) {
+        let Some(stroke) = self.terrain_stroke.take() else {
+            return;
+        };
+        let Some(level) = self.project.levels.get(stroke.level_index) else {
+            return;
+        };
+        let missing = stroke.missing;
+        commit_edit(
+            &mut self.terrain_undo,
+            &mut self.terrain_redo,
+            TerrainEdit {
+                level_index: stroke.level_index,
+                before: stroke.before,
+                after: level.cells.clone(),
+            },
+        );
+        if missing > 0 {
+            self.status = format!(
+                "Terrain updated. {missing} cells have no exact graphic, so the fallback tile is showing."
+            );
+        }
+    }
+
+    fn cancel_terrain_stroke(&mut self) {
+        let Some(stroke) = self.terrain_stroke.take() else {
+            return;
+        };
+        if let Some(level) = self.project.levels.get_mut(stroke.level_index) {
+            level.cells = stroke.before;
+        }
+    }
+
+    fn inspect_terrain_at(&mut self, x: i32, y: i32) {
+        if self.level_sel >= self.project.levels.len() {
+            return;
+        }
+        let level = &self.project.levels[self.level_sel];
+        if x < 0 || y < 0 || (x as u32) >= level.w || (y as u32) >= level.h {
+            return;
+        }
+        self.placement_pick = Some((x, y));
+        if let Some(info) = inspect_terrain(level, &self.project.terrain_brushes, x, y) {
+            let mode = if info.automatic {
+                "Automatic"
+            } else {
+                "Manual override"
+            };
+            let missing = if info.missing_exact {
+                " The exact shape is not assigned, so a fallback tile is showing."
+            } else {
+                ""
+            };
+            self.status = format!(
+                "{} at {x},{y}: {} ({mode}). Gameplay stays on its blueprint.{missing}",
+                info.brush_name,
+                slot_label(info.slot)
+            );
+        } else if level.cells.iter().any(|cell| cell.x == x && cell.y == y) {
+            self.status =
+                format!("No terrain at {x},{y}. The other parts there were left in place.");
+        } else {
+            self.status = format!("Empty cell {x},{y}.");
+        }
+    }
+
+    fn terrain_panel(&mut self, ui: &mut egui::Ui) {
+        let mut create = false;
+        let mut clear = false;
+        let mut select = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Terrain brushes").strong());
+            if ui.button("New terrain brush").clicked() {
+                create = true;
+            }
+            if ui.button("Stamp painting").clicked() {
+                clear = true;
+            }
+            for brush in &self.project.terrain_brushes {
+                let label = if brush.name.is_empty() {
+                    brush.id.as_str()
+                } else {
+                    brush.name.as_str()
+                };
+                if ui
+                    .selectable_label(
+                        self.terrain_brush.as_deref() == Some(brush.id.as_str()),
+                        label,
+                    )
+                    .clicked()
+                {
+                    select = Some(brush.id.clone());
+                }
+            }
+        });
+        if create {
+            self.add_terrain_brush();
+        }
+        if let Some(id) = select {
+            self.terrain_brush = Some(id);
+        }
+        if clear {
+            self.terrain_brush = None;
+        }
+        self.edit_terrain_brush(ui);
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Tool");
+            for tool in ALL_TOOLS {
+                if ui
+                    .selectable_label(self.terrain_tool == tool, tool_label(tool))
+                    .clicked()
+                {
+                    self.terrain_tool = tool;
+                }
+            }
+            if ui.button("Undo").clicked() {
+                self.cancel_terrain_stroke();
+                if undo_edit(
+                    &mut self.terrain_undo,
+                    &mut self.terrain_redo,
+                    &mut self.project.levels,
+                ) {
+                    self.status = "Undid the terrain stroke.".into();
+                }
+            }
+            if ui.button("Redo").clicked() {
+                self.cancel_terrain_stroke();
+                if redo_edit(
+                    &mut self.terrain_undo,
+                    &mut self.terrain_redo,
+                    &mut self.project.levels,
+                ) {
+                    self.status = "Redid the terrain stroke.".into();
+                }
+            }
+        });
+        self.terrain_override(ui);
+    }
+
+    fn add_terrain_brush(&mut self) {
+        let id = nid("terrain-");
+        let fallback = self
+            .project
+            .assets
+            .iter()
+            .find(|asset| asset.kind == AssetKind::Terrain && !asset.rgba_base64.is_empty())
+            .map(|asset| asset.id.clone())
+            .unwrap_or_default();
+        let mut variants = BTreeMap::new();
+        if !fallback.is_empty() {
+            variants.insert(TerrainSlot::Isolated, fallback.clone());
+            variants.insert(TerrainSlot::HorizontalMiddle, fallback.clone());
+            variants.insert(TerrainSlot::Interior, fallback.clone());
+        }
+        let role = gameplay_options()
+            .into_iter()
+            .nth(1)
+            .map(|(_, role)| role)
+            .unwrap_or_default();
+        self.project.terrain_brushes.push(TerrainBrush {
+            id: id.clone(),
+            name: "Ground".into(),
+            group: id.clone(),
+            mode: NeighborMode::Four,
+            variants,
+            fallback_asset: fallback,
+            default_role: role,
+            notes: String::new(),
+        });
+        self.terrain_brush = Some(id);
+        self.status =
+            "New terrain brush. Assign left, middle, and right graphics, then paint.".into();
+    }
+
+    fn edit_terrain_brush(&mut self, ui: &mut egui::Ui) {
+        let Some(id) = self.terrain_brush.clone() else {
+            ui.label("Stamp painting is active. Choose a terrain brush to paint connected ground.");
+            return;
+        };
+        let Some(mut draft) = self
+            .project
+            .terrain_brushes
+            .iter()
+            .find(|brush| brush.id == id)
+            .cloned()
+        else {
+            self.terrain_brush = None;
+            return;
+        };
+        let mut refresh_art = false;
+        let mut refresh_links = false;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Name");
+            ui.text_edit_singleline(&mut draft.name);
+            ui.label("Connection group");
+            let before = draft.group.clone();
+            ui.text_edit_singleline(&mut draft.group);
+            if draft.group != before {
+                refresh_links = true;
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            let before = draft.mode;
+            ui.radio_value(&mut draft.mode, NeighborMode::Four, "Four sides");
+            ui.radio_value(
+                &mut draft.mode,
+                NeighborMode::Eight,
+                "Eight sides, with inner corners",
+            );
+            if draft.mode != before {
+                refresh_links = true;
+            }
+            ui.label("Gameplay for new strokes");
+            let options = gameplay_options();
+            let mut index = options
+                .iter()
+                .position(|(_, role)| role == &draft.default_role)
+                .unwrap_or(0);
+            egui::ComboBox::from_id_salt(format!("terrain-role-{id}"))
+                .selected_text(options[index].0)
+                .show_ui(ui, |ui| {
+                    for (choice, (label, _)) in options.iter().enumerate() {
+                        ui.selectable_value(&mut index, choice, *label);
+                    }
+                });
+            draft.default_role = options[index].1.clone();
+        });
+        ui.label(
+            "Changing this gameplay applies to cells painted from now on. Cells already on the course keep their blueprint.",
+        );
+        let assets = self
+            .project
+            .assets
+            .iter()
+            .filter(|asset| {
+                !asset.kind.is_audio()
+                    && (!asset.rgba_base64.is_empty() || !asset.png_base64.is_empty())
+            })
+            .map(|asset| (asset.id.clone(), asset.name.clone()))
+            .collect::<Vec<_>>();
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Fallback tile");
+            let before = draft.fallback_asset.clone();
+            self.asset_combo(
+                ui,
+                &format!("terrain-fallback-{id}"),
+                &mut draft.fallback_asset,
+                &assets,
+            );
+            if draft.fallback_asset != before {
+                refresh_art = true;
+            }
+        });
+        ui.collapsing("Connected tiles", |ui| {
+            for slot in ALL_SLOTS {
+                ui.horizontal(|ui| {
+                    ui.label(slot_label(slot));
+                    let mut asset = draft.variants.get(&slot).cloned().unwrap_or_default();
+                    let before = asset.clone();
+                    self.asset_combo(
+                        ui,
+                        &format!("terrain-{}-{}", id, slot_key(slot)),
+                        &mut asset,
+                        &assets,
+                    );
+                    if asset != before {
+                        refresh_art = true;
+                        if asset.is_empty() {
+                            draft.variants.remove(&slot);
+                        } else {
+                            draft.variants.insert(slot, asset);
+                        }
+                    }
+                });
+            }
+        });
+        let missing = missing_slots(&draft);
+        if missing.is_empty() {
+            ui.label("Every connected shape has a graphic.");
+        } else {
+            let names = missing
+                .iter()
+                .map(|slot| slot_label(*slot))
+                .collect::<Vec<_>>()
+                .join(", ");
+            ui.label(format!(
+                "Missing graphics: {names}. Painting still works and uses the fallback tile. Inner corners are used only for eight-side brushes."
+            ));
+        }
+        ui.label(format!(
+            "This brush joins group {}.",
+            connection_group(&draft)
+        ));
+        if let Some(brush) = self
+            .project
+            .terrain_brushes
+            .iter_mut()
+            .find(|brush| brush.id == id)
+        {
+            *brush = draft;
+        }
+        if refresh_links || refresh_art {
+            let brushes = self.project.terrain_brushes.clone();
+            for level in &mut self.project.levels {
+                if refresh_links {
+                    refresh_connections(level, &brushes);
+                } else {
+                    refresh_brush_art(level, &brushes, &id);
+                }
+            }
+        }
+    }
+
+    fn asset_combo(
+        &self,
+        ui: &mut egui::Ui,
+        salt: &str,
+        selected: &mut String,
+        assets: &[(String, String)],
+    ) {
+        let caption = assets
+            .iter()
+            .find(|(id, _)| id == selected)
+            .map(|(_, name)| name.clone())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| {
+                if selected.is_empty() {
+                    "(none)".into()
+                } else {
+                    selected.clone()
+                }
+            });
+        egui::ComboBox::from_id_salt(salt)
+            .selected_text(caption)
+            .show_ui(ui, |ui| {
+                ui.selectable_value(selected, String::new(), "(none)");
+                for (id, name) in assets {
+                    ui.selectable_value(selected, id.clone(), name);
+                }
+            });
+    }
+
+    fn terrain_override(&mut self, ui: &mut egui::Ui) {
+        let Some((x, y)) = self.placement_pick else {
+            return;
+        };
+        if self.level_sel >= self.project.levels.len() {
+            return;
+        }
+        let Some(info) = inspect_terrain(
+            &self.project.levels[self.level_sel],
+            &self.project.terrain_brushes,
+            x,
+            y,
+        ) else {
+            return;
+        };
+        let mode = if info.automatic {
+            "Automatic"
+        } else {
+            "Manual override"
+        };
+        ui.label(format!(
+            "Selected terrain {x},{y}: {} — {} ({mode}).",
+            info.brush_name,
+            slot_label(info.slot)
+        ));
+        if info.missing_exact {
+            ui.label("This shape has no assigned graphic. The fallback tile is showing.");
+        }
+        let assets = self
+            .project
+            .assets
+            .iter()
+            .filter(|asset| !asset.kind.is_audio())
+            .map(|asset| (asset.id.clone(), asset.name.clone()))
+            .collect::<Vec<_>>();
+        let mut choice = info.asset_id.clone();
+        let before = choice.clone();
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Picture");
+            self.asset_combo(ui, "terrain-override", &mut choice, &assets);
+            if ui.button("Use automatic tile").clicked() {
+                choice.clear();
+            }
+        });
+        if choice != before {
+            let level_index = self.level_sel;
+            let snapshot = self.project.levels[level_index].cells.clone();
+            let brushes = self.project.terrain_brushes.clone();
+            let result = if choice.is_empty() {
+                clear_manual_override(&mut self.project.levels[level_index], &brushes, x, y)
+                    .map(|_| ())
+            } else {
+                set_manual_override(&mut self.project.levels[level_index], x, y, &choice)
+            };
+            match result {
+                Ok(()) => {
+                    commit_edit(
+                        &mut self.terrain_undo,
+                        &mut self.terrain_redo,
+                        TerrainEdit {
+                            level_index,
+                            before: snapshot,
+                            after: self.project.levels[level_index].cells.clone(),
+                        },
+                    );
+                    self.status = if choice.is_empty() {
+                        "Returned the cell to automatic terrain.".into()
+                    } else {
+                        "Manual override saved. Neighbor updates will keep this picture.".into()
+                    };
+                }
+                Err(err) => {
+                    self.project.levels[level_index].cells = snapshot;
+                    self.status = err;
                 }
             }
         }
@@ -2799,6 +3402,12 @@ impl NestApp {
                             self.project = project;
                             self.textures.clear();
                             self.level_sel = 0;
+                            // Stroke history is memory only. Opening a project does not
+                            // write the file and does not keep the previous course's edits.
+                            self.terrain_undo.clear();
+                            self.terrain_redo.clear();
+                            self.terrain_stroke = None;
+                            self.terrain_brush = None;
                             self.status = format!("Opened {}", path.display());
                         }
                         Err(err) => self.status = err.to_string(),

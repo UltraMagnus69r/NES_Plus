@@ -94,6 +94,23 @@ struct LevelFile {
     not_simulated: &'static [&'static str],
     skipped_enemies: Vec<String>,
     sim: SimFile,
+    /// Non-solid terrain pictures. They have no collision body.
+    #[serde(default)]
+    scenery: Vec<BodyFile>,
+    /// Resolved terrain cells. Empty on courses that have no terrain brushes.
+    #[serde(default)]
+    terrain_expect: Vec<TerrainExpect>,
+}
+
+#[derive(Serialize)]
+struct TerrainExpect {
+    cell_x: i32,
+    cell_y: i32,
+    x: f64,
+    y: f64,
+    texture: String,
+    solid: bool,
+    asset_id: String,
 }
 
 #[derive(Serialize)]
@@ -186,6 +203,11 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
             picture_ids.push(asset.id.clone());
         }
     }
+    for cell in &level.cells {
+        if cell.terrain.is_some() {
+            picture_ids.push(cell.asset_id.clone());
+        }
+    }
     let mut stems = stem_map(&picture_ids);
     let player_stem = stems
         .get(&player.id)
@@ -211,7 +233,11 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
         texture: format!("res://assets/{player_stem}.png"),
     };
     let mut solids = Vec::new();
+    let mut solid_cells = BTreeSet::new();
     for solid in &sim.solids {
+        if !solid_cells.insert((solid.cell_x, solid.cell_y)) {
+            continue;
+        }
         let asset = picture_for_cell(&view, level, solid.cell_x, solid.cell_y)?;
         let (px_w, px_h, _) = decode_image(asset).map_err(|err| {
             format!(
@@ -308,6 +334,65 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
             texture: format!("res://assets/{stem}.png"),
         });
     }
+    let mut terrain_cells: Vec<&crate::project::Cell> = level
+        .cells
+        .iter()
+        .filter(|cell| cell.terrain.is_some())
+        .collect();
+    terrain_cells.sort_by_key(|cell| (cell.y, cell.x, cell.asset_id.as_str()));
+    let mut scenery = Vec::new();
+    let mut terrain_expect = Vec::new();
+    for cell in terrain_cells {
+        let asset = view
+            .assets
+            .iter()
+            .find(|asset| asset.id == cell.asset_id)
+            .ok_or_else(|| {
+                format!(
+                    "Terrain at {},{} uses missing asset {}. The Godot scene was not created.",
+                    cell.x, cell.y, cell.asset_id
+                )
+            })?;
+        let (px_w, px_h, _) = decode_image(asset).map_err(|err| {
+            format!(
+                "Terrain at {},{} has no usable picture ({err}). The Godot scene was not created.",
+                cell.x, cell.y
+            )
+        })?;
+        let size = fit_box(px_w, px_h, f64::from(CELL_PX), f64::from(CELL_PX));
+        let stem = stems
+            .get(&asset.id)
+            .cloned()
+            .unwrap_or_else(|| sanitize(&asset.id));
+        let texture = format!("res://assets/{stem}.png");
+        let x = f64::from(cell.x.saturating_mul(CELL_PX));
+        let y = f64::from(cell.y.saturating_mul(CELL_PX));
+        let solid = solid_cells.contains(&(cell.x, cell.y));
+        if !solid {
+            scenery.push(BodyFile {
+                asset_id: asset.id.clone(),
+                label: asset.name.clone(),
+                cell_x: f64::from(cell.x),
+                cell_y: f64::from(cell.y),
+                x,
+                y,
+                w: size.w,
+                h: size.h,
+                scale_x: size.scale_x,
+                scale_y: size.scale_y,
+                texture: texture.clone(),
+            });
+        }
+        terrain_expect.push(TerrainExpect {
+            cell_x: cell.x,
+            cell_y: cell.y,
+            x,
+            y,
+            texture,
+            solid,
+            asset_id: asset.id.clone(),
+        });
+    }
     let support = support_top(&player_body, &solids);
     let drop_px = support
         .map(|top| (top - (player_body.y + player_body.h)).max(0.0))
@@ -319,7 +404,12 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
     );
     let mut seen = BTreeSet::new();
     seen.insert(player.id.clone());
-    for body in solids.iter().chain(enemies.iter()).chain(goals.iter()) {
+    for body in solids
+        .iter()
+        .chain(enemies.iter())
+        .chain(goals.iter())
+        .chain(scenery.iter())
+    {
         if !seen.insert(body.asset_id.clone()) {
             continue;
         }
@@ -348,6 +438,8 @@ fn plan_proof(project: &Project, level_id: &str) -> Result<Plan, String> {
         not_simulated: NOT_SIMULATED,
         skipped_enemies: skipped_enemy_kinds(&world),
         sim,
+        scenery,
+        terrain_expect,
     };
     let scene = scene_text(&level_file);
     Ok(Plan {
@@ -372,7 +464,7 @@ fn write_plan(dest: &Path, plan: &Plan) -> Result<(), String> {
     for (rel, bytes) in &plan.images {
         write_inside(dest, rel, bytes)?;
     }
-    write_inside(dest, ".nesticles-godot-out", b"phase6.1\n")?;
+    write_inside(dest, ".nesticles-godot-out", b"phase7\n")?;
     Ok(())
 }
 
@@ -501,6 +593,8 @@ fn picture_for_cell<'a>(
     cell_x: i32,
     cell_y: i32,
 ) -> Result<&'a Asset, String> {
+    let mut terrain_hit = None;
+    let mut solid_hit = None;
     let mut fallback = None;
     for cell in &level.cells {
         if cell.x != cell_x || cell.y != cell_y {
@@ -516,14 +610,19 @@ fn picture_for_cell<'a>(
         if !has_image(asset) {
             continue;
         }
-        if asset.kind == AssetKind::Terrain || asset.solid {
-            return Ok(asset);
+        if cell.terrain.is_some() && terrain_hit.is_none() {
+            terrain_hit = Some(asset);
+            continue;
+        }
+        if (asset.kind == AssetKind::Terrain || asset.solid) && solid_hit.is_none() {
+            solid_hit = Some(asset);
+            continue;
         }
         if fallback.is_none() {
             fallback = Some(asset);
         }
     }
-    fallback.ok_or_else(|| {
+    terrain_hit.or(solid_hit).or(fallback).ok_or_else(|| {
         format!(
             "Solid fixture at {cell_x},{cell_y} has no usable picture. The Godot scene was not created."
         )
@@ -658,6 +757,7 @@ fn scene_text(level: &LevelFile) -> String {
         .iter()
         .chain(level.enemies.iter())
         .chain(level.goals.iter())
+        .chain(level.scenery.iter())
     {
         textures
             .entry(actor.texture.clone())
@@ -746,7 +846,29 @@ fn scene_text(level: &LevelFile) -> String {
     for (index, goal) in level.goals.iter().enumerate() {
         push_actor(&mut scene, &textures, "Goal", index, goal, 1);
     }
+    for (index, piece) in level.scenery.iter().enumerate() {
+        push_scenery(&mut scene, &textures, index, piece);
+    }
     scene
+}
+
+fn push_scenery(
+    scene: &mut String,
+    textures: &BTreeMap<String, String>,
+    index: usize,
+    actor: &BodyFile,
+) {
+    scene.push_str(&format!(
+        "[node name=\"Scenery_{index}\" type=\"Node2D\" parent=\".\"]\nz_index = 0\nposition = Vector2({}, {})\n\n",
+        num(actor.x),
+        num(actor.y)
+    ));
+    scene.push_str(&format!(
+        "[node name=\"Sprite\" type=\"Sprite2D\" parent=\"Scenery_{index}\"]\ncentered = false\ntexture_filter = 1\ntexture = ExtResource(\"{}\")\n",
+        textures[&actor.texture]
+    ));
+    push_scale(scene, actor.scale_x, actor.scale_y);
+    scene.push('\n');
 }
 
 fn push_actor(
@@ -1204,5 +1326,320 @@ mod tests {
             }
         }
         let _ = fs::remove_dir_all(&dest);
+    }
+
+    #[test]
+    fn headless_terrain_uses_connected_tiles() {
+        let project = terrain_course();
+        let first = fresh_dir(&format!("nesticles-godot-terrain-{}", std::process::id()));
+        let second = fresh_dir(&format!(
+            "nesticles-godot-terrain-again-{}",
+            std::process::id()
+        ));
+        generate_proof(&project, "course", &first).unwrap();
+        generate_proof(&project, "course", &second).unwrap();
+        let files = listed_files(&first).unwrap();
+        assert_eq!(files, listed_files(&second).unwrap());
+        for rel in &files {
+            assert_eq!(
+                fs::read(first.join(rel)).unwrap(),
+                fs::read(second.join(rel)).unwrap(),
+                "{rel}"
+            );
+        }
+        let level: serde_json::Value =
+            serde_json::from_slice(&fs::read(first.join("data/level.json")).unwrap()).unwrap();
+        assert_eq!(level["cell_px"], 72);
+        assert_eq!(level["player"]["x"], 153.0);
+        assert_eq!(level["player"]["y"], 432.0);
+        assert_eq!(level["support_top"], 864.0);
+        assert_eq!(level["drop_px"], 360.0);
+        assert_eq!(level["solids"].as_array().unwrap().len(), 13);
+        let expect = level["terrain_expect"].as_array().unwrap();
+        assert_eq!(expect.len(), 22);
+        let at = |x: i64, y: i64| {
+            expect
+                .iter()
+                .find(|row| row["cell_x"].as_i64() == Some(x) && row["cell_y"].as_i64() == Some(y))
+                .unwrap_or_else(|| panic!("missing terrain {x},{y}"))
+        };
+        assert!(at(0, 12)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("grass_left.png"));
+        assert_eq!(at(0, 12)["solid"], true);
+        assert_eq!(at(0, 12)["x"], 0.0);
+        assert_eq!(at(0, 12)["y"], 864.0);
+        assert!(at(1, 12)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("grass_mid.png"));
+        assert!(at(3, 12)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("cracked.png"));
+        assert_eq!(at(3, 12)["solid"], true);
+        assert_eq!(at(3, 12)["x"], 216.0);
+        assert!(at(7, 12)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("grass_right.png"));
+        assert!(at(8, 12)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("stone_iso.png"));
+        assert_eq!(
+            at(7, 12)["x"].as_f64().unwrap() + 72.0,
+            at(8, 12)["x"].as_f64().unwrap()
+        );
+        assert!(at(22, 9)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("stone_top.png"));
+        assert!(at(22, 10)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("stone_mid.png"));
+        assert!(at(22, 12)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("stone_bot.png"));
+        assert!(at(10, 2)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("decor_tl.png"));
+        assert!(at(11, 3)["texture"]
+            .as_str()
+            .unwrap()
+            .ends_with("decor_fill.png"));
+        assert_eq!(at(11, 3)["solid"], false);
+        assert_eq!(at(11, 3)["x"], 792.0);
+        assert_eq!(at(11, 3)["y"], 216.0);
+        let scene = fs::read_to_string(first.join("scenes/proof.tscn")).unwrap();
+        assert!(scene.contains("res://assets/grass_left.png"));
+        assert!(scene.contains("res://assets/grass_mid.png"));
+        assert!(scene.contains("res://assets/grass_right.png"));
+        assert!(scene.contains("res://assets/cracked.png"));
+        assert!(scene.contains("res://assets/decor_fill.png"));
+        assert!(scene.contains("Scenery_"));
+        assert!(scene.contains("texture_filter = 1"));
+        assert!(!scene.contains("OS.shell_open"));
+        assert_eq!(
+            fs::read_to_string(first.join("scripts/player.gd")).unwrap(),
+            PLAYER_SCRIPT
+        );
+        assert_eq!(
+            fs::read_to_string(first.join("scripts/proof_driver.gd")).unwrap(),
+            PROOF_SCRIPT
+        );
+        assert_eq!(
+            fs::read_to_string(first.join("scripts/nesticles_sim.gd")).unwrap(),
+            SIM_SCRIPT
+        );
+        let tool = match crate::godot::discover(None) {
+            Ok(tool) => tool,
+            Err(err) => panic!(
+                "Godot {} is required for the terrain proof: {err}",
+                crate::godot::PINNED_VERSION
+            ),
+        };
+        let output = crate::godot::run_proof(&tool.executable, &first)
+            .unwrap_or_else(|err| panic!("headless terrain proof failed to start: {err}"));
+        let combined = format!("{}\n{}", output.stdout, output.stderr);
+        assert!(
+            output.stdout.contains("NESTICLES_TERRAIN_OK cells=22"),
+            "{combined}"
+        );
+        assert!(
+            output.stdout.contains("NESTICLES_GODOT_PROOF_OK"),
+            "{combined}"
+        );
+        assert!(!combined.contains("SCRIPT ERROR"), "{combined}");
+        assert!(
+            !combined.contains("NESTICLES_GODOT_PROOF_FAIL"),
+            "{combined}"
+        );
+        assert_eq!(output.status, Some(0), "{combined}");
+        let exported = first.join("build").join("nesticles-proof");
+        match crate::godot::export_native(&tool.executable, &first, &exported) {
+            Err(err) if err.contains("export templates were not found") => {
+                eprintln!("native terrain export blocked: {err}");
+            }
+            Err(err) => panic!("{err}"),
+            Ok(_) => {
+                let standalone = crate::godot::run_exported(&exported)
+                    .unwrap_or_else(|err| panic!("standalone terrain launch failed: {err}"));
+                let text = format!("{}\n{}", standalone.stdout, standalone.stderr);
+                assert!(text.contains("NESTICLES_TERRAIN_OK cells=22"), "{text}");
+                assert!(text.contains("NESTICLES_GODOT_PROOF_OK"), "{text}");
+                assert_eq!(standalone.status, Some(0), "{text}");
+            }
+        }
+        let _ = fs::remove_dir_all(&first);
+        let _ = fs::remove_dir_all(&second);
+    }
+
+    fn terrain_course() -> Project {
+        use crate::enemy_ai::EnemyAiStyle;
+        use crate::project::{Asset, AssetKind, BlockTag, HazardTag, ItemTag};
+        use crate::terrain::{
+            apply_stroke, set_manual_override, NeighborMode, TerrainBrush, TerrainSlot,
+        };
+        use std::collections::BTreeMap;
+
+        fn swatch(id: &str, rgb: [u8; 3], kind: AssetKind) -> Asset {
+            let mut bytes = Vec::with_capacity(16 * 16 * 4);
+            for _ in 0..16 * 16 {
+                bytes.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+            }
+            Asset {
+                id: id.into(),
+                name: id.into(),
+                kind,
+                style_id: String::new(),
+                w: 16,
+                h: 16,
+                rgba_base64: crate::pngutil::b64_encode(&bytes),
+                png_base64: String::new(),
+                wav_base64: String::new(),
+                solid: false,
+                cue: String::new(),
+                item_tag: ItemTag::Auto,
+                block_tag: BlockTag::Auto,
+                hazard_tag: HazardTag::Auto,
+                warp: None,
+            }
+        }
+        fn material(id: &str, group: &str, pairs: &[(TerrainSlot, &str)]) -> TerrainBrush {
+            let mut variants = BTreeMap::new();
+            for (slot, asset) in pairs {
+                variants.insert(*slot, (*asset).to_string());
+            }
+            TerrainBrush {
+                id: id.into(),
+                name: "\"; OS.shell_open(\"/tmp/pwned\")".into(),
+                group: group.into(),
+                mode: NeighborMode::Four,
+                variants,
+                fallback_asset: pairs[0].1.to_string(),
+                default_role: crate::blueprint::LegacyRole::Inert,
+                notes: String::new(),
+            }
+        }
+        let grass = material(
+            "grass",
+            "meadow",
+            &[
+                (TerrainSlot::HorizontalLeft, "grass_left"),
+                (TerrainSlot::HorizontalMiddle, "grass_mid"),
+                (TerrainSlot::HorizontalRight, "grass_right"),
+                (TerrainSlot::Isolated, "grass_iso"),
+            ],
+        );
+        let stone = material(
+            "stone",
+            "wall",
+            &[
+                (TerrainSlot::Isolated, "stone_iso"),
+                (TerrainSlot::VerticalTop, "stone_top"),
+                (TerrainSlot::VerticalMiddle, "stone_mid"),
+                (TerrainSlot::VerticalBottom, "stone_bot"),
+            ],
+        );
+        let decor = material(
+            "decor",
+            "ornament",
+            &[
+                (TerrainSlot::TopLeftOuter, "decor_tl"),
+                (TerrainSlot::TopEdge, "decor_top"),
+                (TerrainSlot::TopRightOuter, "decor_tr"),
+                (TerrainSlot::LeftEdge, "decor_left"),
+                (TerrainSlot::Interior, "decor_fill"),
+                (TerrainSlot::RightEdge, "decor_right"),
+                (TerrainSlot::BottomLeftOuter, "decor_bl"),
+                (TerrainSlot::BottomEdge, "decor_bot"),
+                (TerrainSlot::BottomRightOuter, "decor_br"),
+            ],
+        );
+        let mut project = Project::blank("Terrain proof");
+        project.blueprint_cutover = true;
+        project
+            .assets
+            .push(swatch("pip", [80, 160, 255], AssetKind::Player));
+        for (id, rgb) in [
+            ("grass_left", [40, 140, 50]),
+            ("grass_mid", [50, 160, 60]),
+            ("grass_right", [30, 120, 40]),
+            ("grass_iso", [70, 180, 80]),
+            ("cracked", [90, 70, 40]),
+            ("stone_iso", [140, 140, 150]),
+            ("stone_top", [160, 160, 170]),
+            ("stone_mid", [120, 120, 130]),
+            ("stone_bot", [100, 100, 110]),
+            ("decor_tl", [180, 80, 80]),
+            ("decor_top", [190, 90, 90]),
+            ("decor_tr", [170, 70, 70]),
+            ("decor_left", [200, 100, 100]),
+            ("decor_fill", [210, 110, 110]),
+            ("decor_right", [160, 60, 60]),
+            ("decor_bl", [150, 50, 50]),
+            ("decor_bot", [140, 40, 40]),
+            ("decor_br", [130, 30, 30]),
+        ] {
+            project.assets.push(swatch(id, rgb, AssetKind::Terrain));
+        }
+        project.terrain_brushes = vec![grass, stone, decor];
+        project.levels.push(Level {
+            id: "course".into(),
+            name: "Connected ground".into(),
+            style_id: String::new(),
+            w: 32,
+            h: 15,
+            sky: "#24343c".into(),
+            music_id: None,
+            player: Spawn { x: 2.0, y: 6.0 },
+            cells: Vec::new(),
+            enemy_ai: EnemyAiStyle::Smb1Nes,
+            entrances: Vec::new(),
+        });
+        let brushes = project.terrain_brushes.clone();
+        let solid = compose_fixture(Some(LegacyBlock::Solid), None, None).unwrap();
+        let inert = crate::blueprint::LegacyRole::Inert;
+        let lay = |project: &mut Project,
+                   brush_id: &str,
+                   coords: &[(i32, i32)],
+                   role: crate::blueprint::LegacyRole| {
+            let report = apply_stroke(
+                &mut project.levels[0],
+                &brushes,
+                brush_id,
+                coords,
+                false,
+                None,
+            )
+            .unwrap();
+            for (x, y) in report.created {
+                assign_cell(project, "course", x, y, role.clone()).unwrap();
+            }
+        };
+        lay(
+            &mut project,
+            "grass",
+            &(0..=7).map(|x| (x, 12)).collect::<Vec<_>>(),
+            solid.clone(),
+        );
+        set_manual_override(&mut project.levels[0], 3, 12, "cracked").unwrap();
+        lay(&mut project, "stone", &[(8, 12)], solid.clone());
+        lay(
+            &mut project,
+            "stone",
+            &(9..=12).map(|y| (22, y)).collect::<Vec<_>>(),
+            solid,
+        );
+        let decor_cells: Vec<_> = (2..=4)
+            .flat_map(|y| (10..=12).map(move |x| (x, y)))
+            .collect();
+        lay(&mut project, "decor", &decor_cells, inert);
+        project
     }
 }
