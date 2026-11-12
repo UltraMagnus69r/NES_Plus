@@ -5,6 +5,7 @@
 mod play_tests;
 
 pub mod audio;
+pub mod blueprint;
 pub mod classify;
 pub mod codec;
 pub mod demo;
@@ -20,6 +21,9 @@ pub mod tools;
 pub mod wav;
 
 pub use audio::{decode_brr, decode_dpcm_levels, decode_gb_wave, AudioHit};
+pub use blueprint::{
+    ensure_legacy_blueprints, infer_legacy, Blueprint, BlueprintOrigin, LegacyRole,
+};
 pub use classify::{suggest_kind, Suggestion};
 pub use codec::{decode_tile, encode_tile, tile_bytes, Codec};
 pub use demo::{demo_project, demo_rom};

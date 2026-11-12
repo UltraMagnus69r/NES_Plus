@@ -1,5 +1,6 @@
 //! Workshop project. Serialized as JSON. API keys never live in this struct.
 
+use crate::blueprint::Blueprint;
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::physics::CharacterPhysics;
 use serde::{Deserialize, Serialize};
@@ -237,6 +238,10 @@ pub struct Cell {
     /// Pipe exit for this cell. Overrides the asset warp when set.
     #[serde(default)]
     pub warp: Option<WarpTarget>,
+    /// Behavior record for this placement. Missing on old courses.
+    /// The sim does not read it; names and tags still decide play.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blueprint_id: Option<String>,
 }
 
 impl Default for Cell {
@@ -249,6 +254,7 @@ impl Default for Cell {
             enemy_ai: None,
             archetype: EnemyArchetype::Walker,
             warp: None,
+            blueprint_id: None,
         }
     }
 }
@@ -321,6 +327,17 @@ pub struct Project {
     /// Power-up rules. Old saves load as SMB1.
     #[serde(default)]
     pub power_up_style: PowerUpStyle,
+    /// Project schema. Old files omit it and load as 1.
+    #[serde(default = "default_format")]
+    pub format: u32,
+    /// Shared behavior records. Old files omit it and load empty.
+    /// Play does not read this vector.
+    #[serde(default)]
+    pub blueprints: Vec<Blueprint>,
+}
+
+fn default_format() -> u32 {
+    1
 }
 
 impl Project {
@@ -335,6 +352,8 @@ impl Project {
             enemy_ai: EnemyAiStyle::Smb1Nes,
             character_physics: CharacterPhysics::Smb1Mario,
             power_up_style: PowerUpStyle::Smb1,
+            format: default_format(),
+            blueprints: Vec::new(),
         }
     }
 

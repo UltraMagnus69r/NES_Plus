@@ -5,8 +5,9 @@ pub mod character_physics;
 pub mod powerups;
 pub mod rules;
 mod trig;
-mod world;
+pub(crate) mod world;
 
+pub(crate) use world::interpret_cell;
 pub use world::World;
 
 pub const FP: i32 = 4096;
