@@ -65,6 +65,7 @@ pub enum HazardTag {
 }
 
 /// Optional pipe exit. Missing on old cells and assets.
+/// An empty `level_id` means the course the player is already in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct WarpTarget {
     #[serde(default)]
@@ -73,6 +74,28 @@ pub struct WarpTarget {
     pub x: i32,
     #[serde(default)]
     pub y: i32,
+}
+
+/// Where this placement sends a pipe. The picture does not own this.
+///
+/// `Inherit` uses a warp stored on an older blueprint, if that blueprint has one.
+/// `Destination` is this placement's own exit. `Cleared` stays off even when the
+/// blueprint still has an exit, so clearing cannot fall back to that exit.
+/// A later area graph can treat `Destination` as an entrance id plus coordinates.
+/// This phase does not add that graph.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementWarp {
+    #[default]
+    Inherit,
+    Destination(WarpTarget),
+    Cleared,
+}
+
+impl PlacementWarp {
+    pub fn is_inherit(&self) -> bool {
+        matches!(self, Self::Inherit)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -236,8 +259,12 @@ pub struct Cell {
     #[serde(default)]
     pub archetype: EnemyArchetype,
     /// Pipe exit for this cell. Overrides the asset warp when set.
+    /// Older courses use this. New authoring writes [`PlacementWarp`] instead.
     #[serde(default)]
     pub warp: Option<WarpTarget>,
+    /// This placement's pipe exit. Missing on old courses, which means inherit.
+    #[serde(default, skip_serializing_if = "PlacementWarp::is_inherit")]
+    pub warp_choice: PlacementWarp,
     /// Behavior record for this placement. Missing on old courses.
     /// When set, `World::from_level` uses that blueprint and ignores the asset name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -254,6 +281,7 @@ impl Default for Cell {
             enemy_ai: None,
             archetype: EnemyArchetype::Walker,
             warp: None,
+            warp_choice: PlacementWarp::Inherit,
             blueprint_id: None,
         }
     }

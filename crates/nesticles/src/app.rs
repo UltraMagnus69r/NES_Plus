@@ -15,11 +15,14 @@ use nesticles_core::disasm::{disassemble6502, AsmLine};
 use nesticles_core::enemy_ai::{archetype_label, override_label, EnemyAiStyle, SMB1_ROSTER};
 use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, TILE};
 use nesticles_core::pngutil::{b64_decode, b64_encode};
-use nesticles_core::project::{audit_course, nid, Asset, AssetKind, Cell, Layer, Project};
+use nesticles_core::project::{
+    audit_course, nid, Asset, AssetKind, Cell, Layer, PlacementWarp, Project, WarpTarget,
+};
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
 use nesticles_core::{
-    assign_cell, demo_project, demo_rom, enemy_from_archetype, enemy_role,
-    ensure_legacy_blueprints, gameplay_options, load_project_json, placement_label, suggest_kind,
+    assign_cell, compose_fixture, demo_project, demo_rom, enemy_from_archetype, enemy_role,
+    ensure_legacy_blueprints, gameplay_options, load_project_json, placed_fixture, placement_label,
+    resolve_warp_arrival, set_placement_warp, suggest_kind, LegacyBlock, LegacyHazard, LegacyItem,
 };
 use std::collections::{HashMap, HashSet};
 use std::process::Child;
@@ -124,6 +127,11 @@ pub struct NestApp {
     /// When set, a grid click selects a placement instead of painting.
     edit_placement: bool,
     placement_pick: Option<(i32, i32)>,
+    warp_x_text: String,
+    warp_y_text: String,
+    /// "inherit", "cleared", "here", or a course id.
+    warp_level_draft: String,
+    warp_draft_for: Option<(String, i32, i32)>,
     keys_open: bool,
     image_open: bool,
     keys: KeyFile,
@@ -232,6 +240,10 @@ impl NestApp {
             brush_gameplay: 0,
             edit_placement: false,
             placement_pick: None,
+            warp_x_text: "0".into(),
+            warp_y_text: "0".into(),
+            warp_level_draft: "inherit".into(),
+            warp_draft_for: None,
             keys_open: false,
             image_open: false,
             keys: KeyFile::load(),
@@ -374,15 +386,16 @@ impl NestApp {
             (jumped, stomped, hurt, goal, play.level_id.clone(), warp)
         };
         if let Some((level, x, y)) = warp {
-            let same = level == level_id;
-            let known = self.project.level(&level).is_some();
-            if !same && known {
-                self.start_level(level, true);
-            }
-            if same || known {
-                if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
-                    sim.place_at_cell(x, y);
+            match resolve_warp_arrival(&self.project, &level_id, &level, x, y) {
+                Ok((dest, dx, dy)) => {
+                    if dest != level_id {
+                        self.start_level(dest, true);
+                    }
+                    if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
+                        sim.place_at_cell(dx, dy);
+                    }
                 }
+                Err(err) => self.status = err,
             }
         }
         if jumped {
@@ -1304,23 +1317,289 @@ impl NestApp {
         ui.label(
             "The picture stays a picture. This menu is the only thing that gives it gameplay.",
         );
-        let Some(index) = chosen else {
-            return;
-        };
+        if let Some(index) = chosen {
+            if self.edit_placement {
+                let Some((x, y)) = self.placement_pick else {
+                    self.status = "Click a placed part first.".into();
+                    return;
+                };
+                let role = options[index].1.clone();
+                let label = options[index].0;
+                match assign_cell(&mut self.project, &level_id, x, y, role) {
+                    Ok(_) => self.status = format!("Gameplay set to {label}."),
+                    Err(err) => self.status = err,
+                }
+            } else {
+                self.brush_gameplay = index;
+                self.status = format!("New stamps use {}.", options[index].0);
+            }
+        }
         if self.edit_placement {
-            let Some((x, y)) = self.placement_pick else {
-                self.status = "Click a placed part first.".into();
+            if let Some((x, y)) = self.placement_pick {
+                self.fixture_editor(ui, &level_id, x, y);
+            }
+        }
+    }
+
+    fn fixture_editor(&mut self, ui: &mut egui::Ui, level_id: &str, x: i32, y: i32) {
+        let parts = match placed_fixture(&self.project, level_id, x, y) {
+            Ok(Some(parts)) => parts,
+            Ok(None) => {
+                ui.label(
+                    "Fixture properties show up when this part is a block, item, hazard, or pipe.",
+                );
                 return;
-            };
-            let role = options[index].1.clone();
-            let label = options[index].0;
-            match assign_cell(&mut self.project, &level_id, x, y, role) {
-                Ok(_) => self.status = format!("Gameplay set to {label}."),
+            }
+            Err(err) => {
+                self.status = err;
+                return;
+            }
+        };
+        ui.label(RichText::new("Fixture properties").color(ember()));
+        let blocks = [
+            (None, "None"),
+            (Some(LegacyBlock::Solid), "Solid"),
+            (Some(LegacyBlock::Question), "Question block"),
+            (Some(LegacyBlock::Brick), "Brick"),
+            (Some(LegacyBlock::Coin), "Coin block"),
+        ];
+        let items = [
+            (None, "None"),
+            (Some(LegacyItem::Mushroom), "Mushroom"),
+            (Some(LegacyItem::OneUp), "1-Up"),
+            (Some(LegacyItem::Flower), "Fire flower"),
+            (Some(LegacyItem::Star), "Star"),
+            (Some(LegacyItem::Plain), "Item"),
+            (Some(LegacyItem::Coin), "Coin"),
+        ];
+        let hazards = [
+            (None, "None"),
+            (Some(LegacyHazard::Contact), "Contact"),
+            (Some(LegacyHazard::Spring), "Spring"),
+            (Some(LegacyHazard::Vine), "Vine"),
+            (Some(LegacyHazard::FireBar { balls: 6 }), "Fire bar"),
+            (Some(LegacyHazard::FireBar { balls: 12 }), "Long fire bar"),
+            (Some(LegacyHazard::PipeDown), "Pipe down"),
+            (Some(LegacyHazard::PipeRight), "Pipe right"),
+        ];
+        let mut next_block = None;
+        let mut next_item = None;
+        let mut next_hazard = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Block");
+            let current = blocks
+                .iter()
+                .find(|(kind, _)| *kind == parts.block)
+                .map(|(_, label)| *label)
+                .unwrap_or("None");
+            egui::ComboBox::from_id_salt("fixture-block")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (kind, label) in blocks {
+                        if ui.selectable_label(parts.block == kind, label).clicked() {
+                            next_block = Some(kind);
+                        }
+                    }
+                });
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Contains");
+            let current = items
+                .iter()
+                .find(|(kind, _)| *kind == parts.item)
+                .map(|(_, label)| *label)
+                .unwrap_or("None");
+            egui::ComboBox::from_id_salt("fixture-item")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (kind, label) in items {
+                        if ui.selectable_label(parts.item == kind, label).clicked() {
+                            next_item = Some(kind);
+                        }
+                    }
+                });
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Hazard");
+            let current = hazards
+                .iter()
+                .find(|(kind, _)| *kind == parts.hazard)
+                .map(|(_, label)| *label)
+                .unwrap_or("None");
+            egui::ComboBox::from_id_salt("fixture-hazard")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (kind, label) in hazards {
+                        if ui.selectable_label(parts.hazard == kind, label).clicked() {
+                            next_hazard = Some(kind);
+                        }
+                    }
+                });
+        });
+        let (block, item, hazard) = (
+            next_block.unwrap_or(parts.block),
+            next_item.unwrap_or(parts.item),
+            next_hazard.unwrap_or(parts.hazard),
+        );
+        if next_block.is_some() || next_item.is_some() || next_hazard.is_some() {
+            match compose_fixture(block, item, hazard) {
+                Ok(role) => match assign_cell(&mut self.project, level_id, x, y, role) {
+                    Ok(_) => self.status = "Fixture updated.".into(),
+                    Err(err) => self.status = err,
+                },
                 Err(err) => self.status = err,
             }
-        } else {
-            self.brush_gameplay = index;
-            self.status = format!("New stamps use {}.", options[index].0);
+        }
+        let hazard = placed_fixture(&self.project, level_id, x, y)
+            .ok()
+            .flatten()
+            .map(|parts| parts.hazard)
+            .unwrap_or(parts.hazard);
+        let pipe = matches!(
+            hazard,
+            Some(LegacyHazard::PipeDown | LegacyHazard::PipeRight)
+        );
+        if !pipe {
+            ui.label(
+                "A destination is used by a downward or rightward pipe. Other hazards do not warp.",
+            );
+            return;
+        }
+        self.load_warp_draft(level_id, x, y);
+        let levels: Vec<(String, String)> = self
+            .project
+            .levels
+            .iter()
+            .map(|level| (level.id.clone(), level.name.clone()))
+            .collect();
+        let mut picked_mode: Option<String> = None;
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Warp");
+            let selected = if self.warp_level_draft == "inherit" {
+                "Blueprint destination".to_string()
+            } else if self.warp_level_draft == "cleared" {
+                "Warp off".to_string()
+            } else if self.warp_level_draft == "here" {
+                "This course".to_string()
+            } else {
+                levels
+                    .iter()
+                    .find(|(id, _)| id == &self.warp_level_draft)
+                    .map(|(_, name)| name.clone())
+                    .unwrap_or_else(|| self.warp_level_draft.clone())
+            };
+            egui::ComboBox::from_id_salt("fixture-warp")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_label(
+                            self.warp_level_draft == "inherit",
+                            "Blueprint destination",
+                        )
+                        .clicked()
+                    {
+                        picked_mode = Some("inherit".into());
+                    }
+                    if ui
+                        .selectable_label(self.warp_level_draft == "here", "This course")
+                        .clicked()
+                    {
+                        picked_mode = Some("here".into());
+                    }
+                    for (id, name) in &levels {
+                        if ui
+                            .selectable_label(self.warp_level_draft == *id, name)
+                            .clicked()
+                        {
+                            picked_mode = Some(id.clone());
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.warp_level_draft == "cleared", "Warp off")
+                        .clicked()
+                    {
+                        picked_mode = Some("cleared".into());
+                    }
+                });
+            ui.label("X");
+            ui.add(egui::TextEdit::singleline(&mut self.warp_x_text).desired_width(48.0));
+            ui.label("Y");
+            ui.add(egui::TextEdit::singleline(&mut self.warp_y_text).desired_width(48.0));
+            if ui.button("Apply warp").clicked() {
+                picked_mode = Some(self.warp_level_draft.clone());
+            }
+        });
+        ui.label(
+            "An empty course means this course. Warp off does not fall back to a blueprint exit.",
+        );
+        if let Some(mode) = picked_mode {
+            self.warp_level_draft = mode.clone();
+            let choice = if mode == "inherit" {
+                PlacementWarp::Inherit
+            } else if mode == "cleared" {
+                PlacementWarp::Cleared
+            } else {
+                let Ok(dest_x) = self.warp_x_text.trim().parse::<i32>() else {
+                    self.status = "Warp X and Y need whole numbers.".into();
+                    return;
+                };
+                let Ok(dest_y) = self.warp_y_text.trim().parse::<i32>() else {
+                    self.status = "Warp X and Y need whole numbers.".into();
+                    return;
+                };
+                PlacementWarp::Destination(WarpTarget {
+                    level_id: if mode == "here" { String::new() } else { mode },
+                    x: dest_x,
+                    y: dest_y,
+                })
+            };
+            match set_placement_warp(&mut self.project, level_id, x, y, choice) {
+                Ok(()) => self.status = "Warp updated.".into(),
+                Err(err) => self.status = err,
+            }
+        }
+    }
+
+    fn load_warp_draft(&mut self, level_id: &str, x: i32, y: i32) {
+        if self
+            .warp_draft_for
+            .as_ref()
+            .map(|(id, cx, cy)| id == level_id && *cx == x && *cy == y)
+            == Some(true)
+        {
+            return;
+        }
+        self.warp_draft_for = Some((level_id.to_string(), x, y));
+        let choice = self
+            .project
+            .level(level_id)
+            .and_then(|level| {
+                level
+                    .cells
+                    .iter()
+                    .rev()
+                    .find(|cell| cell.x == x && cell.y == y)
+            })
+            .map(|cell| cell.warp_choice.clone())
+            .unwrap_or(PlacementWarp::Inherit);
+        match choice {
+            PlacementWarp::Inherit => {
+                self.warp_level_draft = "inherit".into();
+                self.warp_x_text = "0".into();
+                self.warp_y_text = "0".into();
+            }
+            PlacementWarp::Cleared => {
+                self.warp_level_draft = "cleared".into();
+            }
+            PlacementWarp::Destination(target) => {
+                self.warp_level_draft = if target.level_id.is_empty() {
+                    "here".into()
+                } else {
+                    target.level_id
+                };
+                self.warp_x_text = target.x.to_string();
+                self.warp_y_text = target.y.to_string();
+            }
         }
     }
 

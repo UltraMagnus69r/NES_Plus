@@ -15,7 +15,7 @@ use crate::engine::res_1080p::powerups::smb1::ItemKind;
 use crate::engine::res_1080p::rules::smb1::collision::BlockKind;
 use crate::engine::res_1080p::rules::smb1::enemies::Kind;
 use crate::engine::res_1080p::rules::smb1::hazards::HazardKind;
-use crate::project::{Asset, AssetKind, Cell, Project};
+use crate::project::{Asset, AssetKind, Cell, PlacementWarp, Project, WarpTarget};
 use serde::{Deserialize, Serialize};
 
 /// Where a blueprint came from. Migration never rewrites an authored record.
@@ -113,6 +113,9 @@ pub enum LegacyItem {
     Flower,
     Star,
     Plain,
+    /// Pops out of a question block or a brick as the existing coin-block collect.
+    /// It is not a walking actor.
+    Coin,
 }
 
 /// Hazard identity from `hazard_tag` or `hazard_name`.
@@ -422,8 +425,22 @@ pub fn gameplay_options() -> Vec<(&'static str, LegacyRole)> {
     options
 }
 
+/// Short name for a stored role. A pipe stays "Pipe down" even though it is also solid.
+/// A block that holds a reward names both parts.
+pub fn gameplay_summary(role: &LegacyRole) -> String {
+    match role {
+        LegacyRole::Fixture {
+            block,
+            item,
+            hazard,
+            ..
+        } => describe_fixture(*block, *item, *hazard),
+        other => gameplay_label(other).to_string(),
+    }
+}
+
 /// Short name for a stored role. Archetype, enemy-style override, and warp do
-/// not change the name. A pipe stays "Pipe down" even though it is also solid.
+/// not change the name. Combined fixtures use [`gameplay_summary`].
 pub fn gameplay_label(role: &LegacyRole) -> &'static str {
     match role {
         LegacyRole::Inert => "Decoration",
@@ -463,8 +480,8 @@ pub fn placement_label(project: &Project, level_id: &str, x: i32, y: i32) -> Opt
                 .iter()
                 .find(|blueprint| blueprint.id == id)
         })
-        .map(|blueprint| gameplay_label(&blueprint.legacy_role))
-        .unwrap_or("Decoration");
+        .map(|blueprint| gameplay_summary(&blueprint.legacy_role))
+        .unwrap_or_else(|| "Decoration".to_string());
     Some(format!("{name} at {x},{y} — {gameplay}"))
 }
 
@@ -499,14 +516,30 @@ pub fn assign_cell(
     }
     let visual_id = asset.id.clone();
     let organizational_label = OrganizationalLabel::from_kind(asset.kind);
+    let kept_warp = {
+        let cell = &project.levels[level_index].cells[cell_index];
+        if cell.warp_choice.is_inherit() {
+            cell.blueprint_id.as_ref().and_then(|id| {
+                project
+                    .blueprints
+                    .iter()
+                    .find(|blueprint| &blueprint.id == id)
+                    .and_then(|blueprint| role_warp(&blueprint.legacy_role))
+            })
+        } else {
+            None
+        }
+    };
+    // The destination stays on the placement, so two pipes can share this role.
+    let (behavior, explicit_warp) = without_warp(role);
     let id = if let Some(existing) = project
         .blueprints
         .iter()
-        .find(|blueprint| blueprint.visual_id == visual_id && blueprint.legacy_role == role)
+        .find(|blueprint| blueprint.visual_id == visual_id && blueprint.legacy_role == behavior)
     {
         existing.id.clone()
     } else {
-        let id = authored_id(&visual_id, &role);
+        let id = authored_id(&visual_id, &behavior);
         if !project
             .blueprints
             .iter()
@@ -517,13 +550,13 @@ pub fn assign_cell(
                 visual_id,
                 origin: BlueprintOrigin::Authored,
                 organizational_label,
-                legacy_role: role.clone(),
+                legacy_role: behavior.clone(),
                 notes: String::new(),
             });
         }
         id
     };
-    let archetype = match &role {
+    let archetype = match &behavior {
         LegacyRole::Enemy { archetype, .. } => Some(archetype.clone()),
         _ => None,
     };
@@ -532,7 +565,141 @@ pub fn assign_cell(
     if let Some(archetype) = archetype {
         cell.archetype = archetype;
     }
+    if let Some(warp) = explicit_warp {
+        cell.warp_choice = PlacementWarp::Destination(warp_target(warp));
+    } else if let Some(warp) = kept_warp {
+        cell.warp_choice = PlacementWarp::Destination(warp_target(warp));
+    }
     Ok(id)
+}
+
+/// Parts of the fixture on this placement. `Ok(None)` when it is not a fixture.
+pub fn placed_fixture(
+    project: &Project,
+    level_id: &str,
+    x: i32,
+    y: i32,
+) -> Result<Option<FixtureParts>, String> {
+    let role = placed_role(project, level_id, x, y)?;
+    Ok(match role {
+        LegacyRole::Fixture {
+            block,
+            item,
+            hazard,
+            ..
+        } => Some(FixtureParts {
+            block,
+            item,
+            hazard,
+        }),
+        _ => None,
+    })
+}
+
+/// Build a fixture from the three supported parts.
+///
+/// A reward is held inside a question block or a brick. A loose item, with no
+/// block, stays a placed item. A coin has no actor, so it only exists as that
+/// held reward. A solid does not release a reward.
+pub fn compose_fixture(
+    block: Option<LegacyBlock>,
+    item: Option<LegacyItem>,
+    hazard: Option<LegacyHazard>,
+) -> Result<LegacyRole, String> {
+    if item == Some(LegacyItem::Coin)
+        && !matches!(block, Some(LegacyBlock::Question | LegacyBlock::Brick))
+    {
+        return Err(
+            "A coin reward needs a question block or a brick. A coin block is already a coin."
+                .into(),
+        );
+    }
+    if item.is_some() && matches!(block, Some(LegacyBlock::Solid | LegacyBlock::Coin)) {
+        return Err("Only a question block or a brick can hold a reward.".into());
+    }
+    if block.is_none() && item.is_none() && hazard.is_none() {
+        return Ok(LegacyRole::Inert);
+    }
+    Ok(fixture(block, item, hazard))
+}
+
+/// Set or clear this placement's pipe exit. Does not change the blueprint or the picture.
+pub fn set_placement_warp(
+    project: &mut Project,
+    level_id: &str,
+    x: i32,
+    y: i32,
+    choice: PlacementWarp,
+) -> Result<(), String> {
+    if let PlacementWarp::Destination(target) = &choice {
+        validate_warp(project, level_id, target)?;
+    }
+    let level_index = project
+        .levels
+        .iter()
+        .position(|level| level.id == level_id)
+        .ok_or_else(|| format!("no course with id {level_id}"))?;
+    let cell_index = top_cell_index(&project.levels[level_index], x, y)
+        .ok_or_else(|| format!("no part at {x},{y}"))?;
+    project.levels[level_index].cells[cell_index].warp_choice = choice;
+    Ok(())
+}
+
+/// Reject a destination the player should not be sent to.
+/// An empty level id means `source_level_id`, the course they are already in.
+pub fn validate_warp(
+    project: &Project,
+    source_level_id: &str,
+    target: &WarpTarget,
+) -> Result<(), String> {
+    let (id, level) = if target.level_id.is_empty() {
+        (
+            source_level_id,
+            project
+                .level(source_level_id)
+                .ok_or_else(|| format!("no course with id {source_level_id}"))?,
+        )
+    } else {
+        (
+            target.level_id.as_str(),
+            project.level(&target.level_id).ok_or_else(|| {
+                format!(
+                    "No course with id {}. The warp was not saved.",
+                    target.level_id
+                )
+            })?,
+        )
+    };
+    if target.x < 0 || target.y < 0 || target.x >= level.w as i32 || target.y >= level.h as i32 {
+        return Err(format!(
+            "Destination {},{} is outside {} ({} by {}). The warp was not saved.",
+            target.x, target.y, id, level.w, level.h
+        ));
+    }
+    Ok(())
+}
+
+/// Where a pending warp should put the player. Missing courses and coordinates
+/// outside that course are errors. The player is not moved.
+pub fn resolve_warp_arrival(
+    project: &Project,
+    from_level: &str,
+    level_id: &str,
+    x: i32,
+    y: i32,
+) -> Result<(String, i32, i32), String> {
+    let target = WarpTarget {
+        level_id: level_id.to_string(),
+        x,
+        y,
+    };
+    validate_warp(project, from_level, &target)?;
+    let id = if level_id.is_empty() {
+        from_level.to_string()
+    } else {
+        level_id.to_string()
+    };
+    Ok((id, x, y))
 }
 
 /// Enemy role the roster dropdown can write. Generic archetypes are `None`
@@ -566,6 +733,114 @@ pub fn enemy_role(kind: LegacyEnemy) -> LegacyRole {
         archetype: archetype_for(kind),
         enemy_ai: None,
         warp: None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixtureParts {
+    pub block: Option<LegacyBlock>,
+    pub item: Option<LegacyItem>,
+    pub hazard: Option<LegacyHazard>,
+}
+
+fn placed_role(project: &Project, level_id: &str, x: i32, y: i32) -> Result<LegacyRole, String> {
+    let level = project
+        .levels
+        .iter()
+        .find(|level| level.id == level_id)
+        .ok_or_else(|| format!("no course with id {level_id}"))?;
+    let cell = top_cell(level, x, y).ok_or_else(|| format!("no part at {x},{y}"))?;
+    let Some(id) = cell.blueprint_id.as_deref() else {
+        return Ok(LegacyRole::Inert);
+    };
+    project
+        .blueprints
+        .iter()
+        .find(|blueprint| blueprint.id == id)
+        .map(|blueprint| blueprint.legacy_role.clone())
+        .ok_or_else(|| format!("blueprint \"{id}\" was not found"))
+}
+
+fn without_warp(role: LegacyRole) -> (LegacyRole, Option<LegacyWarp>) {
+    match role {
+        LegacyRole::Fixture {
+            block,
+            item,
+            hazard,
+            warp,
+        } => (
+            LegacyRole::Fixture {
+                block,
+                item,
+                hazard,
+                warp: None,
+            },
+            warp,
+        ),
+        LegacyRole::Enemy {
+            kind,
+            archetype,
+            enemy_ai,
+            warp,
+        } => (
+            LegacyRole::Enemy {
+                kind,
+                archetype,
+                enemy_ai,
+                warp: None,
+            },
+            warp,
+        ),
+        LegacyRole::Goal { warp } => (LegacyRole::Goal { warp: None }, warp),
+        other => (other, None),
+    }
+}
+
+fn role_warp(role: &LegacyRole) -> Option<LegacyWarp> {
+    match role {
+        LegacyRole::Fixture { warp, .. }
+        | LegacyRole::Enemy { warp, .. }
+        | LegacyRole::Goal { warp } => warp.clone(),
+        LegacyRole::Inert => None,
+    }
+}
+
+fn warp_target(warp: LegacyWarp) -> WarpTarget {
+    WarpTarget {
+        level_id: warp.level_id,
+        x: warp.x,
+        y: warp.y,
+    }
+}
+
+fn describe_fixture(
+    block: Option<LegacyBlock>,
+    item: Option<LegacyItem>,
+    hazard: Option<LegacyHazard>,
+) -> String {
+    if let Some(pipe @ (LegacyHazard::PipeDown | LegacyHazard::PipeRight)) = hazard {
+        return hazard_label(pipe).to_string();
+    }
+    match (block, item, hazard) {
+        (Some(block), Some(item), None) => {
+            format!("{} with {}", block_label(block), item_label(item))
+        }
+        (Some(block), None, Some(hazard)) => {
+            format!("{} with {}", block_label(block), hazard_label(hazard))
+        }
+        (Some(block), Some(item), Some(hazard)) => format!(
+            "{} with {} and {}",
+            block_label(block),
+            item_label(item),
+            hazard_label(hazard)
+        ),
+        (Some(block), None, None) => block_label(block).to_string(),
+        (None, Some(item), None) => item_label(item).to_string(),
+        (None, None, Some(hazard)) => hazard_label(hazard).to_string(),
+        (None, Some(item), Some(hazard)) => {
+            format!("{} with {}", item_label(item), hazard_label(hazard))
+        }
+        (None, None, None) => "Decoration".to_string(),
     }
 }
 
@@ -624,6 +899,7 @@ fn item_label(kind: LegacyItem) -> &'static str {
         LegacyItem::Flower => "Fire flower",
         LegacyItem::Star => "Star",
         LegacyItem::Plain => "Item",
+        LegacyItem::Coin => "Coin",
     }
 }
 

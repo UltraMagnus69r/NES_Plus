@@ -1,14 +1,16 @@
 use super::*;
 use crate::demo::demo_project;
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
-use crate::engine::res_1080p::rules::smb1::collision::BlockKind;
+use crate::engine::res_1080p::powerups::smb1::ItemKind;
+use crate::engine::res_1080p::rules::smb1::collision::{BlockContents, BlockKind};
 use crate::engine::res_1080p::rules::smb1::enemies::Kind;
 use crate::engine::res_1080p::rules::smb1::hazards::HazardKind;
 use crate::engine::res_1080p::{CharacterId, World};
+use crate::engine::Pad;
 use crate::physics::{CharacterPhysics, Input, Sim};
 use crate::project::{
-    Asset, AssetKind, BlockTag, Cell, HazardTag, ItemTag, Layer, Level, PowerUpStyle, Project,
-    Spawn, WarpTarget,
+    Asset, AssetKind, BlockTag, Cell, HazardTag, ItemTag, Layer, Level, PlacementWarp,
+    PowerUpStyle, Project, Spawn, WarpTarget,
 };
 
 fn asset(id: &str, name: &str, kind: AssetKind) -> Asset {
@@ -1134,6 +1136,394 @@ fn assign_cell_rejects_an_empty_coordinate_without_writing() {
         enemy_from_archetype(&EnemyArchetype::BulletBill),
         Some(LegacyEnemy::Blaster)
     );
+}
+
+#[test]
+fn brick_with_mushroom_releases_that_reward() {
+    let mut project = project_with(
+        vec![asset("art", "Goomba", AssetKind::Enemy)],
+        vec![cell("art", 3, 8)],
+    );
+    let role = compose_fixture(Some(LegacyBlock::Brick), Some(LegacyItem::Mushroom), None).unwrap();
+    assign_cell(&mut project, "course", 3, 8, role).unwrap();
+    assert_eq!(project.assets[0].name, "Goomba");
+    assert_eq!(project.assets[0].kind, AssetKind::Enemy);
+    let mut world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.items.is_empty());
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Brick);
+    assert_eq!(
+        world.solids[0].contents,
+        Some(BlockContents::Item(ItemKind::Mushroom))
+    );
+    rise_into(&mut world, 0);
+    assert_eq!(world.items.len(), 1);
+    assert_eq!(world.items[0].kind, ItemKind::Mushroom);
+    assert!(!world.items[0].placed);
+    assert!(world.solids[0].contents.is_none());
+}
+
+#[test]
+fn question_block_releases_its_coin() {
+    let mut project = project_with(
+        vec![asset("art", "Stone", AssetKind::Terrain)],
+        vec![cell("art", 3, 8)],
+    );
+    let role = compose_fixture(Some(LegacyBlock::Question), Some(LegacyItem::Coin), None).unwrap();
+    assign_cell(&mut project, "course", 3, 8, role).unwrap();
+    let mut world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(world.items.is_empty());
+    assert_eq!(world.solids[0].contents, Some(BlockContents::Coin));
+    rise_into(&mut world, 0);
+    assert!(world.events.collect);
+    assert!(world.items.is_empty());
+    assert_eq!(world.solids[0].block, BlockKind::Solid);
+}
+
+#[test]
+fn solid_contact_keeps_collision_and_the_hazard() {
+    let mut project = project_with(
+        vec![asset("art", "Flower", AssetKind::Item)],
+        vec![cell("art", 4, 10)],
+    );
+    let role =
+        compose_fixture(Some(LegacyBlock::Solid), None, Some(LegacyHazard::Contact)).unwrap();
+    assign_cell(&mut project, "course", 4, 10, role).unwrap();
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert_eq!(world.solids.len(), 1);
+    assert_eq!(world.solids[0].block, BlockKind::Solid);
+    assert!(world.solids[0].contents.is_none());
+    assert_eq!(world.hazards.len(), 1);
+    assert_eq!(world.hazards[0].kind, HazardKind::Contact);
+    assert_eq!(project.assets[0].name, "Flower");
+}
+
+#[test]
+fn changing_the_reward_keeps_the_block_and_the_other_placement() {
+    let mut project = project_with(
+        vec![asset("art", "Shared", AssetKind::Foreground)],
+        vec![cell("art", 1, 4), cell("art", 6, 4)],
+    );
+    let brick =
+        compose_fixture(Some(LegacyBlock::Brick), Some(LegacyItem::Mushroom), None).unwrap();
+    let shared = assign_cell(&mut project, "course", 1, 4, brick.clone()).unwrap();
+    assign_cell(&mut project, "course", 6, 4, brick).unwrap();
+    assert_eq!(
+        project.levels[0].cells[0].blueprint_id,
+        project.levels[0].cells[1].blueprint_id
+    );
+    let flower = compose_fixture(Some(LegacyBlock::Brick), Some(LegacyItem::Flower), None).unwrap();
+    assign_cell(&mut project, "course", 1, 4, flower).unwrap();
+    let first = placed_fixture(&project, "course", 1, 4).unwrap().unwrap();
+    let second = placed_fixture(&project, "course", 6, 4).unwrap().unwrap();
+    assert_eq!(first.block, Some(LegacyBlock::Brick));
+    assert_eq!(first.item, Some(LegacyItem::Flower));
+    assert_eq!(second.block, Some(LegacyBlock::Brick));
+    assert_eq!(second.item, Some(LegacyItem::Mushroom));
+    assert_eq!(
+        project.levels[0].cells[1].blueprint_id.as_deref(),
+        Some(shared.as_str())
+    );
+    assert_ne!(
+        project.levels[0].cells[0].blueprint_id.as_deref(),
+        Some(shared.as_str())
+    );
+}
+
+#[test]
+fn same_art_can_be_a_brick_reward_and_a_question_coin() {
+    let mut project = project_with(
+        vec![asset("art", "Shared", AssetKind::Background)],
+        vec![cell("art", 2, 3), cell("art", 5, 3)],
+    );
+    assign_cell(
+        &mut project,
+        "course",
+        2,
+        3,
+        compose_fixture(Some(LegacyBlock::Brick), Some(LegacyItem::Mushroom), None).unwrap(),
+    )
+    .unwrap();
+    assign_cell(
+        &mut project,
+        "course",
+        5,
+        3,
+        compose_fixture(Some(LegacyBlock::Question), Some(LegacyItem::Coin), None).unwrap(),
+    )
+    .unwrap();
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert_eq!(world.solids[0].block, BlockKind::Brick);
+    assert_eq!(
+        world.solids[0].contents,
+        Some(BlockContents::Item(ItemKind::Mushroom))
+    );
+    assert_eq!(world.solids[1].block, BlockKind::Question);
+    assert_eq!(world.solids[1].contents, Some(BlockContents::Coin));
+    let saved = serde_json::to_string(&project).unwrap();
+    let loaded = load_project_json(&saved).unwrap();
+    let again = World::from_level(&loaded, &loaded.levels[0], CharacterId::Mario);
+    assert_eq!(again.solids[0].contents, world.solids[0].contents);
+    assert_eq!(again.solids[1].contents, world.solids[1].contents);
+}
+
+#[test]
+fn two_pipes_share_a_blueprint_and_keep_their_own_exits() {
+    let mut project = project_with(
+        vec![asset("pipe", "Flower", AssetKind::Item)],
+        vec![cell("pipe", 2, 10), cell("pipe", 8, 10)],
+    );
+    project.levels.push(course(vec![]));
+    project.levels[1].id = "other".into();
+    let pipe =
+        compose_fixture(Some(LegacyBlock::Solid), None, Some(LegacyHazard::PipeDown)).unwrap();
+    let left = assign_cell(&mut project, "course", 2, 10, pipe.clone()).unwrap();
+    let right = assign_cell(&mut project, "course", 8, 10, pipe).unwrap();
+    assert_eq!(left, right);
+    set_placement_warp(
+        &mut project,
+        "course",
+        2,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: "other".into(),
+            x: 4,
+            y: 8,
+        }),
+    )
+    .unwrap();
+    set_placement_warp(
+        &mut project,
+        "course",
+        8,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: String::new(),
+            x: 10,
+            y: 5,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        project.levels[0].cells[0].blueprint_id,
+        project.levels[0].cells[1].blueprint_id
+    );
+    let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert_eq!(world.hazards[0].warp_level, "other");
+    assert_eq!(world.hazards[0].warp_x, 4);
+    assert_eq!(world.hazards[1].warp_level, "");
+    assert_eq!(world.hazards[1].warp_x, 10);
+    set_placement_warp(
+        &mut project,
+        "course",
+        2,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: "other".into(),
+            x: 1,
+            y: 2,
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        project.levels[0].cells[1].warp_choice,
+        PlacementWarp::Destination(WarpTarget { x: 10, .. })
+    ));
+    let saved = serde_json::to_string(&project).unwrap();
+    let loaded = load_project_json(&saved).unwrap();
+    assert_eq!(
+        loaded.levels[0].cells[0].warp_choice,
+        project.levels[0].cells[0].warp_choice
+    );
+    assert_eq!(
+        loaded.levels[0].cells[1].warp_choice,
+        project.levels[0].cells[1].warp_choice
+    );
+}
+
+#[test]
+fn clearing_a_warp_does_not_restore_the_blueprint_exit() {
+    let mut pipe = asset("pipe", "Pipe", AssetKind::Hazard);
+    pipe.hazard_tag = HazardTag::PipeDown;
+    let mut placed = cell("pipe", 2, 10);
+    placed.warp = Some(WarpTarget {
+        level_id: "other".into(),
+        x: 4,
+        y: 8,
+    });
+    let mut project = project_with(vec![pipe], vec![placed]);
+    project.levels.push(course(vec![]));
+    project.levels[1].id = "other".into();
+    ensure_legacy_blueprints(&mut project);
+    let before = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(before.hazards[0].warp_set);
+    assert_eq!(before.hazards[0].warp_level, "other");
+    assert!(project.levels[0].cells[0].warp_choice.is_inherit());
+    set_placement_warp(&mut project, "course", 2, 10, PlacementWarp::Cleared).unwrap();
+    let cleared = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    assert!(!cleared.hazards[0].warp_set);
+    let saved = serde_json::to_string(&project).unwrap();
+    let loaded = load_project_json(&saved).unwrap();
+    let again = World::from_level(&loaded, &loaded.levels[0], CharacterId::Mario);
+    assert!(!again.hazards[0].warp_set);
+}
+
+#[test]
+fn same_course_and_cross_course_warps_follow_the_placement() {
+    let mut project = project_with(
+        vec![asset("pipe", "Pipe", AssetKind::Terrain)],
+        vec![cell("pipe", 2, 10), cell("pipe", 8, 10)],
+    );
+    project.levels[0].w = 24;
+    project.levels[0].h = 15;
+    project.levels.push(course(vec![]));
+    project.levels[1].id = "other".into();
+    project.levels[1].w = 20;
+    project.levels[1].h = 12;
+    let pipe =
+        compose_fixture(Some(LegacyBlock::Solid), None, Some(LegacyHazard::PipeDown)).unwrap();
+    assign_cell(&mut project, "course", 2, 10, pipe.clone()).unwrap();
+    assign_cell(&mut project, "course", 8, 10, pipe).unwrap();
+    set_placement_warp(
+        &mut project,
+        "course",
+        2,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: String::new(),
+            x: 6,
+            y: 4,
+        }),
+    )
+    .unwrap();
+    set_placement_warp(
+        &mut project,
+        "course",
+        8,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: "other".into(),
+            x: 3,
+            y: 5,
+        }),
+    )
+    .unwrap();
+    let mut here = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    here.solids.clear();
+    overlap_hazard(&mut here, 0);
+    here.tick(&Pad {
+        down: true,
+        ..Pad::default()
+    });
+    assert!(!here.pending);
+    assert_eq!(here.body.x, 6 * 72 * 4096 + 9 * 4096);
+    assert_eq!(here.body.y, 4 * 72 * 4096);
+
+    let mut away = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    away.solids.clear();
+    overlap_hazard(&mut away, 1);
+    away.tick(&Pad {
+        down: true,
+        ..Pad::default()
+    });
+    assert!(away.pending);
+    assert_eq!(away.pending_level, "other");
+    assert_eq!(away.pending_x, 3);
+    assert_eq!(away.pending_y, 5);
+    assert_eq!(
+        resolve_warp_arrival(&project, "course", "other", 3, 5).unwrap(),
+        ("other".into(), 3, 5)
+    );
+}
+
+#[test]
+fn invalid_warp_destinations_are_refused() {
+    let mut project = project_with(
+        vec![asset("pipe", "Pipe", AssetKind::Terrain)],
+        vec![cell("pipe", 2, 10)],
+    );
+    let pipe =
+        compose_fixture(Some(LegacyBlock::Solid), None, Some(LegacyHazard::PipeDown)).unwrap();
+    assign_cell(&mut project, "course", 2, 10, pipe).unwrap();
+    let bad = set_placement_warp(
+        &mut project,
+        "course",
+        2,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: "missing".into(),
+            x: 1,
+            y: 1,
+        }),
+    );
+    assert!(bad.unwrap_err().contains("missing"));
+    assert!(project.levels[0].cells[0].warp_choice.is_inherit());
+    let outside = set_placement_warp(
+        &mut project,
+        "course",
+        2,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: String::new(),
+            x: 3,
+            y: 40,
+        }),
+    );
+    assert!(outside.unwrap_err().contains("outside"));
+    assert!(resolve_warp_arrival(&project, "course", "missing", 1, 1).is_err());
+
+    set_placement_warp(
+        &mut project,
+        "course",
+        2,
+        10,
+        PlacementWarp::Destination(WarpTarget {
+            level_id: String::new(),
+            x: 1,
+            y: 1,
+        }),
+    )
+    .unwrap();
+    project.levels[0].cells[0].warp_choice = PlacementWarp::Destination(WarpTarget {
+        level_id: String::new(),
+        x: 1,
+        y: 80,
+    });
+    let mut world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
+    world.solids.clear();
+    overlap_hazard(&mut world, 0);
+    let before_y = world.body.y;
+    world.tick(&Pad {
+        down: true,
+        ..Pad::default()
+    });
+    assert!(!world.pending);
+    assert!(world.body.y.abs_diff(before_y) < 72 * 4096);
+}
+
+#[test]
+fn a_solid_cannot_hold_a_reward() {
+    let err =
+        compose_fixture(Some(LegacyBlock::Solid), Some(LegacyItem::Mushroom), None).unwrap_err();
+    assert!(err.contains("question block or a brick"));
+    let coin = compose_fixture(None, Some(LegacyItem::Coin), None).unwrap_err();
+    assert!(coin.contains("coin"));
+}
+
+fn rise_into(world: &mut World, solid_index: usize) {
+    let top = world.solids[solid_index].y;
+    world.body.x = world.solids[solid_index].x + 4096;
+    world.body.y = top + 4096;
+    world.body.vy = -294912;
+    world.body.vx = 0;
+    world.tick(&Pad::default());
+}
+
+fn overlap_hazard(world: &mut World, hazard_index: usize) {
+    world.body.x = world.hazards[hazard_index].x + 4096;
+    world.body.y = world.hazards[hazard_index].y + 4096;
+    world.body.vx = 0;
+    world.body.vy = 0;
 }
 
 fn fixture_brick() -> LegacyRole {

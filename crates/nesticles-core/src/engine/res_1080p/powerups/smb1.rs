@@ -113,12 +113,7 @@ pub fn apply_damage(body: &mut Body) -> Hurt {
     }
 }
 
-pub fn spawn_from_block(cell_x: i32, cell_y: i32, power: Power) -> ItemActor {
-    let kind = if power == Power::Small {
-        ItemKind::Mushroom
-    } else {
-        ItemKind::Flower
-    };
+pub fn spawn_reward(cell_x: i32, cell_y: i32, kind: ItemKind) -> ItemActor {
     let origin_y = cell_y.saturating_mul(TILE_FP);
     ItemActor {
         kind,
@@ -137,6 +132,15 @@ pub fn spawn_from_block(cell_x: i32, cell_y: i32, power: Power) -> ItemActor {
         placed: false,
         asset_id: String::new(),
     }
+}
+
+pub fn spawn_from_block(cell_x: i32, cell_y: i32, power: Power) -> ItemActor {
+    let kind = if power == Power::Small {
+        ItemKind::Mushroom
+    } else {
+        ItemKind::Flower
+    };
+    spawn_reward(cell_x, cell_y, kind)
 }
 
 pub fn step_item(item: &mut ItemActor, solids: &[Solid]) {

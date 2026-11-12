@@ -1,7 +1,16 @@
 //! X then Y against 72×72 solids. Corner clip keeps an upward jump moving
 //! when only the outer 13.5 px of a block's bottom corner is touched.
 
+use super::super::super::powerups::smb1::ItemKind;
 use super::super::super::{overlaps, Rect, CORNER_FP, FP, NUDGE_FP, TILE_FP};
+
+/// What a question block or a brick releases when it is hit.
+/// `Coin` uses the same collect flag as a coin block. There is no coin actor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BlockContents {
+    Item(ItemKind),
+    Coin,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlockKind {
@@ -21,6 +30,8 @@ pub struct Solid {
     pub used: bool,
     pub broken: bool,
     pub bump: i32,
+    /// Reward held inside the block. `None` keeps the block's older behavior.
+    pub contents: Option<BlockContents>,
 }
 
 impl Solid {
@@ -34,6 +45,7 @@ impl Solid {
             used: false,
             broken: false,
             bump: 0,
+            contents: None,
         }
     }
 

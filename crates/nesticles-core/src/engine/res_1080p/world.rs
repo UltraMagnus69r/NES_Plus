@@ -9,11 +9,11 @@
 
 use super::character_physics::{apply_stomp, params_for, step_motion, Body, Power};
 use super::powerups::smb1::{
-    apply_damage, collect, spawn_from_block, step_fireball, step_item, try_fire, Fireball, Hurt,
-    ItemActor, ItemKind,
+    apply_damage, collect, spawn_from_block, spawn_reward, step_fireball, step_item, try_fire,
+    Fireball, Hurt, ItemActor, ItemKind,
 };
 use super::rules::smb1::collision::{
-    bump_offset, move_body, on_floor, BlockKind, MoveHit, Solid, YHit,
+    bump_offset, move_body, on_floor, BlockContents, BlockKind, MoveHit, Solid, YHit,
 };
 use super::rules::smb1::enemies::{self, kind_of, EnemyActor, Kind};
 use super::rules::smb1::hazards::{feet_overlap, step_firebars, Hazard, HazardKind};
@@ -23,6 +23,7 @@ use super::{
 };
 use crate::blueprint::{LegacyBlock, LegacyEnemy, LegacyHazard, LegacyItem, LegacyRole};
 use crate::engine::Pad;
+use crate::project::PlacementWarp;
 use crate::project::{
     Asset, AssetKind, BlockTag, Cell, HazardTag, ItemTag, Layer, Level, Project, WarpTarget,
 };
@@ -94,7 +95,10 @@ impl World {
                     blueprint_faults.push(message);
                     continue;
                 }
-                Placement::Read(read) => read,
+                Placement::Read(mut read) => {
+                    apply_placement_warp(&mut read, cell);
+                    read
+                }
             };
             if read.audio {
                 continue;
@@ -116,11 +120,22 @@ impl World {
                 goals.push(cell_rect(cell.x, cell.y));
                 continue;
             }
+            let holds_reward = matches!(read.block, Some(BlockKind::Question | BlockKind::Brick));
             if let Some(kind) = read.item {
-                items.push(placed_item(cell.x, cell.y, &asset.id, kind));
+                if !holds_reward {
+                    items.push(placed_item(cell.x, cell.y, &asset.id, kind));
+                }
             }
             if let Some(block) = read.block {
-                solids.push(Solid::at_cell(cell.x, cell.y, block));
+                let mut solid = Solid::at_cell(cell.x, cell.y, block);
+                if holds_reward {
+                    solid.contents = if read.coin {
+                        Some(BlockContents::Coin)
+                    } else {
+                        read.item.map(BlockContents::Item)
+                    };
+                }
+                solids.push(solid);
             }
             if let Some(kind) = read.hazard {
                 hazards.push(Hazard {
@@ -325,7 +340,15 @@ impl World {
         let cell_y = self.solids[index].cell_y;
         match self.solids[index].block {
             BlockKind::Brick => {
-                if matches!(power, Power::Super | Power::Fire) {
+                if self.solids[index].contents.is_some() {
+                    let contents = self.solids[index].contents.take();
+                    self.solids[index].used = true;
+                    self.solids[index].bump = 8;
+                    if let Some(contents) = contents {
+                        self.release_contents(cell_x, cell_y, contents);
+                    }
+                    self.defeat_on(cell_x, cell_y);
+                } else if matches!(power, Power::Super | Power::Fire) {
                     self.solids[index].broken = true;
                     self.hidden.push((cell_x, cell_y));
                     self.defeat_on(cell_x, cell_y);
@@ -335,10 +358,15 @@ impl World {
                 }
             }
             BlockKind::Question if !self.solids[index].used => {
+                let contents = self.solids[index].contents.take();
                 self.solids[index].used = true;
                 self.solids[index].block = BlockKind::Solid;
                 self.solids[index].bump = 8;
-                self.items.push(spawn_from_block(cell_x, cell_y, power));
+                if let Some(contents) = contents {
+                    self.release_contents(cell_x, cell_y, contents);
+                } else {
+                    self.items.push(spawn_from_block(cell_x, cell_y, power));
+                }
                 self.defeat_on(cell_x, cell_y);
             }
             BlockKind::Coin if !self.solids[index].used => {
@@ -348,6 +376,15 @@ impl World {
                 self.defeat_on(cell_x, cell_y);
             }
             _ => {}
+        }
+    }
+
+    fn release_contents(&mut self, cell_x: i32, cell_y: i32, contents: BlockContents) {
+        match contents {
+            BlockContents::Coin => self.events.collect = true,
+            BlockContents::Item(kind) => {
+                self.items.push(spawn_reward(cell_x, cell_y, kind));
+            }
         }
     }
 
@@ -426,6 +463,13 @@ impl World {
         let Some((level, x, y)) = chosen else {
             return;
         };
+        if level.is_empty() {
+            let cells_w = self.level_w / TILE_FP;
+            let cells_h = self.level_h / TILE_FP;
+            if x < 0 || y < 0 || x >= cells_w || y >= cells_h {
+                return;
+            }
+        }
         self.warp_lock = 30;
         self.body.vx = 0;
         self.body.vy = 0;
@@ -662,6 +706,7 @@ pub(crate) struct CellRead {
     pub block: Option<BlockKind>,
     pub hazard: Option<HazardKind>,
     pub balls: i32,
+    pub coin: bool,
     pub warp_set: bool,
     pub warp_level: String,
     pub warp_x: i32,
@@ -679,6 +724,7 @@ pub(crate) fn interpret_cell(asset: &Asset, cell: &crate::project::Cell) -> Cell
         block: None,
         hazard: None,
         balls: 0,
+        coin: false,
         warp_set,
         warp_level,
         warp_x,
@@ -819,6 +865,7 @@ fn read_from_role(role: &LegacyRole) -> CellRead {
         block: None,
         hazard: None,
         balls: 0,
+        coin: false,
         warp_set: false,
         warp_level: String::new(),
         warp_x: 0,
@@ -845,7 +892,13 @@ fn read_from_role(role: &LegacyRole) -> CellRead {
             warp,
         } => {
             read.block = block.map(block_from_legacy);
-            read.item = item.map(item_from_legacy);
+            if let Some(item) = item {
+                if *item == LegacyItem::Coin {
+                    read.coin = true;
+                } else {
+                    read.item = Some(item_from_legacy(*item));
+                }
+            }
             if let Some(hazard) = hazard {
                 let (kind, balls) = hazard_from_legacy(*hazard);
                 read.hazard = Some(kind);
@@ -855,6 +908,24 @@ fn read_from_role(role: &LegacyRole) -> CellRead {
         }
     }
     read
+}
+
+fn apply_placement_warp(read: &mut CellRead, cell: &Cell) {
+    match &cell.warp_choice {
+        PlacementWarp::Inherit => {}
+        PlacementWarp::Cleared => {
+            read.warp_set = false;
+            read.warp_level.clear();
+            read.warp_x = 0;
+            read.warp_y = 0;
+        }
+        PlacementWarp::Destination(target) => {
+            read.warp_set = true;
+            read.warp_level = target.level_id.clone();
+            read.warp_x = target.x;
+            read.warp_y = target.y;
+        }
+    }
 }
 
 fn apply_warp(read: &mut CellRead, warp: &Option<crate::blueprint::LegacyWarp>) {
@@ -908,6 +979,7 @@ fn item_from_legacy(kind: LegacyItem) -> ItemKind {
         LegacyItem::Flower => ItemKind::Flower,
         LegacyItem::Star => ItemKind::Star,
         LegacyItem::Plain => ItemKind::Plain,
+        LegacyItem::Coin => ItemKind::Plain,
     }
 }
 
