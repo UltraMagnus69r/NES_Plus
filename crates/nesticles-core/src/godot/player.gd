@@ -1,52 +1,65 @@
-extends CharacterBody2D
+extends Node2D
 
 # Fixed Nesticles runtime template.
-# Movement numbers come from res://data/level.json. This script does not read
-# asset names, and it is not the Rust SMB1 integrator.
+# The step is nesticles_sim.gd. Speeds come from res://data/level.json.
+# This script does not read asset names, and it is not a Player Blueprint.
 
-var move_speed := 96.0
-var jump_velocity := -280.0
-var gravity := 900.0
-var test_axis := 0.0
-var test_jump := false
+const SimScript := preload("res://scripts/nesticles_sim.gd")
+
+var sim_on_floor := false
+var sim = null
 
 func _ready() -> void:
-	_load_motion()
 	_ensure_input()
-	floor_snap_length = 8.0
+	sim = SimScript.new()
+	var err: String = sim.load_file("res://data/level.json")
+	if err != "":
+		push_error(err)
+		sim = null
+		return
+	_sync()
 	var camera := get_node_or_null("Camera") as Camera2D
 	if camera != null:
 		camera.make_current()
 
-func _physics_process(delta: float) -> void:
-	var axis := test_axis
-	if axis == 0.0:
-		axis = Input.get_axis("move_left", "move_right")
-	if not is_on_floor():
-		velocity.y += gravity * delta
-	var jump := test_jump or Input.is_action_just_pressed("jump")
-	test_jump = false
-	if jump and is_on_floor():
-		velocity.y = jump_velocity
-	velocity.x = axis * move_speed
-	move_and_slide()
+func _physics_process(_delta: float) -> void:
+	if sim == null:
+		return
+	if not sim.won:
+		sim.step(_pad())
+	_sync()
 
-func _load_motion() -> void:
-	var path := "res://data/level.json"
-	if not FileAccess.file_exists(path):
+func _pad() -> Dictionary:
+	return {
+		"left": Input.is_action_pressed("move_left"),
+		"right": Input.is_action_pressed("move_right"),
+		"up": false,
+		"down": false,
+		"jump_held": Input.is_action_pressed("jump"),
+		"jump_pressed": Input.is_action_just_pressed("jump"),
+		"run_held": Input.is_action_pressed("run"),
+	}
+
+func _sync() -> void:
+	var scale := float(sim.fp)
+	position = Vector2(float(sim.body_x) / scale, float(sim.body_y) / scale)
+	sim_on_floor = sim.on_ground
+	var parent := get_parent()
+	if parent == null:
 		return
-	var parsed = JSON.parse_string(FileAccess.get_file_as_string(path))
-	if typeof(parsed) != TYPE_DICTIONARY:
-		return
-	var data: Dictionary = parsed
-	move_speed = float(data.get("move_speed", move_speed))
-	jump_velocity = float(data.get("jump_velocity", jump_velocity))
-	gravity = float(data.get("gravity", gravity))
+	for index in sim.enemies.size():
+		var enemy: Dictionary = sim.enemies[index]
+		var node := parent.get_node_or_null("Enemy_%s" % index) as Node2D
+		if node == null:
+			continue
+		node.visible = bool(enemy["alive"])
+		node.position = Vector2(float(enemy["x"]) / scale, float(enemy["y"]) / scale)
 
 func _ensure_input() -> void:
 	_bind("move_left", [KEY_A, KEY_LEFT])
 	_bind("move_right", [KEY_D, KEY_RIGHT])
 	_bind("jump", [KEY_SPACE, KEY_W, KEY_UP])
+	_bind("run", [KEY_SHIFT, KEY_X])
 
 func _bind(action: String, keys: Array) -> void:
 	if not InputMap.has_action(action):

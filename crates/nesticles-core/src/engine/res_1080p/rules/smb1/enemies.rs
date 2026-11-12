@@ -7,9 +7,9 @@ use super::collision::{move_body, on_floor, Solid, YHit};
 use super::hazards::sees;
 use crate::enemy_ai::EnemyArchetype;
 
-const WALKER_GRAVITY: i32 = 8064;
-const MAX_FALL: i32 = 82944;
-const WALKER_VX: i32 = 9216;
+pub(crate) const WALKER_GRAVITY: i32 = 8064;
+pub(crate) const MAX_FALL: i32 = 82944;
+pub(crate) const WALKER_VX: i32 = 9216;
 const SHELL_VX: i32 = 55296;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

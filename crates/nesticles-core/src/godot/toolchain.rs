@@ -122,6 +122,26 @@ pub fn launch_preview(executable: &Path, project_dir: &Path) -> Result<Child, St
         .map_err(|err| format!("Could not start {}: {err}", executable.display()))
 }
 
+/// Import the project, then replay the fixed-point traces against `tick_play`.
+pub fn run_parity(executable: &Path, project_dir: &Path) -> Result<GodotOutput, String> {
+    import_project(executable, project_dir)?;
+    run_command(
+        executable,
+        &[
+            "--headless".into(),
+            "--audio-driver".into(),
+            "Dummy".into(),
+            "--path".into(),
+            path_arg(project_dir),
+            "--quit-after".into(),
+            "120".into(),
+            "--".into(),
+            "--nesticles-parity".into(),
+        ],
+        Duration::from_secs(60),
+    )
+}
+
 /// Import the project, then run the headless gameplay checks.
 pub fn run_proof(executable: &Path, project_dir: &Path) -> Result<GodotOutput, String> {
     import_project(executable, project_dir)?;

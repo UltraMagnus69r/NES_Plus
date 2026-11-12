@@ -471,6 +471,11 @@ impl Sim {
         self.mirror_1080();
     }
 
+    /// The 1080p field `tick_play` steps. `None` before [`Self::from_level`].
+    pub fn play_world(&self) -> Option<&crate::engine::res_1080p::World> {
+        self.field.as_ref().and_then(|field| field.world_1080())
+    }
+
     /// Move the 1080p body to a course cell. Used after a pipe warp.
     pub fn place_at_cell(&mut self, cell_x: i32, cell_y: i32) {
         self.place_at_cell_facing(cell_x, cell_y, 1);
@@ -856,7 +861,7 @@ fn collect_markers(world: &res_1080p::World) -> Vec<Marker> {
     markers
 }
 
-fn map_character(preset: CharacterPhysics) -> CharacterId {
+pub(crate) fn map_character(preset: CharacterPhysics) -> CharacterId {
     match preset {
         CharacterPhysics::Smb1Mario => CharacterId::Mario,
         CharacterPhysics::Smb1Luigi => CharacterId::Luigi,
