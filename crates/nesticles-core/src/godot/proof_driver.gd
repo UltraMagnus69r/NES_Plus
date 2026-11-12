@@ -67,9 +67,85 @@ func _ready() -> void:
 	if _data.get("support_top") == null:
 		_fail("no solid under the player")
 		return
+	if not _check_terrain():
+		return
 	_start = player.position
 	_phase = "drop"
 	_frames = 0
+
+func _check_terrain() -> bool:
+	var raw: Variant = _data.get("terrain_expect", [])
+	if typeof(raw) != TYPE_ARRAY:
+		_fail("terrain list is not a list")
+		return false
+	var rows: Array = raw
+	if rows.is_empty():
+		return true
+	var cell_px := float(_data.get("cell_px", 72))
+	for item in rows:
+		if typeof(item) != TYPE_DICTIONARY:
+			_fail("terrain row is not a record")
+			return false
+		var row: Dictionary = item
+		var pos := Vector2(float(row["x"]), float(row["y"]))
+		var tex := str(row["texture"])
+		var want_solid: bool = bool(row["solid"])
+		if not _sprite_at(pos, tex):
+			_fail("terrain picture %s is missing at %s" % [tex, pos])
+			return false
+		var bodies := _statics_at(pos)
+		if want_solid and bodies != 1:
+			_fail("solid terrain at %s has %s collision bodies" % [pos, bodies])
+			return false
+		if (not want_solid) and bodies != 0:
+			_fail("decorative terrain at %s blocks the player" % pos)
+			return false
+	for item in rows:
+		var row: Dictionary = item
+		if not bool(row["solid"]):
+			continue
+		var x := int(row["cell_x"])
+		var y := int(row["cell_y"])
+		for other_item in rows:
+			var other: Dictionary = other_item
+			if not bool(other["solid"]):
+				continue
+			if int(other["cell_y"]) != y:
+				continue
+			if int(other["cell_x"]) != x + 1:
+				continue
+			var gap := absf(float(other["x"]) - float(row["x"]))
+			if absf(gap - cell_px) > 0.01:
+				_fail("terrain collision gap %s is not one cell (%s)" % [gap, cell_px])
+				return false
+	print("NESTICLES_TERRAIN_OK cells=%s" % rows.size())
+	return true
+
+func _sprite_at(pos: Vector2, tex: String) -> bool:
+	var sprites: Array = []
+	_collect_sprites(self, sprites)
+	for sprite in sprites:
+		var node := sprite as Sprite2D
+		if node == null or node.texture == null:
+			continue
+		if node.global_position.distance_to(pos) > 0.01:
+			continue
+		if node.texture.resource_path == tex:
+			return true
+	return false
+
+func _collect_sprites(node: Node, found: Array) -> void:
+	for child in node.get_children():
+		if child is Sprite2D:
+			found.append(child)
+		_collect_sprites(child, found)
+
+func _statics_at(pos: Vector2) -> int:
+	var count := 0
+	for child in get_children():
+		if child is StaticBody2D and (child as Node2D).position.distance_to(pos) <= 0.01:
+			count += 1
+	return count
 
 func _physics_process(_delta: float) -> void:
 	if _failed or _phase == "idle":

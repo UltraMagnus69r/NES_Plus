@@ -896,7 +896,10 @@ fn resolve_placement(project: &Project, cell: &Cell, asset: &Asset) -> Placement
             cell.x, cell.y
         ));
     };
-    if blueprint.visual_id != cell.asset_id {
+    // A terrain cell keeps its blueprint when auto-tiling swaps the picture.
+    // The role stays authoritative. Other placements still require the
+    // blueprint's visual, so a stamp cannot silently borrow another part's behavior.
+    if cell.terrain.is_none() && blueprint.visual_id != cell.asset_id {
         return Placement::Fault(format!(
             "cell ({}, {}) blueprint \"{id}\" points at visual \"{}\" but the placement uses asset \"{}\"; gameplay for this placement was omitted",
             cell.x, cell.y, blueprint.visual_id, cell.asset_id
