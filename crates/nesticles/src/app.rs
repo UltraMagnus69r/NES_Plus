@@ -17,7 +17,9 @@ use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, 
 use nesticles_core::pngutil::{b64_decode, b64_encode};
 use nesticles_core::project::{audit_course, nid, Asset, AssetKind, Cell, Layer, Project};
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
-use nesticles_core::{demo_project, demo_rom, suggest_kind};
+use nesticles_core::{
+    demo_project, demo_rom, ensure_legacy_blueprints, load_project_json, suggest_kind,
+};
 use std::collections::{HashMap, HashSet};
 use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -167,7 +169,9 @@ impl NestApp {
                 }
             }
         });
-        let project = demo_project();
+        let mut project = demo_project();
+        // In memory only. Seed Spirit's file on disk is not rewritten by opening the app.
+        ensure_legacy_blueprints(&mut project);
         let paint_asset = project
             .assets
             .iter()
@@ -1888,7 +1892,8 @@ impl NestApp {
                     .pick_file()
                 {
                     match std::fs::read_to_string(&path).and_then(|text| {
-                        serde_json::from_str::<Project>(&text)
+                        // Migrates in memory. The chosen file is not written back.
+                        load_project_json(&text)
                             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
                     }) {
                         Ok(project) => {
@@ -2388,6 +2393,7 @@ impl NestApp {
             return;
         };
         let sim = Sim::from_level(&self.project, &level);
+        let faults = sim.blueprint_faults().to_vec();
         self.stop_music();
         if let Some(music_id) = &level.music_id {
             if let Some(asset) = self.project.asset(music_id) {
@@ -2407,7 +2413,11 @@ impl NestApp {
             accum: 0.0,
             select: 0,
         });
-        self.status = format!("Playing {}", level.name);
+        self.status = if faults.is_empty() {
+            format!("Playing {}", level.name)
+        } else {
+            format!("Playing {}. {}", level.name, faults.join(" "))
+        };
     }
 
     fn unlocked(&self) -> Vec<String> {

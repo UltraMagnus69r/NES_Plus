@@ -343,6 +343,16 @@ impl Sim {
         sim
     }
 
+    /// Validation notes from the last `from_level`. Empty when every explicit
+    /// blueprint resolved. Decorative cells are not faults.
+    pub fn blueprint_faults(&self) -> &[String] {
+        self.field
+            .as_ref()
+            .and_then(|field| field.world_1080())
+            .map(|world| world.blueprint_faults.as_slice())
+            .unwrap_or(&[])
+    }
+
     /// Float Nesticles step. Existing courses and tests use this path.
     pub fn step(&mut self, input: &Input, dt: f32) {
         self.events = Events::default();
@@ -435,8 +445,8 @@ impl Sim {
 
     /// One 60 Hz maker tick. The play loop owns the accumulator and calls this once per slice.
     ///
-    /// Blueprints are not an input. The 1080p world still classifies cells from
-    /// names, tags, kind, layer, archetype, and warp.
+    /// Entity kinds were chosen in [`crate::engine::res_1080p::World::from_level`].
+    /// This function does not re-read asset names.
     pub fn tick_play(&mut self, preset: CharacterPhysics, power: PowerUpStyle, input: &Input) {
         let Some(field) = self.field.as_mut() else {
             return;
