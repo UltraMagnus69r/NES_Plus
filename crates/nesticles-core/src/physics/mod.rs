@@ -1,8 +1,8 @@
 //! Original platformer physics shared by the desktop player and the browser player.
 //! Nothing here is extracted from a cartridge.
 //!
-//! [`CharacterPhysics::Nesticles`] is the float controller. [`CharacterPhysics::Smb1Nes`] is the
-//! fixed-point 60 Hz preset in [`smb1_nes`].
+//! [`Sim::step`] is the float controller the existing course tests use.
+//! Maker play calls [`Sim::tick_play`], which runs the 1080p fixed-point engine.
 
 pub(crate) mod collide;
 pub(crate) mod fp;
@@ -11,10 +11,12 @@ mod smb1_nes;
 pub use fp::{play_surface_scale, scale_virtual_px, FP_ONE, VIRTUAL_PX_AT_1080};
 
 use crate::enemy_ai::{step_enemies, CameraPx, EnemyAiStyle, EnemyRuntime};
-use crate::project::{AssetKind, Layer, Level, Project};
+use crate::engine::res_1080p::{self, course_px, CharacterId};
+use crate::engine::{Pad, PlayField};
+use crate::project::{AssetKind, Layer, Level, PowerUpStyle, Project};
 use collide::{from_aabbs, RectI};
 use fp::{fp_to_px, px_to_fp};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub const TILE: f32 = 16.0;
 const GRAVITY: f32 = 1500.0;
@@ -28,24 +30,60 @@ const JUMP_BUFFER: f32 = 0.12;
 const MAX_FALL: f32 = 820.0;
 const ENEMY_SPEED: f32 = 48.0;
 
-/// Which character controller is driving play. New styles can be added beside these two.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+/// Which SMB1 body the 1080p maker engine is using.
+/// Old project files (`smb1_nes`, `nesticles`, anything unknown) load as Mario.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum CharacterPhysics {
     #[default]
-    Smb1Nes,
-    Nesticles,
+    Smb1Mario,
+    Smb1Luigi,
+    Smb1Toad,
+    Smb1Peach,
 }
 
 impl CharacterPhysics {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Smb1Nes => "Super Mario Bros. 1 (NES)",
-            Self::Nesticles => "Nesticles",
+            Self::Smb1Mario => "SMB1 - Mario",
+            Self::Smb1Luigi => "SMB1 - Luigi",
+            Self::Smb1Toad => "SMB1 - Toad",
+            Self::Smb1Peach => "SMB1 - Peach",
         }
     }
 
-    pub const ALL: [CharacterPhysics; 2] = [Self::Smb1Nes, Self::Nesticles];
+    pub const ALL: [CharacterPhysics; 4] = [
+        Self::Smb1Mario,
+        Self::Smb1Luigi,
+        Self::Smb1Toad,
+        Self::Smb1Peach,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Smb1Mario => "smb1_mario",
+            Self::Smb1Luigi => "smb1_luigi",
+            Self::Smb1Toad => "smb1_toad",
+            Self::Smb1Peach => "smb1_peach",
+        }
+    }
+}
+
+impl Serialize for CharacterPhysics {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for CharacterPhysics {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Ok(match text.as_str() {
+            "smb1_luigi" => Self::Smb1Luigi,
+            "smb1_toad" => Self::Smb1Toad,
+            "smb1_peach" => Self::Smb1Peach,
+            _ => Self::Smb1Mario,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -56,6 +94,10 @@ pub struct Input {
     pub jump_pressed: bool,
     /// Run (B). The SMB1 preset keeps a 10-frame buffer after this releases.
     pub run_held: bool,
+    /// Climb a vine, or enter from above.
+    pub up: bool,
+    /// Climb down, or enter a vertical pipe.
+    pub down: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
@@ -145,6 +187,16 @@ impl Enemy {
     }
 }
 
+/// Extra actors the 1080p engine wants drawn in course pixels (fireballs, spawned items).
+#[derive(Clone, Copy, Debug)]
+pub struct Marker {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+    pub rgb: [u8; 3],
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Events {
     pub jump: bool,
@@ -168,12 +220,22 @@ pub struct Sim {
     pub level_h: f32,
     pub won: bool,
     pub events: Events,
-    /// Visible world rectangle in pixels. Enemy activation uses it while the SMB1 preset runs.
+    /// Visible world rectangle in pixels. The float camera and the legacy preset use it.
     pub view: Aabb,
+    /// Bump offsets in course pixels, positive is up.
+    pub bumps: Vec<(i32, i32, f32)>,
+    /// Cells the 1080p engine has broken.
+    pub hidden: Vec<(i32, i32)>,
+    /// Fireballs, moving items, and enemies spawned during play.
+    pub markers: Vec<Marker>,
+    pub hide_player: bool,
+    /// Cross-course pipe exit, consumed by the play loop.
+    pub pending_warp: Option<(String, i32, i32)>,
     smb1: smb1_nes::Smb1Body,
     enemy_rt: Vec<EnemyRuntime>,
     level_enemy_ai: EnemyAiStyle,
     project_enemy_ai: EnemyAiStyle,
+    field: Option<PlayField>,
 }
 
 impl Sim {
@@ -197,10 +259,16 @@ impl Sim {
                 w: 256.0,
                 h: 240.0,
             },
+            bumps: Vec::new(),
+            hidden: Vec::new(),
+            markers: Vec::new(),
+            hide_player: false,
+            pending_warp: None,
             smb1: smb1_nes::Smb1Body::default(),
             enemy_rt: Vec::new(),
             level_enemy_ai: EnemyAiStyle::Smb1Nes,
             project_enemy_ai: EnemyAiStyle::Smb1Nes,
+            field: None,
         }
     }
 
@@ -267,6 +335,11 @@ impl Sim {
         }
         sim.smb1.sync_from_float(&sim.player);
         sim.update_view(256.0, 240.0);
+        sim.field = Some(PlayField::Res1080p(res_1080p::World::from_level(
+            project,
+            level,
+            map_character(project.character_physics),
+        )));
         sim
     }
 
@@ -360,33 +433,40 @@ impl Sim {
         self.resolve_contacts(prev_y, prev_vy);
     }
 
-    /// Dispatch a play step. SMB1 consumes whole 1/60 slices from `dt` and ignores leftover time
-    /// until the next call. Nesticles keeps the float controller, including its patrol enemies.
-    pub fn step_preset(&mut self, preset: CharacterPhysics, input: &Input, dt: f32) {
-        match preset {
-            CharacterPhysics::Nesticles => self.step(input, dt),
-            CharacterPhysics::Smb1Nes => self.step_smb1(input, dt),
+    /// One 60 Hz maker tick. The play loop owns the accumulator and calls this once per slice.
+    pub fn tick_play(&mut self, preset: CharacterPhysics, power: PowerUpStyle, input: &Input) {
+        let Some(field) = self.field.as_mut() else {
+            return;
+        };
+        if let Some(world) = field.world_1080_mut() {
+            world.character = map_character(preset);
+            match power {
+                PowerUpStyle::Smb1 => {}
+            }
         }
+        field.tick(&pad_from(input));
+        self.mirror_1080();
+    }
+
+    /// Move the 1080p body to a course cell. Used after a pipe warp.
+    pub fn place_at_cell(&mut self, cell_x: i32, cell_y: i32) {
+        if let Some(world) = self.field.as_mut().and_then(|field| field.world_1080_mut()) {
+            world.place(cell_x, cell_y);
+        }
+        self.mirror_1080();
+    }
+
+    pub fn take_warp(&mut self) -> Option<(String, i32, i32)> {
+        let warp = self.pending_warp.take();
+        if let Some(world) = self.field.as_mut().and_then(|field| field.world_1080_mut()) {
+            world.pending = false;
+        }
+        warp
     }
 
     pub fn bind_character_physics(&mut self, preset: CharacterPhysics) {
-        match preset {
-            CharacterPhysics::Smb1Nes => {
-                self.smb1.sync_from_float(&self.player);
-                self.ensure_enemy_runtime();
-                for (rt, enemy) in self.enemy_rt.iter_mut().zip(self.enemies.iter()) {
-                    rt.x = px_to_fp(enemy.x);
-                    rt.y = px_to_fp(enemy.y);
-                    rt.vx = 0;
-                    rt.vy = 0;
-                    rt.awake = false;
-                    rt.on_ground = false;
-                    rt.patrol_dir = -1;
-                }
-            }
-            CharacterPhysics::Nesticles => {
-                self.smb1.ready = false;
-            }
+        if let Some(world) = self.field.as_mut().and_then(|field| field.world_1080_mut()) {
+            world.character = map_character(preset);
         }
     }
 
@@ -420,7 +500,8 @@ impl Sim {
         self.view = Aabb { x, y, w, h };
     }
 
-    fn step_smb1(&mut self, input: &Input, dt: f32) {
+    /// Legacy fixed-point preset kept for the original landing and dormant-walker tests.
+    pub fn step_smb1(&mut self, input: &Input, dt: f32) {
         if self.won {
             return;
         }
@@ -574,6 +655,197 @@ impl Sim {
         self.events.hurt = true;
         self.smb1.sync_from_float(&self.player);
     }
+
+    fn mirror_1080(&mut self) {
+        let snap = {
+            let Some(world) = self.field.as_ref().and_then(|field| field.world_1080()) else {
+                return;
+            };
+            let markers = collect_markers(world);
+            let enemies: Vec<(f32, f32, bool, i32)> = world
+                .enemies
+                .iter()
+                .take(world.source_enemies)
+                .map(|enemy| {
+                    (
+                        course_px(enemy.x),
+                        course_px(enemy.y),
+                        enemy.alive,
+                        enemy.facing,
+                    )
+                })
+                .collect();
+            MirrorSnap {
+                x: course_px(world.body.x),
+                y: course_px(world.body.y),
+                w: course_px(world.body.w),
+                h: course_px(world.body.h),
+                vx: course_px(world.body.vx) * 60.0,
+                vy: course_px(world.body.vy) * 60.0,
+                facing: world.body.facing,
+                on_ground: world.body.on_ground,
+                won: world.won,
+                hide_player: world.hide_player,
+                jump: world.events.jump,
+                stomp: world.events.stomp,
+                hurt: world.events.hurt,
+                goal: world.events.goal,
+                collect: world.events.collect,
+                bumps: world
+                    .bump_marks
+                    .iter()
+                    .map(|(x, y, offset)| (*x, *y, course_px(*offset)))
+                    .collect(),
+                hidden: world.hidden.clone(),
+                pending: if world.pending {
+                    Some((
+                        world.pending_level.clone(),
+                        world.pending_x,
+                        world.pending_y,
+                    ))
+                } else {
+                    None
+                },
+                enemies,
+                items: world
+                    .items
+                    .iter()
+                    .filter(|item| item.placed)
+                    .map(|item| (item.cell_x, item.cell_y, item.alive, item.kind))
+                    .collect(),
+                markers,
+            }
+        };
+        self.player.x = snap.x;
+        self.player.y = snap.y;
+        self.player.w = snap.w.max(1.0);
+        self.player.h = snap.h.max(1.0);
+        self.player.vx = snap.vx;
+        self.player.vy = snap.vy;
+        self.player.facing = if snap.facing < 0 { -1 } else { 1 };
+        self.player.on_ground = snap.on_ground;
+        self.won = snap.won;
+        self.hide_player = snap.hide_player;
+        self.events.jump = snap.jump;
+        self.events.stomp = snap.stomp;
+        self.events.hurt = snap.hurt;
+        self.events.goal = snap.goal;
+        self.events.collect = snap.collect;
+        self.bumps = snap.bumps;
+        self.hidden = snap.hidden;
+        self.pending_warp = snap.pending;
+        self.markers = snap.markers;
+        for (enemy, draw) in self.enemies.iter_mut().zip(snap.enemies.iter()) {
+            enemy.x = draw.0;
+            enemy.y = draw.1;
+            enemy.alive = draw.2;
+            enemy.dir = if draw.3 < 0 { -1 } else { 1 };
+        }
+        for (rect, alive) in &mut self.items {
+            if let Some((_, _, still, kind)) = snap.items.iter().find(|(cx, cy, _, _)| {
+                (*cx as f32 * TILE - rect.x).abs() < 1.0 && (*cy as f32 * TILE - rect.y).abs() < 1.0
+            }) {
+                let plain = matches!(kind, res_1080p::powerups::smb1::ItemKind::Plain);
+                *alive = if plain { *still } else { false };
+            }
+        }
+    }
+}
+
+struct MirrorSnap {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    vx: f32,
+    vy: f32,
+    facing: i32,
+    on_ground: bool,
+    won: bool,
+    hide_player: bool,
+    jump: bool,
+    stomp: bool,
+    hurt: bool,
+    goal: bool,
+    collect: bool,
+    bumps: Vec<(i32, i32, f32)>,
+    hidden: Vec<(i32, i32)>,
+    pending: Option<(String, i32, i32)>,
+    enemies: Vec<(f32, f32, bool, i32)>,
+    items: Vec<(i32, i32, bool, res_1080p::powerups::smb1::ItemKind)>,
+    markers: Vec<Marker>,
+}
+
+fn collect_markers(world: &res_1080p::World) -> Vec<Marker> {
+    let mut markers = Vec::new();
+    for enemy in world.enemies.iter().skip(world.source_enemies) {
+        if !enemy.alive {
+            continue;
+        }
+        markers.push(Marker {
+            x: course_px(enemy.x),
+            y: course_px(enemy.y),
+            w: course_px(enemy.w),
+            h: course_px(enemy.h),
+            rgb: [176, 112, 64],
+        });
+    }
+    for item in &world.items {
+        if !item.alive || !item.active {
+            continue;
+        }
+        if item.placed && matches!(item.kind, res_1080p::powerups::smb1::ItemKind::Plain) {
+            continue;
+        }
+        let rgb = match item.kind {
+            res_1080p::powerups::smb1::ItemKind::Mushroom => [210, 48, 48],
+            res_1080p::powerups::smb1::ItemKind::OneUp => [48, 170, 64],
+            res_1080p::powerups::smb1::ItemKind::Flower => [240, 140, 40],
+            res_1080p::powerups::smb1::ItemKind::Star => [240, 210, 64],
+            res_1080p::powerups::smb1::ItemKind::Plain => [120, 180, 90],
+        };
+        markers.push(Marker {
+            x: course_px(item.x),
+            y: course_px(item.y),
+            w: course_px(item.w),
+            h: course_px(item.h),
+            rgb,
+        });
+    }
+    for ball in &world.fireballs {
+        if !ball.alive {
+            continue;
+        }
+        markers.push(Marker {
+            x: course_px(ball.x),
+            y: course_px(ball.y),
+            w: course_px(ball.w),
+            h: course_px(ball.h),
+            rgb: [255, 120, 32],
+        });
+    }
+    markers
+}
+
+fn map_character(preset: CharacterPhysics) -> CharacterId {
+    match preset {
+        CharacterPhysics::Smb1Mario => CharacterId::Mario,
+        CharacterPhysics::Smb1Luigi => CharacterId::Luigi,
+        CharacterPhysics::Smb1Toad => CharacterId::Toad,
+        CharacterPhysics::Smb1Peach => CharacterId::Peach,
+    }
+}
+
+fn pad_from(input: &Input) -> Pad {
+    Pad {
+        left: input.left,
+        right: input.right,
+        up: input.up,
+        down: input.down,
+        jump_held: input.jump_held,
+        jump_pressed: input.jump_pressed,
+        run_held: input.run_held,
+    }
 }
 
 fn patrol_enemies(enemies: &mut [Enemy], solids: &[Aabb], dt: f32) {
@@ -683,9 +955,8 @@ mod tests {
         sim.player.y = 20.0;
         sim.player.w = 12.0;
         sim.player.h = 14.0;
-        sim.bind_character_physics(CharacterPhysics::Smb1Nes);
         for _ in 0..180 {
-            sim.step_preset(CharacterPhysics::Smb1Nes, &Input::default(), 1.0 / 60.0);
+            sim.step_smb1(&Input::default(), 1.0 / 60.0);
         }
         assert!(sim.player.on_ground, "y={}", sim.player.y);
         let feet = sim.player.y + sim.player.h;
@@ -730,7 +1001,7 @@ mod tests {
         let far_x = sim.enemies[0].x;
         let near_x = sim.enemies[1].x;
         for _ in 0..30 {
-            sim.step_preset(CharacterPhysics::Smb1Nes, &Input::default(), 1.0 / 60.0);
+            sim.step_smb1(&Input::default(), 1.0 / 60.0);
         }
         assert!(
             (sim.enemies[0].x - far_x).abs() < 0.01,
@@ -754,5 +1025,17 @@ mod tests {
         assert!((large - VIRTUAL_PX_AT_1080).abs() < 0.001);
         let small = play_surface_scale(480.0, 270.0, 512.0, 240.0);
         assert!(small < 2.0, "small panels fit the course, scale={small}");
+    }
+
+    #[test]
+    fn old_character_physics_names_load_as_mario() {
+        let mario: CharacterPhysics = serde_json::from_str("\"smb1_nes\"").unwrap();
+        assert_eq!(mario, CharacterPhysics::Smb1Mario);
+        let float_name: CharacterPhysics = serde_json::from_str("\"nesticles\"").unwrap();
+        assert_eq!(float_name, CharacterPhysics::Smb1Mario);
+        let project: crate::project::Project = serde_json::from_str(r#"{"name":"old"}"#).unwrap();
+        assert_eq!(project.character_physics, CharacterPhysics::Smb1Mario);
+        assert_eq!(project.power_up_style, crate::project::PowerUpStyle::Smb1);
+        assert_eq!(project.enemy_ai, crate::enemy_ai::EnemyAiStyle::Smb1Nes);
     }
 }

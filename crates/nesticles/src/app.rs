@@ -12,7 +12,7 @@ use nesticles_core::codec::{
 };
 use nesticles_core::detect::{detect_rom, find_strings, RomFormat, RomInfo, MAX_ROM_BYTES};
 use nesticles_core::disasm::{disassemble6502, AsmLine};
-use nesticles_core::enemy_ai::{override_label, EnemyAiStyle};
+use nesticles_core::enemy_ai::{archetype_label, override_label, EnemyAiStyle, SMB1_ROSTER};
 use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, TILE};
 use nesticles_core::pngutil::{b64_decode, b64_encode};
 use nesticles_core::project::{audit_course, nid, Asset, AssetKind, Cell, Layer, Project};
@@ -109,6 +109,8 @@ pub struct NestApp {
     play: Option<PlayState>,
     hold_left: bool,
     hold_right: bool,
+    hold_up: bool,
+    hold_down: bool,
     hold_jump: bool,
     hold_run: bool,
     jump_edge: bool,
@@ -211,6 +213,8 @@ impl NestApp {
             play: None,
             hold_left: false,
             hold_right: false,
+            hold_up: false,
+            hold_down: false,
             hold_jump: false,
             hold_run: false,
             jump_edge: false,
@@ -293,7 +297,7 @@ impl NestApp {
         if self.play.as_ref().map(|p| p.sim.is_none()).unwrap_or(true) {
             return;
         }
-        let (left, right, jump_held, jump_key, run_held) = ctx.input(|i| {
+        let (left, right, up, down, jump_held, jump_key, run_held) = ctx.input(|i| {
             (
                 i.key_down(egui::Key::ArrowLeft)
                     || i.key_down(egui::Key::A)
@@ -301,6 +305,8 @@ impl NestApp {
                 i.key_down(egui::Key::ArrowRight)
                     || i.key_down(egui::Key::D)
                     || i.key_down(egui::Key::L),
+                i.key_down(egui::Key::ArrowUp) || i.key_down(egui::Key::W),
+                i.key_down(egui::Key::ArrowDown) || i.key_down(egui::Key::S),
                 i.key_down(egui::Key::Space)
                     || i.key_down(egui::Key::Z)
                     || i.key_down(egui::Key::W)
@@ -320,40 +326,52 @@ impl NestApp {
             jump_held: jump_held || self.hold_jump,
             jump_pressed: jump_edge,
             run_held: run_held || self.hold_run,
+            up: up || self.hold_up,
+            down: down || self.hold_down,
         };
         let preset = self.project.character_physics;
+        let power = self.project.power_up_style;
         let dt = ctx.input(|i| i.stable_dt).clamp(0.0, 0.05);
-        let (jumped, stomped, hurt, goal, level_id) = {
+        let (jumped, stomped, hurt, goal, level_id, warp) = {
             let play = self.play.as_mut().unwrap();
             let mut jumped = false;
             let mut stomped = false;
             let mut hurt = false;
             let mut goal = false;
-            if preset == CharacterPhysics::Smb1Nes {
+            let frame = 1.0 / 60.0;
+            play.accum += dt;
+            let mut ticks = 0;
+            while play.accum >= frame && ticks < 8 {
+                play.accum -= frame;
+                ticks += 1;
+                let mut step_input = input;
+                step_input.jump_pressed = input.jump_pressed && !jumped;
                 if let Some(sim) = play.sim.as_mut() {
-                    sim.step_preset(preset, &input, dt);
-                    jumped = sim.events.jump;
-                    stomped = sim.events.stomp;
-                    hurt = sim.events.hurt;
-                    goal = sim.events.goal;
-                }
-            } else {
-                play.accum += dt;
-                while play.accum >= 1.0 / 60.0 {
-                    play.accum -= 1.0 / 60.0;
-                    let mut step_input = input;
-                    step_input.jump_pressed = input.jump_pressed && !jumped;
-                    if let Some(sim) = play.sim.as_mut() {
-                        sim.step(&step_input, 1.0 / 60.0);
-                        jumped |= sim.events.jump;
-                        stomped |= sim.events.stomp;
-                        hurt |= sim.events.hurt;
-                        goal |= sim.events.goal;
-                    }
+                    sim.tick_play(preset, power, &step_input);
+                    jumped |= sim.events.jump;
+                    stomped |= sim.events.stomp;
+                    hurt |= sim.events.hurt;
+                    goal |= sim.events.goal;
                 }
             }
-            (jumped, stomped, hurt, goal, play.level_id.clone())
+            if play.accum > frame {
+                play.accum %= frame;
+            }
+            let warp = play.sim.as_mut().and_then(|sim| sim.take_warp());
+            (jumped, stomped, hurt, goal, play.level_id.clone(), warp)
         };
+        if let Some((level, x, y)) = warp {
+            let same = level == level_id;
+            let known = self.project.level(&level).is_some();
+            if !same && known {
+                self.start_level(level, true);
+            }
+            if same || known {
+                if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
+                    sim.place_at_cell(x, y);
+                }
+            }
+        }
         if jumped {
             self.cue("jump");
         }
@@ -772,6 +790,10 @@ impl NestApp {
                     wav_base64: b64_encode(&wav),
                     solid: false,
                     cue: String::new(),
+                    item_tag: nesticles_core::ItemTag::Auto,
+                    block_tag: nesticles_core::BlockTag::Auto,
+                    hazard_tag: nesticles_core::HazardTag::Auto,
+                    warp: None,
                 });
                 self.status = format!("Added {} to the library.", hit.label);
             }
@@ -955,6 +977,7 @@ impl NestApp {
             self.project.levels[self.level_sel].style_id = style_id;
         }
         self.physics_dropdown(ui);
+        self.powerup_dropdown(ui);
         self.enemy_ai_dropdown(ui, self.level_sel, true);
         self.parts_tray(ui);
         ui.label("Right click erases. Dragging Pip, or any player part, moves the start.");
@@ -1331,6 +1354,19 @@ impl NestApp {
         }
     }
 
+    fn powerup_dropdown(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label("Power Up Styles");
+            egui::ComboBox::from_id_salt("power-up-styles")
+                .selected_text(self.project.power_up_style.label())
+                .show_ui(ui, |ui| {
+                    for style in nesticles_core::PowerUpStyle::ALL {
+                        ui.selectable_value(&mut self.project.power_up_style, style, style.label());
+                    }
+                });
+        });
+    }
+
     fn enemy_ai_dropdown(&mut self, ui: &mut egui::Ui, level_index: usize, with_enemies: bool) {
         if level_index >= self.project.levels.len() {
             return;
@@ -1354,8 +1390,9 @@ impl NestApp {
         }
         let mut chosen_level: Option<EnemyAiStyle> = None;
         let mut chosen_enemy: Option<Option<EnemyAiStyle>> = None;
+        let mut chosen_roster: Option<nesticles_core::EnemyArchetype> = None;
         ui.horizontal(|ui| {
-            ui.label("Enemy AI Style");
+            ui.label("Enemy, Hazards & Collision Rules Style");
             if with_enemies {
                 egui::ComboBox::from_id_salt("enemy-ai-target")
                     .selected_text(match pick {
@@ -1413,6 +1450,33 @@ impl NestApp {
                 });
         });
         if with_enemies {
+            if let Some((x, y)) = pick {
+                let current = self.project.levels[level_index]
+                    .cells
+                    .iter()
+                    .find(|cell| cell.x == x && cell.y == y)
+                    .map(|cell| cell.archetype.clone());
+                let selected = current
+                    .as_ref()
+                    .map(archetype_label)
+                    .unwrap_or_else(|| "Goomba".into());
+                ui.horizontal(|ui| {
+                    ui.label("Roster");
+                    egui::ComboBox::from_id_salt(("enemy-roster", x, y))
+                        .selected_text(selected)
+                        .show_ui(ui, |ui| {
+                            for kind in &SMB1_ROSTER {
+                                let label = archetype_label(kind);
+                                if ui
+                                    .selectable_label(current.as_ref() == Some(kind), label)
+                                    .clicked()
+                                {
+                                    chosen_roster = Some(kind.clone());
+                                }
+                            }
+                        });
+                });
+            }
             self.enemy_pick = pick;
         }
         if let Some(style) = chosen_level {
@@ -1430,6 +1494,17 @@ impl NestApp {
                 }
                 if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
                     sim.set_enemy_override(x, y, style);
+                }
+            }
+        }
+        if let Some(kind) = chosen_roster {
+            if let Some((x, y)) = pick {
+                if let Some(cell) = self.project.levels[level_index]
+                    .cells
+                    .iter_mut()
+                    .find(|cell| cell.x == x && cell.y == y)
+                {
+                    cell.archetype = kind;
                 }
             }
         }
@@ -1454,6 +1529,7 @@ impl NestApp {
     fn play_view(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Play").font(serif(26.0)));
         self.physics_dropdown(ui);
+        self.powerup_dropdown(ui);
         let level_index = self
             .play
             .as_ref()
@@ -1481,10 +1557,14 @@ impl NestApp {
         ui.horizontal(|ui| {
             let left = ui.add(egui::Button::new("Left").min_size(Vec2::new(72.0, 36.0)));
             let right = ui.add(egui::Button::new("Right").min_size(Vec2::new(72.0, 36.0)));
+            let up = ui.add(egui::Button::new("Up").min_size(Vec2::new(72.0, 36.0)));
+            let down = ui.add(egui::Button::new("Down").min_size(Vec2::new(72.0, 36.0)));
             let jump = ui.add(egui::Button::new("Jump").min_size(Vec2::new(72.0, 36.0)));
             let run = ui.add(egui::Button::new("Run").min_size(Vec2::new(72.0, 36.0)));
             self.hold_left = left.is_pointer_button_down_on();
             self.hold_right = right.is_pointer_button_down_on();
+            self.hold_up = up.is_pointer_button_down_on();
+            self.hold_down = down.is_pointer_button_down_on();
             let down = jump.is_pointer_button_down_on();
             if down && !self.hold_jump {
                 self.jump_edge = true;
@@ -1650,6 +1730,9 @@ impl NestApp {
             if asset.kind == AssetKind::Enemy {
                 continue;
             }
+            if sim.hidden.iter().any(|(x, y)| *x == cell.x && *y == cell.y) {
+                continue;
+            }
             if asset.kind == AssetKind::Item
                 && sim.items.iter().any(|(r, alive)| {
                     !*alive
@@ -1659,6 +1742,12 @@ impl NestApp {
             {
                 continue;
             }
+            let lift = sim
+                .bumps
+                .iter()
+                .find(|(x, y, _)| *x == cell.x && *y == cell.y)
+                .map(|(_, _, offset)| *offset)
+                .unwrap_or(0.0);
             self.blit(
                 &painter,
                 rect.min,
@@ -1667,7 +1756,7 @@ impl NestApp {
                 scale,
                 &cell.asset_id,
                 cell.x as f32 * TILE,
-                cell.y as f32 * TILE,
+                cell.y as f32 * TILE - lift,
                 false,
             );
         }
@@ -1684,23 +1773,34 @@ impl NestApp {
                 enemy.dir < 0,
             );
         }
-        if let Some(player) = self
-            .project
-            .assets
-            .iter()
-            .find(|a| a.kind == AssetKind::Player)
-        {
-            self.blit(
-                &painter,
-                rect.min,
-                cam_x,
-                cam_y,
-                scale,
-                &player.id,
-                sim.player.x - 2.0,
-                sim.player.y - 2.0,
-                sim.player.facing < 0,
+        for marker in &sim.markers {
+            let p = rect.min + Vec2::new((marker.x - cam_x) * scale, (marker.y - cam_y) * scale);
+            let size = Vec2::new(marker.w.max(4.0) * scale, marker.h.max(4.0) * scale);
+            painter.rect_filled(
+                Rect::from_min_size(p, size),
+                2.0,
+                Color32::from_rgb(marker.rgb[0], marker.rgb[1], marker.rgb[2]),
             );
+        }
+        if !sim.hide_player {
+            if let Some(player) = self
+                .project
+                .assets
+                .iter()
+                .find(|a| a.kind == AssetKind::Player)
+            {
+                self.blit(
+                    &painter,
+                    rect.min,
+                    cam_x,
+                    cam_y,
+                    scale,
+                    &player.id,
+                    sim.player.x - 2.0,
+                    sim.player.y - 2.0,
+                    sim.player.facing < 0,
+                );
+            }
         }
         painter.text(
             rect.min + Vec2::new(8.0, 6.0),
@@ -2106,6 +2206,10 @@ impl NestApp {
                     wav_base64: b64_encode(&wav),
                     solid: false,
                     cue: String::new(),
+                    item_tag: nesticles_core::ItemTag::Auto,
+                    block_tag: nesticles_core::BlockTag::Auto,
+                    hazard_tag: nesticles_core::HazardTag::Auto,
+                    warp: None,
                 });
                 self.status = format!("Imported {name}");
                 self.tab = Tab::Library;
@@ -2208,6 +2312,10 @@ impl NestApp {
             wav_base64: String::new(),
             solid: kind.default_solid(),
             cue: String::new(),
+            item_tag: nesticles_core::ItemTag::Auto,
+            block_tag: nesticles_core::BlockTag::Auto,
+            hazard_tag: nesticles_core::HazardTag::Auto,
+            warp: None,
         });
         self.lib_sel = Some(id);
         self.textures.clear();
@@ -2516,7 +2624,7 @@ Tiles are uncompressed only: NES 2bpp with separated planes, Game Boy 2bpp with 
 
 Audio can preview NES DPCM (least-significant bit first, starting at level 64, stepping by 2, clamped to 0–126), Game Boy 16-byte wave tables, and Super NES BRR. A kept clip becomes a sound or music. You can also import PCM WAV, and Ogg or MP3 when the file decodes.
 
-Notes show ASCII strings and, for NES, a linear 6502 disassembly. That listing does not follow banks and it will read data as code. Scripts are custom per game. Physics is not extracted. Play can use the fixed-point Super Mario Bros. 1 (NES) character preset or the original Nesticles float controller: gravity, acceleration, friction, a variable jump, coyote time, a jump buffer, AABB tile collision, patrol enemies, a stomp, hazard and fall respawns, and a goal. Enemy AI Style picks the enemy brain. Inherit Level Style on one enemy uses the course style.
+Notes show ASCII strings and, for NES, a linear 6502 disassembly. That listing does not follow banks and it will read data as code. Scripts are custom per game. Physics is not extracted. Play runs an original 1080p engine at 60 Hz. Character Game Style Physics chooses SMB1 - Mario, Luigi, Toad, or Peach. Power Up Styles chooses SMB1. Enemy, Hazards & Collision Rules Style chooses SMB1. A selected enemy can also pick a roster entry. Inherit Level Style on one enemy uses the course style.
 
 Each cartridge becomes a style, the way a maker keeps several game looks in one tray. Dropping in another game adds a style and leaves the earlier parts where they are. A course has a home style, and the tray can show that style or every style. Drag a part onto the grid. Parts from more than one style can share a course. Character Game Style Physics chooses the controller used in Play, not the cartridge's code. The overworld nodes link to courses. Clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, a web manifest, and icon.png for the browser tab and home screen. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
 

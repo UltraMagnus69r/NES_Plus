@@ -206,6 +206,10 @@ fn paint_rect_changes_cells() {
         wav_base64: String::new(),
         solid: true,
         cue: String::new(),
+        item_tag: nesticles_core::ItemTag::Auto,
+        block_tag: nesticles_core::BlockTag::Auto,
+        hazard_tag: nesticles_core::HazardTag::Auto,
+        warp: None,
     });
     project.levels.push(Level {
         id: "l1".into(),
@@ -295,6 +299,8 @@ fn clear_course(project: &nesticles_core::Project, level_id: &str) -> bool {
             jump_held: jump || sim.player.vy < 0.0,
             jump_pressed: jump,
             run_held: false,
+            up: false,
+            down: false,
         };
         sim.step(&input, 1.0 / 60.0);
         if sim.player.x <= last_x + 0.2 {
@@ -334,6 +340,10 @@ fn a_second_cartridge_adds_a_style_and_parts_can_mix() {
         wav_base64: String::new(),
         solid: true,
         cue: String::new(),
+        item_tag: nesticles_core::ItemTag::Auto,
+        block_tag: nesticles_core::BlockTag::Auto,
+        hazard_tag: nesticles_core::HazardTag::Auto,
+        warp: None,
     });
     execute_tool_json(
         &mut project,

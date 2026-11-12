@@ -178,6 +178,23 @@ fn motion_for(archetype: &EnemyArchetype) -> Motion {
             motion.speed = 1024;
             motion.boss = true;
         }
+        EnemyArchetype::Goomba
+        | EnemyArchetype::GreenKoopa
+        | EnemyArchetype::BuzzyBeetle
+        | EnemyArchetype::RedKoopa
+        | EnemyArchetype::GreenParatroopa
+        | EnemyArchetype::RedParatroopa
+        | EnemyArchetype::GreenPiranha
+        | EnemyArchetype::Lakitu
+        | EnemyArchetype::HammerBro
+        | EnemyArchetype::BulletBill
+        | EnemyArchetype::Blooper
+        | EnemyArchetype::CheepGreen
+        | EnemyArchetype::CheepRed
+        | EnemyArchetype::CheepLeap
+        | EnemyArchetype::Podoboo
+        | EnemyArchetype::Bowser
+        | EnemyArchetype::Spiny => {}
         EnemyArchetype::Custom(name) => {
             let extra = (name.len() as i32).saturating_mul(64).min(512);
             motion.speed = WALKER_SPEED + extra;

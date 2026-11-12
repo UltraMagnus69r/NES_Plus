@@ -1,6 +1,6 @@
 //! Browser player. Physics comes from nesticles-core, the same crate the desktop app uses.
 
-use nesticles_core::physics::{play_surface_scale, CharacterPhysics, Input, Sim, TILE};
+use nesticles_core::physics::{play_surface_scale, Input, Sim, TILE};
 use nesticles_core::pngutil::b64_decode;
 use nesticles_core::{AssetKind, Layer, Project};
 use std::cell::RefCell;
@@ -38,6 +38,9 @@ struct Game {
     prev_left: bool,
     prev_right: bool,
     run_held: bool,
+    up_held: bool,
+    down_held: bool,
+    accum: f32,
 }
 
 enum Mode {
@@ -102,6 +105,9 @@ pub fn start_game(project_json: &str) {
             prev_left: false,
             prev_right: false,
             run_held: false,
+            up_held: false,
+            down_held: false,
+            accum: 0.0,
         });
     });
 }
@@ -123,6 +129,16 @@ pub fn set_run(held: bool) {
     GAME.with(|slot| {
         if let Some(game) = slot.borrow_mut().as_mut() {
             game.run_held = held;
+        }
+    });
+}
+
+#[wasm_bindgen]
+pub fn set_vertical(up: bool, down: bool) {
+    GAME.with(|slot| {
+        if let Some(game) = slot.borrow_mut().as_mut() {
+            game.up_held = up;
+            game.down_held = down;
         }
     });
 }
@@ -229,48 +245,53 @@ impl Game {
         dt: f32,
     ) {
         let preset = self.project.character_physics;
+        let power = self.project.power_up_style;
         if let Some(sim) = self.sim.as_mut() {
             let scale = play_surface_scale(480.0, 270.0, sim.level_w, sim.level_h);
             sim.update_view(480.0 / scale, 270.0 / scale);
         }
         let run_held = self.run_held;
-        if preset == CharacterPhysics::Smb1Nes {
+        let up = self.up_held;
+        let down = self.down_held;
+        let frame = 1.0 / 60.0;
+        self.accum += dt.clamp(0.0, 0.05);
+        let mut ticks = 0;
+        let mut armed = jump_pressed;
+        while self.accum >= frame && ticks < 8 {
+            self.accum -= frame;
+            ticks += 1;
             let input = Input {
                 left,
                 right,
                 jump_held: jump_down,
-                jump_pressed,
+                jump_pressed: armed,
                 run_held,
+                up,
+                down,
             };
+            armed = false;
             let events = if let Some(sim) = self.sim.as_mut() {
-                sim.step_preset(preset, &input, dt.clamp(0.0, 0.05));
+                sim.tick_play(preset, power, &input);
                 sim.events
             } else {
                 nesticles_core::physics::Events::default()
             };
             self.play_events(events);
-        } else {
-            let mut steps = ((dt.max(0.0) / (1.0 / 60.0)).round() as i32).clamp(1, 3);
-            if dt <= 0.0 {
-                steps = 1;
+        }
+        if self.accum > frame {
+            self.accum %= frame;
+        }
+        let warp = self.sim.as_mut().and_then(|sim| sim.take_warp());
+        if let Some((level, x, y)) = warp {
+            let same = level == self.level_id;
+            let known = self.project.levels.iter().any(|l| l.id == level);
+            if !same && known {
+                self.enter(&level);
             }
-            let mut first = true;
-            for _ in 0..steps {
-                let input = Input {
-                    left,
-                    right,
-                    jump_held: jump_down,
-                    jump_pressed: jump_pressed && first,
-                    run_held,
-                };
-                first = false;
-                let events = if let Some(sim) = self.sim.as_mut() {
-                    sim.step(&input, 1.0 / 60.0);
-                    sim.events
-                } else {
-                    nesticles_core::physics::Events::default()
-                };
-                self.play_events(events);
+            if same || known {
+                if let Some(sim) = self.sim.as_mut() {
+                    sim.place_at_cell(x, y);
+                }
             }
         }
         let won = self.sim.as_ref().map(|s| s.won).unwrap_or(false);
@@ -396,6 +417,9 @@ impl Game {
             if asset.kind == AssetKind::Enemy {
                 continue;
             }
+            if sim.hidden.iter().any(|(x, y)| *x == cell.x && *y == cell.y) {
+                continue;
+            }
             if asset.kind == AssetKind::Item
                 && sim.items.iter().any(|(r, alive)| {
                     !*alive
@@ -405,10 +429,16 @@ impl Game {
             {
                 continue;
             }
+            let lift = sim
+                .bumps
+                .iter()
+                .find(|(x, y, _)| *x == cell.x && *y == cell.y)
+                .map(|(_, _, offset)| *offset)
+                .unwrap_or(0.0);
             self.blit(
                 &asset.id,
                 (cell.x as f64 * TILE as f64 - cam_x) * scale,
-                (cell.y as f64 * TILE as f64 - cam_y) * scale,
+                ((cell.y as f32 * TILE - lift) as f64 - cam_y) * scale,
                 TILE as f64 * scale,
                 TILE as f64 * scale,
                 false,
@@ -424,20 +454,35 @@ impl Game {
                 enemy.dir < 0,
             );
         }
-        if let Some(player) = self
-            .project
-            .assets
-            .iter()
-            .find(|a| a.kind == AssetKind::Player)
-        {
-            self.blit(
-                &player.id,
-                (sim.player.x as f64 - 2.0 - cam_x) * scale,
-                (sim.player.y as f64 - 2.0 - cam_y) * scale,
-                TILE as f64 * scale,
-                TILE as f64 * scale,
-                sim.player.facing < 0,
+        for marker in &sim.markers {
+            let hex = format!(
+                "#{:02x}{:02x}{:02x}",
+                marker.rgb[0], marker.rgb[1], marker.rgb[2]
             );
+            ctx.set_fill_style_str(&hex);
+            ctx.fill_rect(
+                (marker.x as f64 - cam_x) * scale,
+                (marker.y as f64 - cam_y) * scale,
+                marker.w.max(4.0) as f64 * scale,
+                marker.h.max(4.0) as f64 * scale,
+            );
+        }
+        if !sim.hide_player {
+            if let Some(player) = self
+                .project
+                .assets
+                .iter()
+                .find(|a| a.kind == AssetKind::Player)
+            {
+                self.blit(
+                    &player.id,
+                    (sim.player.x as f64 - 2.0 - cam_x) * scale,
+                    (sim.player.y as f64 - 2.0 - cam_y) * scale,
+                    TILE as f64 * scale,
+                    TILE as f64 * scale,
+                    sim.player.facing < 0,
+                );
+            }
         }
         ctx.set_fill_style_str("#f4ece0");
         ctx.set_font("16px serif");

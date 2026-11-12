@@ -160,6 +160,10 @@ fn asset_from(id: &str, name: &str, kind: AssetKind, rows: &[&str], cue: &str) -
         wav_base64: String::new(),
         solid: kind.default_solid(),
         cue: cue.into(),
+        item_tag: crate::project::ItemTag::Auto,
+        block_tag: crate::project::BlockTag::Auto,
+        hazard_tag: crate::project::HazardTag::Auto,
+        warp: None,
     }
 }
 
@@ -184,6 +188,10 @@ fn audio_asset(
         wav_base64: b64_encode(&wav),
         solid: false,
         cue: cue.into(),
+        item_tag: crate::project::ItemTag::Auto,
+        block_tag: crate::project::BlockTag::Auto,
+        hazard_tag: crate::project::HazardTag::Auto,
+        warp: None,
     }
 }
 
@@ -325,7 +333,8 @@ pub fn demo_project() -> Project {
         ],
         start_node_id: "node-moss".into(),
         enemy_ai: crate::enemy_ai::EnemyAiStyle::Smb1Nes,
-        character_physics: crate::physics::CharacterPhysics::Smb1Nes,
+        character_physics: crate::physics::CharacterPhysics::Smb1Mario,
+        power_up_style: crate::project::PowerUpStyle::Smb1,
     }
 }
 

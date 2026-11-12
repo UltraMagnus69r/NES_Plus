@@ -17,6 +17,23 @@ pub enum EnemyArchetype {
     Swimmer,
     Shooter,
     Boss,
+    Goomba,
+    GreenKoopa,
+    BuzzyBeetle,
+    RedKoopa,
+    GreenParatroopa,
+    RedParatroopa,
+    GreenPiranha,
+    Lakitu,
+    HammerBro,
+    BulletBill,
+    Blooper,
+    CheepGreen,
+    CheepRed,
+    CheepLeap,
+    Podoboo,
+    Bowser,
+    Spiny,
     Custom(String),
 }
 
@@ -38,7 +55,7 @@ pub enum EnemyAiStyle {
 impl EnemyAiStyle {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Smb1Nes => "Super Mario Bros. 1 (NES)",
+            Self::Smb1Nes => "SMB1",
         }
     }
 
@@ -49,6 +66,56 @@ pub fn override_label(style: Option<EnemyAiStyle>) -> &'static str {
     match style {
         None => "Inherit Level Style",
         Some(style) => style.label(),
+    }
+}
+
+/// Roster entries the course editor can assign. Unknown names still walk as a Goomba.
+pub const SMB1_ROSTER: [EnemyArchetype; 17] = [
+    EnemyArchetype::Goomba,
+    EnemyArchetype::GreenKoopa,
+    EnemyArchetype::BuzzyBeetle,
+    EnemyArchetype::RedKoopa,
+    EnemyArchetype::GreenParatroopa,
+    EnemyArchetype::RedParatroopa,
+    EnemyArchetype::GreenPiranha,
+    EnemyArchetype::Lakitu,
+    EnemyArchetype::HammerBro,
+    EnemyArchetype::BulletBill,
+    EnemyArchetype::Blooper,
+    EnemyArchetype::CheepGreen,
+    EnemyArchetype::CheepRed,
+    EnemyArchetype::CheepLeap,
+    EnemyArchetype::Podoboo,
+    EnemyArchetype::Bowser,
+    EnemyArchetype::Spiny,
+];
+
+pub fn archetype_label(kind: &EnemyArchetype) -> String {
+    match kind {
+        EnemyArchetype::Walker | EnemyArchetype::Goomba => "Goomba".into(),
+        EnemyArchetype::GreenKoopa => "Green Koopa".into(),
+        EnemyArchetype::BuzzyBeetle => "Buzzy Beetle".into(),
+        EnemyArchetype::RedKoopa => "Red Koopa".into(),
+        EnemyArchetype::GreenParatroopa => "Green Paratroopa".into(),
+        EnemyArchetype::RedParatroopa => "Red Paratroopa".into(),
+        EnemyArchetype::GreenPiranha => "Green Piranha".into(),
+        EnemyArchetype::Lakitu => "Lakitu".into(),
+        EnemyArchetype::HammerBro => "Hammer Bro".into(),
+        EnemyArchetype::BulletBill => "Bullet Bill".into(),
+        EnemyArchetype::Blooper => "Blooper".into(),
+        EnemyArchetype::CheepGreen => "Cheep Cheep".into(),
+        EnemyArchetype::CheepRed => "Red Cheep Cheep".into(),
+        EnemyArchetype::CheepLeap => "Leaping Cheep Cheep".into(),
+        EnemyArchetype::Podoboo => "Podoboo".into(),
+        EnemyArchetype::Bowser => "Bowser".into(),
+        EnemyArchetype::Spiny => "Spiny".into(),
+        EnemyArchetype::ShellWalker => "Shell walker".into(),
+        EnemyArchetype::Jumper => "Jumper".into(),
+        EnemyArchetype::Flyer => "Flyer".into(),
+        EnemyArchetype::Swimmer => "Swimmer".into(),
+        EnemyArchetype::Shooter => "Shooter".into(),
+        EnemyArchetype::Boss => "Boss".into(),
+        EnemyArchetype::Custom(name) => name.clone(),
     }
 }
 

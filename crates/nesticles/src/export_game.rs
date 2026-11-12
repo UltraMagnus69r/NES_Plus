@@ -137,7 +137,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
   <script>
     const projectText = {project_js};
     const wasmB64 = {wasm_js};
-    const keys = {{ left: false, right: false, jump: false, jumpPressed: false, run: false }};
+    const keys = {{ left: false, right: false, up: false, down: false, jump: false, jumpPressed: false, run: false }};
     function setKey(name, down) {{
       if (name === "jump" && down && !keys.jump) keys.jumpPressed = true;
       keys[name] = down;
@@ -146,6 +146,8 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
       const k = e.key;
       if (k === "ArrowLeft" || k === "a" || k === "A") setKey("left", true);
       if (k === "ArrowRight" || k === "d" || k === "D") setKey("right", true);
+      if (k === "ArrowDown" || k === "s" || k === "S") setKey("down", true);
+      if (k === "ArrowUp" || k === "w" || k === "W") setKey("up", true);
       if (k === "Shift" || k === "x" || k === "X") setKey("run", true);
       if (k === "ArrowUp" || k === "w" || k === "W" || k === "z" || k === "Z" || k === " ") {{
         setKey("jump", true);
@@ -156,6 +158,8 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
       const k = e.key;
       if (k === "ArrowLeft" || k === "a" || k === "A") setKey("left", false);
       if (k === "ArrowRight" || k === "d" || k === "D") setKey("right", false);
+      if (k === "ArrowDown" || k === "s" || k === "S") setKey("down", false);
+      if (k === "ArrowUp" || k === "w" || k === "W") setKey("up", false);
       if (k === "Shift" || k === "x" || k === "X") setKey("run", false);
       if (k === "ArrowUp" || k === "w" || k === "W" || k === "z" || k === "Z" || k === " ") setKey("jump", false);
     }});
@@ -213,6 +217,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
       const pressed = keys.jumpPressed;
       keys.jumpPressed = false;
       if (window.wasm_bindgen && wasm_bindgen.set_run) wasm_bindgen.set_run(!!keys.run);
+      if (window.wasm_bindgen && wasm_bindgen.set_vertical) wasm_bindgen.set_vertical(!!keys.up, !!keys.down);
       if (window.wasm_bindgen && wasm_bindgen.frame) {{
         wasm_bindgen.frame(keys.left, keys.right, keys.jump, pressed, dt);
       }}

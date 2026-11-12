@@ -8,6 +8,7 @@ pub mod demo;
 pub mod detect;
 pub mod disasm;
 pub mod enemy_ai;
+pub mod engine;
 pub mod guard;
 pub mod physics;
 pub mod pngutil;
@@ -21,8 +22,11 @@ pub use codec::{decode_tile, encode_tile, tile_bytes, Codec};
 pub use demo::{demo_project, demo_rom};
 pub use detect::{detect_rom, find_strings, RomFormat, RomInfo};
 pub use disasm::{disassemble6502, AsmLine};
-pub use enemy_ai::{override_label, EnemyAiStyle, EnemyArchetype};
+pub use enemy_ai::{archetype_label, override_label, EnemyAiStyle, EnemyArchetype};
 pub use guard::image_prompt_blocked;
 pub use physics::{play_surface_scale, scale_virtual_px, Aabb, CharacterPhysics, Input, Sim, TILE};
-pub use project::{Asset, AssetKind, Layer, Level, Project, Style};
+pub use project::{
+    Asset, AssetKind, BlockTag, HazardTag, ItemTag, Layer, Level, PowerUpStyle, Project, Style,
+    WarpTarget,
+};
 pub use tools::execute_tool_json;

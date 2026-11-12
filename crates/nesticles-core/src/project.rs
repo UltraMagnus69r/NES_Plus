@@ -4,6 +4,76 @@ use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::physics::CharacterPhysics;
 use serde::{Deserialize, Serialize};
 
+/// Power-up rules for play. Old projects omit the field and load SMB1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PowerUpStyle {
+    #[default]
+    Smb1,
+}
+
+impl PowerUpStyle {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Smb1 => "SMB1",
+        }
+    }
+
+    pub const ALL: [PowerUpStyle; 1] = [Self::Smb1];
+}
+
+/// Terrain bump behavior. `Auto` reads the asset name; unlabeled terrain stays solid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockTag {
+    #[default]
+    Auto,
+    Solid,
+    Question,
+    Brick,
+    Coin,
+}
+
+/// Item behavior. `Auto` reads the asset name (mushroom, flower, star, 1-up).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemTag {
+    #[default]
+    Auto,
+    Mushroom,
+    OneUp,
+    Flower,
+    Star,
+    Plain,
+}
+
+/// Hazard behavior. `Auto` reads the asset name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HazardTag {
+    #[default]
+    Auto,
+    Contact,
+    Spring,
+    Vine,
+    FireBar,
+    FireBarLong,
+    PipeDown,
+    PipeRight,
+    Podoboo,
+}
+
+/// Optional pipe exit. Missing on old cells and assets.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct WarpTarget {
+    #[serde(default)]
+    pub level_id: String,
+    #[serde(default)]
+    pub x: i32,
+    #[serde(default)]
+    pub y: i32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetKind {
@@ -138,6 +208,18 @@ pub struct Asset {
     /// Playback cue: jump, stomp, hurt, goal, music, or empty.
     #[serde(default)]
     pub cue: String,
+    /// SMB1 item behavior. Missing on old saves, so the name is used.
+    #[serde(default)]
+    pub item_tag: ItemTag,
+    /// Question, brick, coin block, or solid. Missing stays solid unless the name says otherwise.
+    #[serde(default)]
+    pub block_tag: BlockTag,
+    /// Spring, vine, fire bar, pipe, or contact. Missing uses the name.
+    #[serde(default)]
+    pub hazard_tag: HazardTag,
+    /// Default pipe exit for every cell that uses this part.
+    #[serde(default)]
+    pub warp: Option<WarpTarget>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -152,6 +234,9 @@ pub struct Cell {
     pub enemy_ai: Option<EnemyAiStyle>,
     #[serde(default)]
     pub archetype: EnemyArchetype,
+    /// Pipe exit for this cell. Overrides the asset warp when set.
+    #[serde(default)]
+    pub warp: Option<WarpTarget>,
 }
 
 impl Default for Cell {
@@ -163,6 +248,7 @@ impl Default for Cell {
             layer: Layer::Main,
             enemy_ai: None,
             archetype: EnemyArchetype::Walker,
+            warp: None,
         }
     }
 }
@@ -229,9 +315,12 @@ pub struct Project {
     /// Fallback enemy brain when a course has not chosen one. Default is SMB1.
     #[serde(default)]
     pub enemy_ai: EnemyAiStyle,
-    /// Playable character controller. Default is SMB1; Nesticles keeps the float sim.
+    /// Playable character controller. Old saves load as SMB1 - Mario.
     #[serde(default)]
     pub character_physics: CharacterPhysics,
+    /// Power-up rules. Old saves load as SMB1.
+    #[serde(default)]
+    pub power_up_style: PowerUpStyle,
 }
 
 impl Project {
@@ -244,7 +333,8 @@ impl Project {
             nodes: Vec::new(),
             start_node_id: String::new(),
             enemy_ai: EnemyAiStyle::Smb1Nes,
-            character_physics: CharacterPhysics::Smb1Nes,
+            character_physics: CharacterPhysics::Smb1Mario,
+            power_up_style: PowerUpStyle::Smb1,
         }
     }
 
