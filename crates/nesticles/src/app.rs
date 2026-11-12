@@ -120,6 +120,7 @@ pub struct NestApp {
     tx: Sender<Req>,
     rx: Receiver<Resp>,
     textures: HashMap<String, TextureHandle>,
+    brand_icon: TextureHandle,
     tex_epoch: u64,
     export_path: String,
     export_note: String,
@@ -149,6 +150,7 @@ impl NestApp {
         let project = demo_project();
         let paint_asset = project.assets.iter().find(|a| a.kind == AssetKind::Terrain).map(|a| a.id.clone());
         let active_style = project.styles.first().map(|style| style.id.clone()).unwrap_or_default();
+        let brand_icon = brand_texture(&cc.egui_ctx);
         Self {
             project,
             tab: Tab::Courses,
@@ -203,6 +205,7 @@ impl NestApp {
             tx,
             rx,
             textures: HashMap::new(),
+            brand_icon,
             tex_epoch: 1,
             export_path: "export/seed-spirit".into(),
             export_note: String::new(),
@@ -360,6 +363,12 @@ impl eframe::App for NestApp {
 impl NestApp {
     fn top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
+            ui.add(
+                egui::Image::from_texture(&self.brand_icon)
+                    .fit_to_exact_size(Vec2::splat(28.0))
+                    .texture_options(TextureOptions::NEAREST)
+                    .alt_text("Nesticles"),
+            );
             ui.label(RichText::new("Nesticles").font(serif(30.0)).color(ember()));
             ui.label(RichText::new("local workshop").font(serif(16.0)).color(paper()));
             if ui.button("Demo cartridge").clicked() {
@@ -1815,6 +1824,15 @@ impl NestApp {
     }
 }
 
+fn brand_texture(ctx: &egui::Context) -> TextureHandle {
+    let icon = crate::icon::icon_data();
+    let image = egui::ColorImage::from_rgba_unmultiplied(
+        [icon.width as usize, icon.height as usize],
+        &icon.rgba,
+    );
+    ctx.load_texture("nesticles-icon", image, TextureOptions::NEAREST)
+}
+
 fn install_theme(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
     visuals.window_fill = Color32::from_rgb(36, 28, 25);
@@ -1949,7 +1967,7 @@ Audio can preview NES DPCM (least-significant bit first, starting at level 64, s
 
 Notes show ASCII strings and, for NES, a linear 6502 disassembly. That listing does not follow banks and it will read data as code. Scripts are custom per game. Physics is not extracted. Play uses an original engine: gravity, acceleration, friction, a variable jump, coyote time, a jump buffer, AABB tile collision, patrol enemies that turn at walls and ledges, a stomp, hazard and fall respawns, and a goal.
 
-Each cartridge becomes a style, the way a maker keeps several game looks in one tray. Dropping in another game adds a style and leaves the earlier parts where they are. A course has a home style, and the tray can show that style or every style. Drag a part onto the grid. Parts from more than one style can share a course. Play uses those parts with Nesticles physics, not the cartridge's code. The overworld nodes link to courses. Clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, and a web manifest. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
+Each cartridge becomes a style, the way a maker keeps several game looks in one tray. Dropping in another game adds a style and leaves the earlier parts where they are. A course has a home style, and the tray can show that style or every style. Drag a part onto the grid. Parts from more than one style can share a course. Play uses those parts with Nesticles physics, not the cartridge's code. The overworld nodes link to courses. Clearing a course unlocks the nodes it links to. Export writes index.html, the project JSON, a short readme, a web manifest, and icon.png for the browser tab and home screen. When the wasm player was built, the folder also contains the wasm and its JavaScript glue, and the page inlines them so opening the HTML file is enough to play. Adding that page to an Android home screen needs https.
 
 Nesticles does not replace tools that already understand compressed graphics or a particular game's formats:
 

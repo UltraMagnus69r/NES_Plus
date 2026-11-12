@@ -9,6 +9,7 @@ pub fn export_folder(dest: &Path, project: &Project) -> Result<String, String> {
     fs::create_dir_all(dest).map_err(|e| e.to_string())?;
     let project_json = serde_json::to_string_pretty(project).map_err(|e| e.to_string())?;
     fs::write(dest.join("project.json"), &project_json).map_err(|e| e.to_string())?;
+    fs::write(dest.join("icon.png"), crate::icon::PNG).map_err(|e| e.to_string())?;
     fs::write(dest.join("manifest.webmanifest"), manifest(project)).map_err(|e| e.to_string())?;
     fs::write(dest.join("README.txt"), readme(project, READY, FAILURE)).map_err(|e| e.to_string())?;
     let html = if READY {
@@ -34,6 +35,7 @@ pub fn export_folder(dest: &Path, project: &Project) -> Result<String, String> {
 }
 
 fn manifest(project: &Project) -> String {
+    let (width, height) = crate::icon::png_size();
     format!(
         r##"{{
   "name": {},
@@ -42,7 +44,15 @@ fn manifest(project: &Project) -> String {
   "display": "standalone",
   "background_color": "#1c1614",
   "theme_color": "#e07a3d",
-  "orientation": "landscape"
+  "orientation": "landscape",
+  "icons": [
+    {{
+      "src": "icon.png",
+      "sizes": "{width}x{height}",
+      "type": "image/png",
+      "purpose": "any"
+    }}
+  ]
 }}
 "##,
         serde_json::to_string(&project.name).unwrap_or_else(|_| "\"Nesticles\"".into())
@@ -63,13 +73,21 @@ fn readme(project: &Project, ready: bool, failure: &str) -> String {
 
 Controls: Arrow keys or A/D to move, Z, W, Up, or Space to jump. The on-screen buttons work with a finger.
 
-Add to Home Screen on Android needs a site served over https. A file open is enough to play; the home-screen install is the extra step that needs https.
+Add to Home Screen on Android needs a site served over https. A file open is enough to play; the home-screen install is the extra step that needs https. icon.png in this folder is the tab icon and the home-screen icon.
 
 This build is a browser player, not an Android package.
 ",
         name = project.name,
         player = player,
         failure = if ready { String::new() } else { format!("Build note: {failure}\n") }
+    )
+}
+
+fn icon_links() -> String {
+    let (width, height) = crate::icon::png_size();
+    format!(
+        r#"<link rel="icon" type="image/png" sizes="{width}x{height}" href="icon.png">
+  <link rel="apple-touch-icon" sizes="{width}x{height}" href="icon.png">"#
     )
 }
 
@@ -80,6 +98,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
     let wasm_js = serde_json::to_string(wasm_b64)
         .unwrap_or_else(|_| "\"\"".into())
         .replace('<', "\\u003c");
+    let icons = icon_links();
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
@@ -88,6 +107,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#e07a3d">
   <title>{title}</title>
+  {icons}
   <link rel="manifest" href="manifest.webmanifest">
   <style>
     html, body {{ margin: 0; height: 100%; background: #1c1614; color: #f4ece0; font-family: Georgia, "Liberation Serif", serif; }}
@@ -204,6 +224,7 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
 </html>
 "##,
         title = project.name,
+        icons = icons,
         project_js = project_js,
         wasm_js = wasm_js
     )
@@ -211,12 +232,14 @@ fn html_with_player(project: &Project, wasm_b64: &str) -> String {
 
 fn html_without_player(failure: &str) -> String {
     let safe = failure.replace('<', "");
+    let icons = icon_links();
     format!(
         r##"<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>Nesticles</title>
+  {icons}
   <link rel="manifest" href="manifest.webmanifest">
 </head>
 <body style="background:#1c1614;color:#f4ece0;font-family:Georgia,serif;padding:24px">
@@ -228,4 +251,31 @@ fn html_without_player(failure: &str) -> String {
 </html>
 "##
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nesticles_core::demo_project;
+
+    #[test]
+    fn export_embeds_the_program_icon() {
+        let dest = std::env::temp_dir().join(format!("nesticles-icon-export-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dest);
+        export_folder(&dest, &demo_project()).expect("export");
+        let png = fs::read(dest.join("icon.png")).expect("icon.png");
+        assert_eq!(png, crate::icon::PNG);
+        let html = fs::read_to_string(dest.join("index.html")).expect("index.html");
+        assert!(html.contains("rel=\"icon\""));
+        assert!(html.contains("rel=\"apple-touch-icon\""));
+        assert!(html.contains("href=\"icon.png\""));
+        assert!(!html.contains("href=\"http"));
+        let manifest_text = fs::read_to_string(dest.join("manifest.webmanifest")).expect("manifest");
+        let manifest: serde_json::Value = serde_json::from_str(&manifest_text).expect("manifest json");
+        assert_eq!(manifest["icons"][0]["src"], "icon.png");
+        assert_eq!(manifest["icons"][0]["type"], "image/png");
+        let (width, height) = crate::icon::png_size();
+        assert_eq!(manifest["icons"][0]["sizes"], format!("{width}x{height}"));
+        let _ = fs::remove_dir_all(&dest);
+    }
 }
