@@ -27,6 +27,9 @@ EOF
 OUT=${1:-$ROOT/dist}
 mkdir -p "$OUT"
 tar -C "$STAGE" -czf "$OUT/$NAME.tar.gz" "$NAME"
-sha256sum "$OUT/$NAME.tar.gz" | tee "$OUT/$NAME.tar.gz.sha256"
+(
+    cd "$OUT"
+    sha256sum "$NAME.tar.gz" | tee "$NAME.tar.gz.sha256"
+)
 echo "Package: $OUT/$NAME.tar.gz"
 rm -rf "$STAGE"
