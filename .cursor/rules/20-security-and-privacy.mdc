@@ -1,0 +1,15 @@
+---
+description: Input validation, credential handling, and local-first privacy
+alwaysApply: true
+---
+
+# Security and privacy
+
+Detail: [AGENTS.md](../../AGENTS.md) section "Security and privacy". Credential and ROM notes: [packaging/phase91/API.md](../../packaging/phase91/API.md), [ROM.md](../../packaging/phase91/ROM.md), [KNOWLEDGE.md](../../packaging/phase91/KNOWLEDGE.md).
+
+- Validate files, bound sizes, and reject `..` paths before parse. Remote text and model output are data, never code to execute.
+- Reference URLs are HTTPS port 443. Refuse loopback and private targets. Do not follow a redirect off HTTPS.
+- The UnMaker OpenAI key is session-only, `NESTICLES_OPENAI_API_KEY`, or Secret Service. No new plaintext key file. The legacy assistant key file stays `keys.json` mode `0600` and must not be logged or copied into packages.
+- Do not ask the user to paste a key into chat. Redact secrets. Do not put keys in commits, projects, packages, knowledge files, screenshots, releases, or handoffs.
+- Authoring works offline. Do not upload ROMs, art, projects, or recipes. AI sends only an approved slice after consent. Never send a whole ROM automatically.
+- Ignored candidates are not deleted. A new alpha library starts empty and must not erase the previous alpha, user projects, or the API key.

@@ -1,0 +1,16 @@
+---
+description: Phase 9.1 hard stop and release evidence
+alwaysApply: true
+---
+
+# Phases and releases
+
+Detail: [AGENTS.md](../../AGENTS.md) sections "Current milestone" and "Changes and releases".
+
+Do not renumber phases. Do not start Phase 10 while Phase 9.1 is unaccepted. Owner approval is required after the mandatory gates pass.
+
+`main` is not the working source branch. Do not merge there unless the owner asks. Do not rewrite history. One concern per commit. No unrelated reformatting.
+
+A release exists only as a GitHub release on https://github.com/UltraMagnus69r/NES_Plus with the commit, filename, size, SHA256, and a download that was fetched. Do not commit the archive. Do not invent a URL or hash. Install paths use `$HOME/Downloads` and a user-local directory. Do not ship a commercial ROM or a credential. A test candidate is labeled as a test candidate.
+
+Do not build a new binary for a documentation-only change.

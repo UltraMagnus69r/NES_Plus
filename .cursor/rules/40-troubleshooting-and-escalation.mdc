@@ -1,0 +1,16 @@
+---
+description: Stop repeating a failed approach and name the limitation
+alwaysApply: true
+---
+
+# Troubleshooting
+
+Detail: [AGENTS.md](../../AGENTS.md) section "When something fails".
+
+On a failure: keep the error, name the component, state one hypothesis, change one thing, and record the result.
+
+A retry needs new evidence or a different cause. Two equivalent failures means stop. Check wrong assumptions, the environment, dependencies, the data model, API limits, and permissions.
+
+State when the task needs a ROM, a key, Bazzite, a missing primitive, or Godot playback that this tree does not have. Do not hide a failed attempt because a later approach worked.
+
+Propose a large architecture change, with consequences, before coding it.

@@ -1,0 +1,18 @@
+---
+description: Honesty, engineering standards, and the Phase 9.1 hard stop
+alwaysApply: true
+---
+
+# Project principles
+
+Canonical policy: [AGENTS.md](../../AGENTS.md). These rules are the short form. If they disagree with AGENTS.md, follow AGENTS.md and fix the rule.
+
+Three requirements outrank speed:
+
+1. Do not report work that did not happen. Use IMPLEMENTED, TESTED, VERIFIED, PARTIALLY WORKING, UNVERIFIED, BLOCKED, FAILED, or NOT IMPLEMENTED.
+2. Write modular, documented, secure Rust. Protect user data.
+3. After two equivalent failures with no new evidence, stop repeating that approach and say what is blocked.
+
+A mock is not a live API. A homebrew ROM is not SMB1. A unit test is not the packaged GUI. XFCE is not Bazzite. A sprite is not a gameplay primitive. A URL is not a verified download.
+
+Phase 9.1 is the active milestone and is not accepted. Do not start Phase 10. Do not renumber the roadmap. Do not drop an acceptance item to make the phase look done.

@@ -1,0 +1,16 @@
+---
+description: What counts as tested, and how to report gates
+alwaysApply: true
+---
+
+# Testing and verification
+
+Detail: [AGENTS.md](../../AGENTS.md) section "Testing and reporting".
+
+A compile is not completion. Say which level ran: unit, integration, regression, packaged GUI, real-world acceptance, or release.
+
+- Drive a changed desktop control. A single screenshot is not a behavior check.
+- Do not claim `cargo test` was run unless it was run in this session.
+- SMB1, live OpenAI, and Bazzite stay BLOCKED or NOT TESTED until those inputs exist. Do not mark them PASS from a synthetic fixture or a mock.
+- Report each gate as PASS, FAIL, BLOCKED, NOT TESTED, or NOT APPLICABLE.
+- Handoffs include start and end commits, branch, PR, files, implemented and missing behavior, tests run and skipped, failures, environment limits, security notes, and the next legal step.

@@ -1,0 +1,16 @@
+---
+description: Module boundaries, persistent data, and documentation that matches the code
+alwaysApply: true
+---
+
+# Architecture and code quality
+
+Detail: [AGENTS.md](../../AGENTS.md) sections "Architecture that exists" and "Code".
+
+- UnMaker Lab authors and extracts. Maker Engine places and plays. Do not delete Maker blueprint editors until a tested UnMaker path replaces them.
+- Extend `anim.rs` and the project JSON. Do not add a second sprite system. Do not put API keys or ROM bytes in the project.
+- New behavior is a data graph. Patrol and jump labels are not a second physics model. Godot does not play Phase 9 clips.
+- Keep new logic in a focused module. Do not keep growing `app.rs` when a module can own it.
+- Serde defaults for new fields so old projects open. Explicit errors. Deterministic play steps. No new dependency unless the workspace cannot do the job.
+- `unsafe` needs a stated reason. Do not reformat the eight historical fmt-fail files unless the task is about that file.
+- Comment why: NES timing, collision, migrations, security limits, known gaps. Describe implemented behavior, not a plan, in docs.
