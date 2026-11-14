@@ -1,6 +1,7 @@
 //! Workshop project. Serialized as JSON. API keys never live in this struct.
 
 use crate::anim::{AnimSet, SpriteDef};
+use crate::behavior::BehaviorGraph;
 use crate::blueprint::Blueprint;
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::physics::CharacterPhysics;
@@ -469,6 +470,9 @@ pub struct Project {
     /// Named animations for those sprites. Old projects omit this.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub anim_sets: Vec<AnimSet>,
+    /// Restricted behavior graphs. Old projects omit this. Not scripts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behaviors: Vec<BehaviorGraph>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -499,6 +503,7 @@ impl Project {
             player_blueprints: Vec::new(),
             sprites: Vec::new(),
             anim_sets: Vec::new(),
+            behaviors: Vec::new(),
         }
     }
 

@@ -6,6 +6,10 @@ use eframe::egui::{Color32, Visuals};
 /// The desktop build opens fullscreen. A windowed fallback is not the default.
 pub const STARTS_FULLSCREEN: bool = true;
 
+/// Next visual pass: white field, light grey, dark text, a little red, large controls.
+/// Phase 9.1 does not restyle the screens that already shipped.
+pub const FUTURE_UI: &str = "clinical white, light grey, dark text, restrained red";
+
 pub const BAR_H: f32 = 56.0;
 pub const STRIP_H: f32 = 112.0;
 pub const RAIL_W: f32 = 80.0;
@@ -96,6 +100,12 @@ impl Workspace {
 pub enum UnmakerView {
     #[default]
     Tiles,
+    /// Shown every time the user flips into UnMaker Lab.
+    Home,
+    Review,
+    Puzzle,
+    Providers,
+    Behavior,
     Assemble,
     Animate,
     Audio,
