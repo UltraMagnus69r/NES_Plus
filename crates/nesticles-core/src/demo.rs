@@ -345,6 +345,8 @@ pub fn demo_project() -> Project {
         transitions: Vec::new(),
         terrain_brushes: Vec::new(),
         player_blueprints: Vec::new(),
+        sprites: Vec::new(),
+        anim_sets: Vec::new(),
     }
 }
 

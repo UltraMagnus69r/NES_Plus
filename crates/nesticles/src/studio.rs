@@ -43,7 +43,7 @@ pub fn visuals() -> Visuals {
     let mut visuals = Visuals::light();
     visuals.panel_fill = parchment();
     visuals.window_fill = parchment();
-    visuals.extreme_bg_color = sky();
+    visuals.extreme_bg_color = Color32::from_rgb(255, 248, 236);
     visuals.faint_bg_color = Color32::from_rgb(232, 214, 186);
     visuals.widgets.noninteractive.bg_fill = parchment();
     visuals.widgets.noninteractive.fg_stroke.color = ink();
@@ -96,6 +96,8 @@ impl Workspace {
 pub enum UnmakerView {
     #[default]
     Tiles,
+    Assemble,
+    Animate,
     Audio,
     Library,
     Notes,

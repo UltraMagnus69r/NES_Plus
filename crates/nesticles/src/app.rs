@@ -1,3 +1,6 @@
+#[path = "anim_ui.rs"]
+mod anim_ui;
+
 use crate::audio_out;
 use crate::export_game;
 use crate::keys::KeyFile;
@@ -69,6 +72,9 @@ struct PlayState {
     message: String,
     accum: f32,
     select: usize,
+    player_clock: nesticles_core::PoseClock,
+    hurt_latch: u8,
+    enemy_clocks: Vec<nesticles_core::PoseClock>,
 }
 
 enum Req {
@@ -204,6 +210,24 @@ pub struct NestApp {
     startup_frames: u8,
     palette_query: String,
     rail: &'static str,
+    sprite_id: Option<String>,
+    frame_id: Option<String>,
+    part_id: Option<String>,
+    set_id: Option<String>,
+    clip_id: Option<String>,
+    anim_zoom: f32,
+    anim_playing: bool,
+    anim_speed: f32,
+    preview_clock: nesticles_core::PoseClock,
+    preview_accum: f32,
+    anim_history: nesticles_core::AnimHistory,
+    clip_name: String,
+    sheet_w: u32,
+    sheet_h: u32,
+    sheet_margin: u32,
+    sheet_spacing: u32,
+    anim_dragging: bool,
+    anim_textures: HashMap<String, TextureHandle>,
 }
 
 #[derive(Clone)]
@@ -376,6 +400,24 @@ impl NestApp {
             startup_frames: 0,
             palette_query: String::new(),
             rail: "Paint",
+            sprite_id: None,
+            frame_id: None,
+            part_id: None,
+            set_id: None,
+            clip_id: None,
+            anim_zoom: 6.0,
+            anim_playing: false,
+            anim_speed: 1.0,
+            preview_clock: nesticles_core::PoseClock::default(),
+            preview_accum: 0.0,
+            anim_history: nesticles_core::AnimHistory::default(),
+            clip_name: "idle".into(),
+            sheet_w: 16,
+            sheet_h: 16,
+            sheet_margin: 0,
+            sheet_spacing: 0,
+            anim_dragging: false,
+            anim_textures: HashMap::new(),
         }
     }
 
@@ -527,6 +569,7 @@ impl NestApp {
                     hurt |= sim.events.hurt;
                     goal |= sim.events.goal;
                 }
+                anim_ui::advance_anim(play);
             }
             if play.accum > frame {
                 play.accum %= frame;
@@ -599,6 +642,16 @@ impl eframe::App for NestApp {
         self.poll(ctx);
         self.take_drops(ctx);
         self.refresh_dirty();
+        if self.startup_frames == 0 {
+            if let Ok(path) = std::env::var("NESTICLES_PROJECT") {
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => {
+                        self.open_project_text(&path, &text, Some(std::path::PathBuf::from(&path)))
+                    }
+                    Err(err) => self.status = format!("Could not open {path}: {err}"),
+                }
+            }
+        }
         self.ensure_fullscreen(ctx);
         self.handle_close_request(ctx);
         self.handle_shortcuts(ctx);
@@ -614,6 +667,7 @@ impl eframe::App for NestApp {
             self.step_play(ctx);
         }
         self.ensure_textures(ctx);
+        self.warm_anim_textures(ctx);
         self.shell_bar(ctx);
         let playing = self.workspace == Workspace::Maker && self.tab == Tab::Play;
         if playing {
@@ -834,6 +888,9 @@ impl NestApp {
                         ui.selectable_value(&mut self.tag, kind, kind.label());
                     }
                 });
+            if ui.button("Assemble selected tiles").on_hover_text("Build a sprite from the stamp. A 2×2 stamp becomes a 16×16 sprite. The cartridge is not stored.").clicked() {
+                self.assemble_selected_tiles(page_origin);
+            }
             if ui.button("Add as part").clicked() {
                 if self.selected.is_none() {
                     self.status = "Select a tile first. The project was not changed.".into();
@@ -936,21 +993,57 @@ impl NestApp {
             self.page_tex = Some((sig, tex));
         }
         let scale = 3.0;
+        let columns = self.columns.max(1);
+        let rows = self.rows.max(1);
+        let selected = self.selected;
+        let stamp = self.stamp.max(1);
         if let Some((_, tex)) = &self.page_tex {
             let size = Vec2::new(w as f32 * scale, h as f32 * scale);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+            let cell = 8.0 * scale;
+            for ty in 0..rows {
+                for tx in 0..columns {
+                    let fill = if (tx + ty) % 2 == 0 {
+                        Color32::from_rgb(210, 196, 176)
+                    } else {
+                        Color32::from_rgb(236, 226, 210)
+                    };
+                    ui.painter().rect_filled(
+                        Rect::from_min_size(
+                            rect.min + Vec2::new(tx as f32 * cell, ty as f32 * cell),
+                            Vec2::splat(cell),
+                        ),
+                        0.0,
+                        fill,
+                    );
+                }
+            }
             ui.painter().image(
                 tex.id(),
                 rect,
                 Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
                 Color32::WHITE,
             );
+            if let Some(sel) = selected {
+                let tx = sel % columns;
+                let ty = sel / columns;
+                let stamp = stamp as f32;
+                ui.painter().rect_stroke(
+                    Rect::from_min_size(
+                        rect.min + Vec2::new(tx as f32 * cell, ty as f32 * cell),
+                        Vec2::splat(cell * stamp),
+                    ),
+                    0.0,
+                    egui::Stroke::new(2.0_f32, studio::amber()),
+                    egui::StrokeKind::Outside,
+                );
+            }
             if response.clicked() {
                 if let Some(pos) = response.interact_pointer_pos() {
                     let local = pos - rect.min;
                     let tx = (local.x / (8.0 * scale)) as usize;
                     let ty = (local.y / (8.0 * scale)) as usize;
-                    if tx < self.columns && ty < self.rows {
+                    if tx < columns && ty < rows {
                         self.selected = Some(ty * self.columns + tx);
                     }
                 }
@@ -2892,6 +2985,9 @@ impl NestApp {
                     message: "Choose a path".into(),
                     accum: 0.0,
                     select: 0,
+                    player_clock: nesticles_core::PoseClock::default(),
+                    hurt_latch: 0,
+                    enemy_clocks: Vec::new(),
                 });
                 self.tab = Tab::Play;
             }
@@ -3137,6 +3233,7 @@ impl NestApp {
                 self.dirty = true;
             }
             ui.label("The picture does not choose the physics. Collision uses the play hitbox. Super and Fire grow on the first play tick.");
+            self.player_animation_picker(ui);
         }
         let choices: Vec<(String, String)> = self
             .project
@@ -3443,6 +3540,9 @@ impl NestApp {
                     message: "Choose a path".into(),
                     accum: 0.0,
                     select: 0,
+                    player_clock: nesticles_core::PoseClock::default(),
+                    hurt_latch: 0,
+                    enemy_clocks: Vec::new(),
                 });
             }
         });
@@ -3618,18 +3718,53 @@ impl NestApp {
                 false,
             );
         }
-        for enemy in sim.enemies.iter().filter(|e| e.alive) {
-            self.blit(
-                &painter,
-                rect.min,
-                cam_x,
-                cam_y,
-                scale,
-                &enemy.asset_id,
-                enemy.x - 1.0,
-                enemy.y - 2.0,
-                enemy.dir < 0,
-            );
+        let enemy_draw: Vec<(String, String, String, f32, f32, bool, u32)> = sim
+            .enemies
+            .iter()
+            .enumerate()
+            .filter(|(_, enemy)| enemy.alive || enemy.defeat_ticks > 0)
+            .map(|(index, enemy)| {
+                let pose = play
+                    .enemy_clocks
+                    .get(index)
+                    .map(|clock| (clock.pose.clone(), clock.elapsed))
+                    .unwrap_or_else(|| (nesticles_core::enemy_pose(enemy.alive).to_string(), 0));
+                (
+                    enemy.blueprint_id.clone(),
+                    pose.0,
+                    enemy.asset_id.clone(),
+                    enemy.x - 1.0,
+                    enemy.y - 2.0,
+                    enemy.dir < 0,
+                    pose.1,
+                )
+            })
+            .collect();
+        for (blueprint_id, pose, asset_id, x, y, flip, elapsed) in enemy_draw {
+            let set_id = nesticles_core::set_for_blueprint(&self.project, &blueprint_id)
+                .map(|set| set.id.clone());
+            let drew = if let Some(set_id) = set_id {
+                self.blit_anim_frame(
+                    &painter,
+                    rect.min,
+                    cam_x,
+                    cam_y,
+                    scale,
+                    &set_id,
+                    &pose,
+                    if flip { -1 } else { 1 },
+                    elapsed,
+                    x,
+                    y,
+                )
+            } else {
+                false
+            };
+            if !drew {
+                self.blit(
+                    &painter, rect.min, cam_x, cam_y, scale, &asset_id, x, y, flip,
+                );
+            }
         }
         for marker in &sim.markers {
             let p = rect.min + Vec2::new((marker.x - cam_x) * scale, (marker.y - cam_y) * scale);
@@ -3641,17 +3776,45 @@ impl NestApp {
             );
         }
         if !sim.hide_player && !player_visual.is_empty() {
-            self.blit(
-                &painter,
-                rect.min,
-                cam_x,
-                cam_y,
-                scale,
-                &player_visual,
-                sim.player.x - 2.0,
-                sim.player.y - 2.0,
-                sim.player.facing < 0,
-            );
+            let pose = if play.player_clock.pose.is_empty() {
+                "idle".to_string()
+            } else {
+                play.player_clock.pose.clone()
+            };
+            let elapsed = play.player_clock.elapsed;
+            let facing = if sim.player.facing < 0 { -1 } else { 1 };
+            let set_id =
+                nesticles_core::set_for_player(&self.project, &level_id).map(|set| set.id.clone());
+            let drew = if let Some(set_id) = set_id {
+                self.blit_anim_frame(
+                    &painter,
+                    rect.min,
+                    cam_x,
+                    cam_y,
+                    scale,
+                    &set_id,
+                    &pose,
+                    facing,
+                    elapsed,
+                    sim.player.x - 2.0,
+                    sim.player.y - 2.0,
+                )
+            } else {
+                false
+            };
+            if !drew {
+                self.blit(
+                    &painter,
+                    rect.min,
+                    cam_x,
+                    cam_y,
+                    scale,
+                    &player_visual,
+                    sim.player.x - 2.0,
+                    sim.player.y - 2.0,
+                    sim.player.facing < 0,
+                );
+            }
         }
         painter.text(
             rect.min + Vec2::new(8.0, 6.0),
@@ -4003,6 +4166,13 @@ impl NestApp {
         self.paint_asset = None;
         self.lib_sel = None;
         self.textures.clear();
+        self.anim_textures.clear();
+        self.sprite_id = None;
+        self.frame_id = None;
+        self.part_id = None;
+        self.set_id = None;
+        self.clip_id = None;
+        self.anim_history = nesticles_core::AnimHistory::default();
         self.tex_epoch = self.tex_epoch.wrapping_add(1);
         self.terrain_undo.clear();
         self.terrain_redo.clear();
@@ -4081,6 +4251,13 @@ impl NestApp {
             Ok(project) => {
                 self.project = project;
                 self.textures.clear();
+                self.anim_textures.clear();
+                self.sprite_id = None;
+                self.frame_id = None;
+                self.part_id = None;
+                self.set_id = None;
+                self.clip_id = None;
+                self.anim_history = nesticles_core::AnimHistory::default();
                 self.tex_epoch = self.tex_epoch.wrapping_add(1);
                 self.level_sel = 0;
                 self.terrain_undo.clear();
@@ -4588,6 +4765,9 @@ impl NestApp {
             message: String::new(),
             accum: 0.0,
             select: 0,
+            player_clock: nesticles_core::PoseClock::default(),
+            hurt_latch: 0,
+            enemy_clocks: Vec::new(),
         });
         self.status = if faults.is_empty() {
             format!("Playing {}", level.name)
@@ -4762,10 +4942,22 @@ impl NestApp {
         }
         if !typing && self.tab != Tab::Play {
             if undo {
-                self.undo_terrain();
+                if matches!(self.unmaker, UnmakerView::Assemble | UnmakerView::Animate)
+                    && self.workspace == Workspace::Unmaker
+                {
+                    self.undo_anim();
+                } else {
+                    self.undo_terrain();
+                }
             }
             if redo {
-                self.redo_terrain();
+                if matches!(self.unmaker, UnmakerView::Assemble | UnmakerView::Animate)
+                    && self.workspace == Workspace::Unmaker
+                {
+                    self.redo_anim();
+                } else {
+                    self.redo_terrain();
+                }
             }
         }
         if play && !typing {
@@ -4995,6 +5187,12 @@ impl NestApp {
             .exact_height(studio::BOTTOM_H)
             .frame(navy_frame())
             .show(ctx, |ui| self.unmaker_dock(ui));
+        if self.unmaker == UnmakerView::Animate {
+            egui::TopBottomPanel::bottom("timeline")
+                .exact_height(108.0)
+                .frame(paper_frame())
+                .show(ctx, |ui| self.anim_timeline(ui));
+        }
         egui::TopBottomPanel::top("palette")
             .exact_height(studio::STRIP_H)
             .frame(paper_frame())
@@ -5004,7 +5202,10 @@ impl NestApp {
             .resizable(false)
             .frame(paper_frame())
             .show(ctx, |ui| self.unmaker_assets(ui));
-        if self.lib_sel.is_some() || self.selected.is_some() {
+        if self.lib_sel.is_some()
+            || self.selected.is_some()
+            || matches!(self.unmaker, UnmakerView::Assemble | UnmakerView::Animate)
+        {
             egui::SidePanel::right("inspect")
                 .exact_width(studio::INSPECTOR_W)
                 .resizable(false)
@@ -5282,6 +5483,7 @@ impl NestApp {
         } else {
             ui.label("No part on this cell.");
         }
+        self.cell_animation_picker(ui);
         if ui.button("Blueprint and terrain settings").clicked() {
             self.drawer_open = true;
         }
@@ -5301,6 +5503,8 @@ impl NestApp {
             }
             for (view, label) in [
                 (UnmakerView::Tiles, "Tiles"),
+                (UnmakerView::Assemble, "Sprite Assembly"),
+                (UnmakerView::Animate, "Animation"),
                 (UnmakerView::Library, "Library"),
                 (UnmakerView::Audio, "Audio"),
                 (UnmakerView::Notes, "Notes"),
@@ -5347,6 +5551,7 @@ impl NestApp {
                 }
                 ui.label(name);
             }
+            self.sprite_browser(ui);
         });
     }
 
@@ -5357,6 +5562,8 @@ impl NestApp {
                 ui.separator();
                 self.tiles(ui, ctx);
             }
+            UnmakerView::Assemble => self.assemble_view(ui, ctx),
+            UnmakerView::Animate => self.animate_view(ui, ctx),
             UnmakerView::Audio => self.audio(ui),
             UnmakerView::Library => self.library(ui),
             UnmakerView::Notes => self.notes(ui),
@@ -5367,6 +5574,10 @@ impl NestApp {
     }
 
     fn unmaker_inspector(&mut self, ui: &mut egui::Ui) {
+        if matches!(self.unmaker, UnmakerView::Assemble | UnmakerView::Animate) {
+            self.anim_inspector(ui);
+            return;
+        }
         ui.label(RichText::new("Selected").font(serif(22.0)));
         if let Some(id) = self.lib_sel.clone() {
             if let Some(asset) = self.project.asset(&id) {
@@ -5736,7 +5947,7 @@ fn provider_label(provider: &str) -> &'static str {
 }
 
 const GUIDE: &str = "\
-Nesticles Alpha 1. Launch the app, then use New, Open, and Save on the top bar. Import a PNG from Library, or open a cartridge and choose Add as part, then Use in Maker Engine. In Courses, create a Player Blueprint, pick Mario, Luigi, Toad, or Peach physics, paint terrain, place an enemy, and press Play. Save writes a project file. The cartridge is not needed again. Experimental Godot preview runs the supported subset only: walk, run, jump, solids, goombas, and goals. Pipes, items, hazards, power-ups, and other enemies stay in the Rust Play tab. A full Quick Start is shipped beside the Linux package.
+Nesticles Alpha 2. Launch the app, then use New, Open, and Save on the top bar. In UnMaker Lab, import a PNG or open a cartridge, assemble tiles into a sprite, and build named animation states. Open in Maker Engine, assign the animation on a Player Blueprint or a selected part, and press Play. Idle, walk, jump, fall, and hurt follow the player. Walk and defeat follow an enemy. Other named states stay in the project for later. Save writes a project file. The cartridge is not stored. Experimental Godot preview runs the supported subset only: walk, run, jump, solids, goombas, and goals. Godot does not play these animation clips yet. A full Quick Start is shipped beside the Linux package.
 
 Nesticles is a local workshop. You bring a cartridge image, page it as tiles, keep the pieces you tag, and build an original game around them. The desktop window is the editor and the player on Linux and Windows. The export folder is a browser player, so the same game opens in Chrome, Firefox, and Edge on Linux, Windows, and Android.
 

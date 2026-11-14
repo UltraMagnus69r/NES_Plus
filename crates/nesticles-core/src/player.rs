@@ -27,6 +27,9 @@ pub struct PlayerBlueprint {
     pub power: String,
     #[serde(default)]
     pub notes: String,
+    /// Animation set. Empty keeps the still picture. The physics preset is unchanged.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub anim_set_id: String,
 }
 
 fn default_facing() -> i32 {
@@ -73,6 +76,7 @@ pub fn new_player_blueprint(
         facing: 1,
         power: default_power(),
         notes: String::new(),
+        anim_set_id: String::new(),
     }
 }
 

@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod play_tests;
 
+pub mod anim;
 pub mod audio;
 pub mod blueprint;
 pub mod classify;
@@ -24,6 +25,15 @@ pub mod tools;
 pub mod transition;
 pub mod wav;
 
+pub use anim::{
+    add_clip, add_part, append_frame_to_clip, apply_standard_fallbacks, asset_image,
+    bind_blueprint, bind_player, check_canvas, clip_finished, composite, create_set, create_sprite,
+    delete_clip_frame, delete_frame, duplicate_frame, duplicate_part, enemy_pose, grid_parts,
+    missing_states, move_part, player_pose, present, rename_clip, reorder_clip, resolve_clip,
+    sample, select_frame, set_clip_facing, set_clip_ticks, set_for_blueprint, set_for_player,
+    set_part_layer, set_playback, slice_grid, write_project, Anchor, AnimHistory, AnimSet, Clip,
+    Part, Playback, PoseClock, Present, Slice, SpriteDef, SpriteFrame, SCHEMA,
+};
 pub use audio::{decode_brr, decode_dpcm_levels, decode_gb_wave, AudioHit};
 pub use blueprint::{
     assign_cell, compose_fixture, enemy_from_archetype, enemy_role, ensure_legacy_blueprints,

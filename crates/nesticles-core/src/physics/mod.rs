@@ -184,6 +184,11 @@ pub struct Enemy {
     pub dir: i32,
     pub alive: bool,
     pub asset_id: String,
+    /// Blueprint that owns this actor's animation. Empty when the cell had none.
+    pub blueprint_id: String,
+    /// Ticks left to show a defeat picture after `alive` becomes false.
+    /// Collision ignores a dead enemy. This only keeps the picture on screen.
+    pub defeat_ticks: u8,
 }
 
 impl Enemy {
@@ -312,6 +317,8 @@ impl Sim {
                         dir: if cell.x % 2 == 0 { 1 } else { -1 },
                         alive: true,
                         asset_id: asset.id.clone(),
+                        blueprint_id: cell.blueprint_id.clone().unwrap_or_default(),
+                        defeat_ticks: 0,
                     };
                     sim.enemy_rt.push(EnemyRuntime::spawn(
                         px_to_fp(enemy.x),
@@ -458,6 +465,12 @@ impl Sim {
     /// Entity kinds were chosen in [`crate::engine::res_1080p::World::from_level`].
     /// This function does not re-read asset names.
     pub fn tick_play(&mut self, preset: CharacterPhysics, power: PowerUpStyle, input: &Input) {
+        let was_alive: Vec<bool> = self.enemies.iter().map(|enemy| enemy.alive).collect();
+        for enemy in &mut self.enemies {
+            if !enemy.alive && enemy.defeat_ticks > 0 {
+                enemy.defeat_ticks -= 1;
+            }
+        }
         let Some(field) = self.field.as_mut() else {
             return;
         };
@@ -469,6 +482,11 @@ impl Sim {
         }
         field.tick(&pad_from(input));
         self.mirror_1080();
+        for (enemy, was) in self.enemies.iter_mut().zip(was_alive) {
+            if was && !enemy.alive {
+                enemy.defeat_ticks = 18;
+            }
+        }
     }
 
     /// The 1080p field `tick_play` steps. `None` before [`Self::from_level`].
@@ -638,6 +656,7 @@ impl Sim {
                 let falling = prev_vy > 40.0;
                 if falling && prev_bottom <= enemy.y + enemy.h * 0.55 {
                     enemy.alive = false;
+                    enemy.defeat_ticks = 18;
                     stomped = true;
                     self.events.stomp = true;
                 }
@@ -1021,6 +1040,8 @@ mod tests {
             dir: 1,
             alive: true,
             asset_id: "far".into(),
+            blueprint_id: String::new(),
+            defeat_ticks: 0,
         });
         sim.enemies.push(Enemy {
             x: 120.0,
@@ -1030,6 +1051,8 @@ mod tests {
             dir: 1,
             alive: true,
             asset_id: "near".into(),
+            blueprint_id: String::new(),
+            defeat_ticks: 0,
         });
         sim.ensure_enemy_runtime();
         let far_x = sim.enemies[0].x;
