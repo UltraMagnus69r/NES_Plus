@@ -156,6 +156,8 @@ fn physics_lands_on_a_floor_and_stomps_a_patrol_enemy() {
         dir: 1,
         alive: true,
         asset_id: "pebble".into(),
+        blueprint_id: String::new(),
+        defeat_ticks: 0,
     });
     // Walls keep the patrol in range while the player falls onto it.
     sim.solids.push(nesticles_core::Aabb {

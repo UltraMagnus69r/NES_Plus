@@ -221,6 +221,9 @@ pub struct Blueprint {
     pub legacy_role: LegacyRole,
     #[serde(default)]
     pub notes: String,
+    /// Animation set. Empty keeps the still picture. Physics does not read this.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub anim_set_id: String,
 }
 
 /// The legacy reading `World::from_level` uses for this asset and placement.
@@ -333,6 +336,7 @@ pub fn ensure_legacy_blueprints(project: &mut Project) {
                     organizational_label: OrganizationalLabel::from_kind(asset.kind),
                     legacy_role,
                     notes: String::new(),
+                    anim_set_id: String::new(),
                 },
             ));
         }
@@ -562,6 +566,7 @@ pub fn assign_cell(
                 organizational_label,
                 legacy_role: behavior.clone(),
                 notes: String::new(),
+                anim_set_id: String::new(),
             });
         }
         id

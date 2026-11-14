@@ -514,6 +514,7 @@ fn two_authored_blueprints_share_a_visual_without_copying_pixels() {
             warp: None,
         },
         notes: "breakable".into(),
+        anim_set_id: String::new(),
     });
     project.blueprints.push(Blueprint {
         id: "pipe-blue".into(),
@@ -527,6 +528,7 @@ fn two_authored_blueprints_share_a_visual_without_copying_pixels() {
             warp: None,
         },
         notes: "prize".into(),
+        anim_set_id: String::new(),
     });
     assert_ne!(project.blueprints[0].id, project.blueprints[1].id);
     assert_eq!(
@@ -728,6 +730,7 @@ fn authored_refs_and_future_fields_stay_put() {
         organizational_label: OrganizationalLabel::Terrain,
         legacy_role: LegacyRole::Inert,
         notes: "kept".into(),
+        anim_set_id: String::new(),
     });
     ensure_legacy_blueprints(&mut project);
     assert_eq!(
@@ -842,6 +845,7 @@ fn two_blueprints_share_art_and_differ_at_runtime() {
             warp: None,
         },
         notes: String::new(),
+        anim_set_id: String::new(),
     });
     project.blueprints.push(Blueprint {
         id: "brick".into(),
@@ -855,6 +859,7 @@ fn two_blueprints_share_art_and_differ_at_runtime() {
             warp: None,
         },
         notes: String::new(),
+        anim_set_id: String::new(),
     });
     project.levels[0].cells[0].blueprint_id = Some("walker".into());
     project.levels[0].cells[1].blueprint_id = Some("brick".into());
@@ -920,6 +925,7 @@ fn missing_blueprint_is_omitted_and_the_id_is_kept() {
             warp: None,
         },
         notes: String::new(),
+        anim_set_id: String::new(),
     });
     let world = World::from_level(&project, &project.levels[0], CharacterId::Mario);
     assert!(world.enemies.is_empty());

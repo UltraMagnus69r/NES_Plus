@@ -1,5 +1,6 @@
 //! Workshop project. Serialized as JSON. API keys never live in this struct.
 
+use crate::anim::{AnimSet, SpriteDef};
 use crate::blueprint::Blueprint;
 use crate::enemy_ai::{EnemyAiStyle, EnemyArchetype};
 use crate::physics::CharacterPhysics;
@@ -462,6 +463,12 @@ pub struct Project {
     /// Authored players. Old projects omit this and do not gain one on open.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub player_blueprints: Vec<PlayerBlueprint>,
+    /// Assembled sprites. Old projects omit this and stay still pictures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sprites: Vec<SpriteDef>,
+    /// Named animations for those sprites. Old projects omit this.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anim_sets: Vec<AnimSet>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -490,6 +497,8 @@ impl Project {
             transitions: Vec::new(),
             terrain_brushes: Vec::new(),
             player_blueprints: Vec::new(),
+            sprites: Vec::new(),
+            anim_sets: Vec::new(),
         }
     }
 
