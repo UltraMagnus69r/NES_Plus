@@ -1,4 +1,5 @@
 mod audio_out;
+mod openai;
 mod export_game;
 mod icon;
 mod keys;

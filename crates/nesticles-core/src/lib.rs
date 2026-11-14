@@ -6,6 +6,8 @@ mod play_tests;
 
 pub mod anim;
 pub mod audio;
+pub mod behavior;
+pub mod pipeline;
 pub mod blueprint;
 pub mod classify;
 pub mod codec;

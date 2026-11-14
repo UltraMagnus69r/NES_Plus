@@ -1,5 +1,7 @@
 #[path = "anim_ui.rs"]
 mod anim_ui;
+#[path = "pipeline_ui.rs"]
+mod pipeline_ui;
 
 use crate::audio_out;
 use crate::export_game;
@@ -75,6 +77,7 @@ struct PlayState {
     player_clock: nesticles_core::PoseClock,
     hurt_latch: u8,
     enemy_clocks: Vec<nesticles_core::PoseClock>,
+    boomerangs: Vec<nesticles_core::behavior::Boomerang>,
 }
 
 enum Req {
@@ -228,6 +231,7 @@ pub struct NestApp {
     sheet_spacing: u32,
     anim_dragging: bool,
     anim_textures: HashMap<String, TextureHandle>,
+    extract: pipeline_ui::ExtractUi,
 }
 
 #[derive(Clone)]
@@ -418,6 +422,7 @@ impl NestApp {
             sheet_spacing: 0,
             anim_dragging: false,
             anim_textures: HashMap::new(),
+            extract: pipeline_ui::ExtractUi::default(),
         }
     }
 
@@ -564,6 +569,9 @@ impl NestApp {
                 step_input.jump_pressed = input.jump_pressed && !jumped;
                 if let Some(sim) = play.sim.as_mut() {
                     sim.tick_play(preset, power, &step_input);
+                    for boom in &mut play.boomerangs {
+                        boom.step();
+                    }
                     jumped |= sim.events.jump;
                     stomped |= sim.events.stomp;
                     hurt |= sim.events.hurt;
@@ -640,6 +648,10 @@ impl eframe::App for NestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(studio::visuals());
         self.poll(ctx);
+        self.pump_extract();
+        if self.extract.job.is_some() {
+            ctx.request_repaint();
+        }
         self.take_drops(ctx);
         self.refresh_dirty();
         if self.startup_frames == 0 {
@@ -2988,6 +3000,7 @@ impl NestApp {
                     player_clock: nesticles_core::PoseClock::default(),
                     hurt_latch: 0,
                     enemy_clocks: Vec::new(),
+                    boomerangs: Vec::new(),
                 });
                 self.tab = Tab::Play;
             }
@@ -3543,6 +3556,7 @@ impl NestApp {
                     player_clock: nesticles_core::PoseClock::default(),
                     hurt_latch: 0,
                     enemy_clocks: Vec::new(),
+                    boomerangs: Vec::new(),
                 });
             }
         });
@@ -3663,6 +3677,22 @@ impl NestApp {
         if let Some(sim) = self.play.as_mut().and_then(|play| play.sim.as_mut()) {
             sim.update_view(rect.width() / scale, rect.height() / scale);
         }
+        let booms: Vec<(f32, f32, bool)> = self
+            .play
+            .as_ref()
+            .map(|play| {
+                play.boomerangs
+                    .iter()
+                    .map(|boom| {
+                        (
+                            boom.x,
+                            boom.y,
+                            boom.flight == nesticles_core::behavior::Flight::Done,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let Some(play) = self.play.as_ref() else {
             return;
         };
@@ -3765,6 +3795,17 @@ impl NestApp {
                     &painter, rect.min, cam_x, cam_y, scale, &asset_id, x, y, flip,
                 );
             }
+        }
+        for (x, y, done) in booms {
+            if done {
+                continue;
+            }
+            let p = rect.min + Vec2::new((x - cam_x) * scale, (y - cam_y) * scale);
+            painter.rect_filled(
+                Rect::from_min_size(p, Vec2::splat(6.0 * scale)),
+                1.0,
+                Color32::from_rgb(40, 90, 160),
+            );
         }
         for marker in &sim.markers {
             let p = rect.min + Vec2::new((marker.x - cam_x) * scale, (marker.y - cam_y) * scale);
@@ -4442,6 +4483,7 @@ impl NestApp {
             bytes,
             info,
         });
+        self.begin_extract_job();
         let style_id = self.project.adopt_style(&style_name, &name);
         self.active_style = style_id;
         self.tray_filter.clear();
@@ -4729,6 +4771,29 @@ impl NestApp {
             .unwrap_or_default()
     }
 
+    fn returning_projectiles(
+        project: &Project,
+        sim: &Sim,
+    ) -> Vec<nesticles_core::behavior::Boomerang> {
+        let mut out = Vec::new();
+        for enemy in &sim.enemies {
+            if enemy.blueprint_id.is_empty() {
+                continue;
+            }
+            for graph in &project.behaviors {
+                if graph.blueprint_id != enemy.blueprint_id {
+                    continue;
+                }
+                if let Some(boom) =
+                    nesticles_core::behavior::launch_from(graph, enemy.x, enemy.y, enemy.dir as f32)
+                {
+                    out.push(boom);
+                }
+            }
+        }
+        out
+    }
+
     fn start_level(&mut self, level_id: String, keep_cleared: bool) {
         let cleared = if keep_cleared {
             self.play
@@ -4746,6 +4811,7 @@ impl NestApp {
             return;
         };
         let sim = Sim::from_level(&self.project, &level);
+        let boomerangs = Self::returning_projectiles(&self.project, &sim);
         let faults = sim.blueprint_faults().to_vec();
         self.stop_music();
         if let Some(music_id) = &level.music_id {
@@ -4768,6 +4834,7 @@ impl NestApp {
             player_clock: nesticles_core::PoseClock::default(),
             hurt_latch: 0,
             enemy_clocks: Vec::new(),
+            boomerangs,
         });
         self.status = if faults.is_empty() {
             format!("Playing {}", level.name)
@@ -4984,7 +5051,11 @@ impl NestApp {
             self.stop_music();
             self.tab = Tab::Courses;
         }
-        self.workspace = self.workspace.flip();
+        let next = self.workspace.flip();
+        if next == Workspace::Unmaker {
+            self.unmaker = UnmakerView::Home;
+        }
+        self.workspace = next;
         self.drawer_open = false;
     }
 
@@ -5502,7 +5573,12 @@ impl NestApp {
                 self.unmaker = UnmakerView::Library;
             }
             for (view, label) in [
+                (UnmakerView::Home, "Home"),
                 (UnmakerView::Tiles, "Tiles"),
+                (UnmakerView::Review, "Review"),
+                (UnmakerView::Puzzle, "Puzzle"),
+                (UnmakerView::Providers, "AI Providers"),
+                (UnmakerView::Behavior, "Behavior"),
                 (UnmakerView::Assemble, "Sprite Assembly"),
                 (UnmakerView::Animate, "Animation"),
                 (UnmakerView::Library, "Library"),
@@ -5557,6 +5633,11 @@ impl NestApp {
 
     fn unmaker_center(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         match self.unmaker {
+            UnmakerView::Home => self.home_view(ui),
+            UnmakerView::Review => self.review_view(ui),
+            UnmakerView::Puzzle => self.puzzle_view(ui),
+            UnmakerView::Providers => self.providers_view(ui),
+            UnmakerView::Behavior => self.behavior_view(ui),
             UnmakerView::Tiles => {
                 self.cartridge(ui);
                 ui.separator();

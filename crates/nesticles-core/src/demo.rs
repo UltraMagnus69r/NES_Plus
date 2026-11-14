@@ -347,6 +347,7 @@ pub fn demo_project() -> Project {
         player_blueprints: Vec::new(),
         sprites: Vec::new(),
         anim_sets: Vec::new(),
+        behaviors: Vec::new(),
     }
 }
 
