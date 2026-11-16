@@ -646,7 +646,8 @@ impl eframe::App for NestApp {
         ctx.set_visuals(studio::visuals());
         self.poll(ctx);
         self.pump_extract();
-        if self.extract.job.is_some() {
+        self.pump_reference();
+        if self.extract.job.is_some() || self.reference_busy() {
             ctx.request_repaint();
         }
         self.take_drops(ctx);
@@ -5633,6 +5634,7 @@ impl NestApp {
             UnmakerView::Providers => self.providers_view(ui),
             UnmakerView::Behavior => self.behavior_view(ui),
             UnmakerView::Tiles => {
+                self.reference_banner(ui);
                 self.cartridge(ui);
                 ui.separator();
                 self.tiles(ui, ctx);
