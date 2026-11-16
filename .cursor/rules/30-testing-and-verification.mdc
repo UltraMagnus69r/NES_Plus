@@ -1,11 +1,11 @@
 ---
-description: What counts as tested, and how to report gates
+description: What counts as tested, and the required ChatGPT handoff
 alwaysApply: true
 ---
 
 # Testing and verification
 
-Detail: [AGENTS.md](../../AGENTS.md) section "Testing and reporting".
+Detail: [AGENTS.md](../../AGENTS.md) section "Testing and reporting", including "ChatGPT handoff".
 
 A compile is not completion. Say which level ran: unit, integration, regression, packaged GUI, real-world acceptance, or release.
 
@@ -13,4 +13,6 @@ A compile is not completion. Say which level ran: unit, integration, regression,
 - Do not claim `cargo test` was run unless it was run in this session.
 - SMB1, live OpenAI, and Bazzite stay BLOCKED or NOT TESTED until those inputs exist. Do not mark them PASS from a synthetic fixture or a mock.
 - Report each gate as PASS, FAIL, BLOCKED, NOT TESTED, or NOT APPLICABLE.
-- Handoffs include start and end commits, branch, PR, files, implemented and missing behavior, tests run and skipped, failures, environment limits, security notes, and the next legal step.
+- IMPLEMENTED, TESTED, VERIFIED, and ACCEPTED are different. A typed URL is not an analysis. Raw tiles are not an assembled character. An empty reopened project is not a saved cartridge session.
+
+End every substantial session with one fenced Markdown block titled `NESTICLES — [PHASE / TASK] — STATUS FOR CHATGPT`. That block is the handoff the owner pastes into ChatGPT. Use the twelve headings in AGENTS.md. Keep product failures visible. JSON may be saved as a separate validated file and never replaces this block. Do not print a key or ROM bytes.
