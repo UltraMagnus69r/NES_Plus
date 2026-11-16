@@ -33,11 +33,11 @@ use nesticles_core::terrain::{
 use nesticles_core::wav::{import_audio, read_pcm_wav, wav_from_samples};
 use nesticles_core::{
     add_entrance, add_return, assign_cell, clear_exit, clear_named_exit, compose_fixture,
-    demo_project, demo_rom, enemy_from_archetype, enemy_role, ensure_legacy_blueprints,
-    ensure_legacy_transitions, facing_label, gameplay_options, load_project_json,
-    new_player_blueprint, placed_fixture, placement_label, power_from_label, power_label,
-    remove_entrance, remove_return, resolve_player, resolve_warp_arrival, set_exit,
-    set_placement_warp, suggest_kind, update_entrance, LegacyBlock, LegacyHazard, LegacyItem,
+    enemy_from_archetype, enemy_role, ensure_legacy_blueprints, ensure_legacy_transitions,
+    facing_label, gameplay_options, load_project_json, new_player_blueprint, placed_fixture,
+    placement_label, power_from_label, power_label, remove_entrance, remove_return, resolve_player,
+    resolve_warp_arrival, set_exit, set_placement_warp, suggest_kind, update_entrance, LegacyBlock,
+    LegacyHazard, LegacyItem,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::process::Child;
@@ -290,24 +290,14 @@ impl NestApp {
                 }
             }
         });
-        let mut project = demo_project();
-        // In memory only. Seed Spirit's file on disk is not rewritten by opening the app.
-        ensure_legacy_blueprints(&mut project);
-        let paint_asset = project
-            .assets
-            .iter()
-            .find(|a| a.kind == AssetKind::Terrain)
-            .map(|a| a.id.clone());
-        let active_style = project
-            .styles
-            .first()
-            .map(|style| style.id.clone())
-            .unwrap_or_default();
+        let project = fresh_project();
+        let active_style = String::new();
         let brand_icon = brand_texture(&cc.egui_ctx);
         Self {
             project,
             tab: Tab::Courses,
-            status: "Seed Spirit is loaded. Moss Steps is on the board.".into(),
+            status: "This alpha starts empty. Open a cartridge you supply, or a project you saved."
+                .into(),
             rom: None,
             rom_path: String::new(),
             codec: Codec::Nes,
@@ -329,7 +319,7 @@ impl NestApp {
             disasm: Vec::new(),
             lib_sel: None,
             level_sel: 0,
-            paint_asset,
+            paint_asset: None,
             paint_start: false,
             active_style,
             tray_filter: "course".into(),
@@ -365,7 +355,7 @@ impl NestApp {
             )],
             chat_input: String::new(),
             assist_busy: false,
-            image_prompt: "an original seed spirit with a paper lantern, simple sprite, plain background".into(),
+            image_prompt: "an original character, simple sprite, plain background".into(),
             image_side: 32,
             image_kind: AssetKind::Item,
             image_busy: false,
@@ -375,7 +365,7 @@ impl NestApp {
             textures: HashMap::new(),
             brand_icon,
             tex_epoch: 1,
-            export_path: "export/seed-spirit".into(),
+            export_path: "export/project".into(),
             export_note: String::new(),
             godot_path: String::new(),
             godot_child: None,
@@ -389,7 +379,7 @@ impl NestApp {
             terrain_stroke: None,
             project_path: None,
             saved_stamp: None,
-            dirty: true,
+            dirty: false,
             stamp_at: Instant::now(),
             import_kind: AssetKind::Player,
             workspace: Workspace::Maker,
@@ -644,6 +634,13 @@ impl NestApp {
     }
 }
 
+/// The project a new process starts with. No sample pictures, courses, or sprites.
+fn fresh_project() -> Project {
+    let mut project = Project::blank("Untitled");
+    ensure_legacy_blueprints(&mut project);
+    project
+}
+
 impl eframe::App for NestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_visuals(studio::visuals());
@@ -738,9 +735,6 @@ impl NestApp {
             if ui.button("Save").clicked() {
                 self.save_project_quick();
             }
-            if ui.button("Demo cartridge").clicked() {
-                self.load_rom_bytes("seed-spirit.nes", demo_rom());
-            }
             if ui.button("API keys").clicked() {
                 self.keys_open = true;
             }
@@ -795,9 +789,6 @@ impl NestApp {
                     self.load_rom_path();
                 }
             }
-            if ui.button("Load demo cartridge").clicked() {
-                self.load_rom_bytes("seed-spirit.nes", demo_rom());
-            }
         });
         ui.horizontal(|ui| {
             ui.label("Path");
@@ -807,7 +798,7 @@ impl NestApp {
             }
         });
         let Some(rom) = self.rom.as_ref() else {
-            ui.label("No cartridge yet. The Seed Spirit style under Courses is already playable.");
+            ui.label("No cartridge yet. Open a cartridge you supply.");
             return;
         };
         let file_name = rom.name.clone();
@@ -842,7 +833,7 @@ impl NestApp {
         ui.label(RichText::new("Tiles").font(serif(26.0)));
         ui.label("Pick a tile, then add it as a part. The picture does not decide what it does in the game.");
         if self.rom.is_none() {
-            ui.label("Open a cartridge or the demo image first.");
+            ui.label("Open a cartridge you supply first.");
             return;
         }
         ui.horizontal_wrapped(|ui| {
@@ -5619,6 +5610,9 @@ impl NestApp {
             .map(|asset| (asset.id.clone(), asset.name.clone()))
             .collect();
         egui::ScrollArea::vertical().show(ui, |ui| {
+            if ids.is_empty() {
+                ui.label("No parts in this project.");
+            }
             for (id, name) in ids {
                 let on = self.lib_sel.as_deref() == Some(id.as_str());
                 if self.part_thumb(ui, &id, &name, on) {
@@ -6032,7 +6026,7 @@ Nesticles Alpha 2. Launch the app, then use New, Open, and Save on the top bar. 
 
 Nesticles is a local workshop. You bring a cartridge image, page it as tiles, keep the pieces you tag, and build an original game around them. The desktop window is the editor and the player on Linux and Windows. The export folder is a browser player, so the same game opens in Chrome, Firefox, and Edge on Linux, Windows, and Android.
 
-Open a file from Cartridge, or load the bundled demo image. Nesticles reads NES / iNES / NES 2.0 (including the trainer bit), Game Boy, Game Boy Color, Super NES LoROM and HiROM (including a 512-byte copier header), and Game Boy Advance. Anything it does not recognize still pages as tiles. Files are capped around 64 MB. Encrypted Switch, 3DS, and Wii U images are not decrypted.
+Open a cartridge you supply. Nesticles reads NES / iNES / NES 2.0 (including the trainer bit), Game Boy, Game Boy Color, Super NES LoROM and HiROM (including a 512-byte copier header), and Game Boy Advance. Anything it does not recognize still pages as tiles. Files are capped around 64 MB. Encrypted Switch, 3DS, and Wii U images are not decrypted. The app does not load a sample project.
 
 Tiles are uncompressed only: NES 2bpp with separated planes, Game Boy 2bpp with interleaved rows, Super NES 4bpp, Game Boy Advance 4bpp with the low nibble first, and 1bpp. The preview is nearest-neighbor. A deduped scan suggests empty, sprite-like, scenery-like, text-like, or noise. You still tag player, enemy, terrain, background, foreground, item, hazard, or goal. Cartridges do not label the player versus an enemy, so the tag has to be yours. Add as part converts that stamp into a drag-and-drop piece on the current style. Export PNG writes the picture without putting it on a course.
 
@@ -6097,6 +6091,27 @@ fn course_pointer(
 #[cfg(test)]
 mod course_pointer_tests {
     use super::{course_pointer, CoursePointer};
+
+    #[test]
+    fn launch_project_has_no_demo_content() {
+        let project = super::fresh_project();
+        assert!(project.assets.is_empty());
+        assert!(project.styles.is_empty());
+        assert!(project.levels.is_empty());
+        assert!(project.nodes.is_empty());
+        assert!(project.sprites.is_empty());
+        assert!(project.anim_sets.is_empty());
+        assert!(project.behaviors.is_empty());
+        assert_eq!(project.name, "Untitled");
+        assert!(project.blueprint_cutover);
+        let banned = [
+            "Pip", "Pebble", "Sod", "Hill", "Vine", "Seed", "Thorn", "Nest",
+        ];
+        assert!(project
+            .assets
+            .iter()
+            .all(|asset| !banned.contains(&asset.name.as_str())));
+    }
 
     #[test]
     fn a_terrain_brush_paints_even_after_a_player_picture_was_chosen() {

@@ -4,11 +4,11 @@ Nesticles is a local workshop for turning a cartridge image you already have int
 
 You open a ROM, page it as tiles, tag the pieces yourself, keep sounds, and paint courses. A small overworld links those courses. Clearing one unlocks the paths that leave it. The desktop window is the editor and the player. Export writes a folder you can open in Chrome, Firefox, or Edge, including on Android.
 
-The demo board is an original game called Seed Spirit. Pip is an original seed character. The sounds are synthesized here. Nothing in the repository is a commercial ROM, sprite sheet, or soundtrack.
+The window opens on an empty project. It does not load a sample game. Nothing in the repository is a commercial ROM, sprite sheet, or soundtrack.
 
 ## Flow
 
-1. **Cartridge.** Open a file, or load the demo image from the top bar. Nesticles reads NES / iNES / NES 2.0 (the 512-byte trainer flag included), Game Boy, Game Boy Color, Super NES LoROM and HiROM (a 512-byte copier header included), and Game Boy Advance. A file it does not recognize still opens as a tile pager. Files larger than 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted.
+1. **Cartridge.** Open a file you supply. Nesticles reads NES / iNES / NES 2.0 (the 512-byte trainer flag included), Game Boy, Game Boy Color, Super NES LoROM and HiROM (a 512-byte copier header included), and Game Boy Advance. A file it does not recognize still opens as a tile pager. Files larger than 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted.
 2. **Tiles.** The pager shows uncompressed tiles with nearest-neighbor scaling. Codecs are NES 2bpp (planes separated), Game Boy 2bpp (planes interleaved per row), Super NES 4bpp, Game Boy Advance 4bpp (low nibble first), and 1bpp. A deduped scan suggests empty, sprite-like, scenery-like, text-like, or noise. You tag the tile: player, enemy, terrain, background, foreground, item, hazard, or goal. Cartridges do not label the player versus an enemy, so the tag has to be yours. Add as part stores a PNG part on the current style. Export PNG writes that picture without placing it.
 3. **Audio.** Preview NES DPCM (least-significant bit first, start level 64, steps of 2, clamped to 0–126), Game Boy 16-byte wave tables, and Super NES BRR. Add a clip as a sound or as music on the same style. PCM WAV import is built in. Ogg and MP3 import when the decoder can open the file.
 4. **Notes.** ASCII strings, plus a linear 6502 listing for NES program bytes. The listing does not follow banks and it will read data as code. Scripts are custom per game, so they are not extracted. Physics is not extracted either. Play uses an original engine: gravity, acceleration, friction, a variable jump, coyote time, a jump buffer, AABB tile collision, patrol enemies that turn at walls and ledges, a stomp, hazard and fall respawns, and a goal.
@@ -34,7 +34,7 @@ Rebuild the browser player with `scripts/build-player.sh`, then rebuild the desk
 ## Layout
 
 ```
-crates/nesticles-core     project JSON, codecs, audio, disassembly, physics, tools, prompt guard, demo ROM
+crates/nesticles-core     project JSON, codecs, audio, disassembly, physics, tools, prompt guard, test fixtures
 crates/nesticles          eframe editor, in-app play, assistant, keys, image maker, export
 crates/nesticles-player   wasm32 cdylib. The same physics step as the desktop player
 ```

@@ -126,7 +126,7 @@ impl NestApp {
     pub(super) fn home_view(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("UnMaker Lab").font(serif(32.0)));
         ui.label(
-            "Disassembly, assembly, and new creations share this project and this alpha's library.",
+            "This session starts empty. Disassembly and new work stay here until you save them.",
         );
         ui.add_space(12.0);
         if ui

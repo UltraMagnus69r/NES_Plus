@@ -12,11 +12,11 @@ You can also run `./nesticles` from the extracted folder.
 
 ## 1. Open or save a project
 
-The window opens on the bundled Seed Spirit sample. **Save** writes a `.json` file. **Menu** has New, Open, and Exit to Desktop. Exit asks before discarding unsaved sprite or course edits.
+The window opens on an empty project. It does not load a sample. **Save** writes a `.json` file. **Menu** has New, Open, and Exit to Desktop. Exit asks before discarding unsaved sprite or course edits.
 
 ## 2. Assemble a sprite from cartridge tiles
 
-Open **UnMaker Lab**. Choose **Import ROM**, or type a path and choose **Load path**, or choose **Load demo cartridge**. On **Tiles**, choose **2×2**, click a tile, then **Assemble selected tiles**. The cartridge file is not copied into the project.
+Open **UnMaker Lab**. Choose **Import ROM**, or type a path and choose **Load path**. On **Tiles**, choose **2×2**, click a tile, then **Assemble selected tiles**. The cartridge file is not copied into the project. There is no demo cartridge button.
 
 On **Sprite Assembly**, drag a piece, nudge it, mirror it, or change its layer. **Undo** and **Redo** restore the sprite.
 

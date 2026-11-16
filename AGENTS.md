@@ -61,6 +61,8 @@ Workspaces:
 - **UnMaker Lab** extracts and authors. Home offers Disassemble a ROM, Open a saved creation, Start a new creation, and Continue current work when the session is dirty. It also has tiles, assembly, animation, review, the sprite puzzle, AI Providers, behavior graphs, audio, the library, notes, overworld, and export.
 - **Maker Engine** places parts, builds courses, and plays them. Existing blueprint editors stay. Do not delete them until an UnMaker authoring path replaces that job and the replacement is tested.
 
+The desktop app opens on an empty project and does not load the Seed Spirit sample.
+
 Shared project JSON holds assets, levels, styles, sprites, animation sets, blueprints, and behavior graphs. It must not hold API keys or ROM bytes. Sprites and animation sets are the Phase 9 model. Do not add a second animation system.
 
 The alpha library for this build is under the OS data directory at `nesticles/nesticles/alpha2-phase9.1/` (`AlphaLibrary` appends `nesticles/<alpha-id>` to the Nesticles data dir). Recipes and `.nasset` packages live there. A new alpha id starts empty and must not delete older alpha directories, exported packages, or project files.
