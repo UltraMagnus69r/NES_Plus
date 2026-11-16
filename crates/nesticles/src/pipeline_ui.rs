@@ -13,7 +13,17 @@ use nesticles_core::pipeline::{
     ExtractionSession, FailReason, Puzzle, ReviewStatus,
 };
 use nesticles_core::project::nid;
+use nesticles_core::reference::{self, RefClass, RefImage};
 use std::fs;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+
+enum RefEvent {
+    Line(String),
+    Page(Vec<RefImage>),
+    Image { index: usize, bytes: Vec<u8> },
+    Failed { detail: String },
+}
 
 pub struct ExtractUi {
     pub session: Option<ExtractionSession>,
@@ -32,6 +42,18 @@ pub struct ExtractUi {
     pub last_reference: Vec<u8>,
     pub ref_url: String,
     pub ref_note: String,
+    pub ref_log: Vec<String>,
+    pub ref_items: Vec<RefImage>,
+    pub ref_class: String,
+    pub ref_category: String,
+    pub ref_selected: Option<usize>,
+    pub ref_bytes: Vec<u8>,
+    pub ref_full: Option<(u32, u32)>,
+    pub ref_rgba: Option<(u32, u32, Vec<u8>)>,
+    pub ref_tex: Option<egui::TextureHandle>,
+    ref_rx: Option<mpsc::Receiver<RefEvent>>,
+    ref_cancel: Option<Arc<AtomicBool>>,
+    pub ref_error: Option<String>,
     pub consent_send: bool,
     pub puzzle: Option<Puzzle>,
     pub fail_reason: usize,
@@ -69,6 +91,18 @@ impl Default for ExtractUi {
             last_reference: Vec::new(),
             ref_url: String::new(),
             ref_note: "A reference URL is optional.".into(),
+            ref_log: vec!["A reference URL is optional.".into()],
+            ref_items: Vec::new(),
+            ref_class: "original".into(),
+            ref_category: "All".into(),
+            ref_selected: None,
+            ref_bytes: Vec::new(),
+            ref_full: None,
+            ref_rgba: None,
+            ref_tex: None,
+            ref_rx: None,
+            ref_cancel: None,
+            ref_error: None,
             consent_send: false,
             puzzle: None,
             fail_reason: 0,
@@ -210,16 +244,7 @@ impl NestApp {
         ui.label(
             "Reference URL is evidence, not an instruction. Continue without one if you have none.",
         );
-        ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.extract.ref_url).desired_width(420.0));
-            if ui.button("Add reference URL").clicked() {
-                self.fetch_reference();
-            }
-            if ui.button("Continue without reference").clicked() {
-                self.extract.ref_note = "Continuing with the ROM bytes only.".into();
-            }
-        });
-        ui.label(&self.extract.ref_note);
+        self.reference_panel(ui);
         ui.separator();
         let mut changed = session.clone();
         let mut act: Option<(usize, &'static str)> = None;
@@ -403,6 +428,11 @@ impl NestApp {
             "Canvas {}×{}  palette {}",
             puzzle.canvas_w, puzzle.canvas_h, puzzle.palette
         ));
+        self.reference_picture(ui);
+        if !puzzle.reference_note.is_empty() {
+            ui.label(&puzzle.reference_note);
+        }
+        ui.label("No automatic visual match. Place and correct ROM tiles yourself.");
         ui.horizontal(|ui| {
             if ui.button("Expand adjacent tiles").clicked() {
                 let count = self
@@ -455,6 +485,9 @@ impl NestApp {
         });
         for signal in &puzzle.signals {
             ui.label(signal);
+        }
+        if ui.button("Save local recipe").clicked() {
+            self.save_puzzle_recipe(&puzzle);
         }
         if ui.button("Submit correction").clicked() {
             if let Some(session) = self.extract.session.as_mut() {
@@ -589,20 +622,531 @@ impl NestApp {
         }
     }
 
-    fn fetch_reference(&mut self) {
-        let url = self.extract.ref_url.clone();
-        match openai::fetch_reference(&url) {
+    pub(super) fn reference_busy(&self) -> bool {
+        self.extract.ref_rx.is_some()
+    }
+
+    pub fn pump_reference(&mut self) {
+        let mut events = Vec::new();
+        let mut disconnected = false;
+        {
+            let Some(rx) = &self.extract.ref_rx else {
+                return;
+            };
+            loop {
+                match rx.try_recv() {
+                    Ok(event) => events.push(event),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
+            }
+        }
+        let mut done = disconnected && events.is_empty();
+        for event in events {
+            match event {
+                RefEvent::Line(line) => {
+                    self.extract.ref_note = line.clone();
+                    self.extract.ref_log.push(line);
+                }
+                RefEvent::Page(items) => {
+                    let count = items.len();
+                    self.extract.ref_items = items;
+                    let line = format!("Ready for reference selection. {count} image link(s).");
+                    self.extract.ref_note = line.clone();
+                    self.extract.ref_log.push(line);
+                    if count == 0 {
+                        self.extract.ref_error = Some(
+                            "No images were found. Import a local image, or try another page."
+                                .into(),
+                        );
+                    }
+                    done = true;
+                }
+                RefEvent::Image { index, bytes } => {
+                    self.accept_reference_bytes(index, bytes);
+                    done = true;
+                }
+                RefEvent::Failed { detail } => {
+                    self.extract.ref_error = Some(detail.clone());
+                    self.extract.ref_note = detail.clone();
+                    self.extract.ref_log.push(detail);
+                    done = true;
+                }
+            }
+        }
+        if done {
+            self.extract.ref_rx = None;
+            self.extract.ref_cancel = None;
+        }
+    }
+
+    fn reference_panel(&mut self, ui: &mut egui::Ui) {
+        let mut start = false;
+        ui.horizontal_wrapped(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.extract.ref_url).desired_width(420.0),
+            );
+            if field.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                start = true;
+            }
+            if ui.button("Add reference URL").clicked() {
+                start = true;
+            }
+            if ui.button("Continue without reference").clicked() {
+                self.extract.ref_note = "Continuing with the ROM bytes only.".into();
+                self.extract.ref_log
+                    .push("Continuing with the ROM bytes only.".into());
+            }
+            if ui.button("Import local image").clicked() {
+                self.import_local_reference();
+            }
+        });
+        if start {
+            self.start_reference_fetch();
+        }
+        for line in &self.extract.ref_log {
+            ui.label(line);
+        }
+        if let Some(err) = &self.extract.ref_error.clone() {
+            ui.label(RichText::new(err).strong());
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Retry").clicked() {
+                    self.start_reference_fetch();
+                }
+                if ui.button("Cancel").clicked() {
+                    self.cancel_reference();
+                    self.extract.ref_note = "The reference fetch was cancelled.".into();
+                    self.extract.ref_log
+                        .push("The reference fetch was cancelled.".into());
+                    self.extract.ref_error = None;
+                }
+                if ui.button("Import local image").clicked() {
+                    self.import_local_reference();
+                }
+            });
+        } else if self.extract.ref_rx.is_some() && ui.button("Cancel").clicked() {
+            self.cancel_reference();
+            self.extract.ref_note = "The reference fetch was cancelled.".into();
+            self.extract.ref_log
+                .push("The reference fetch was cancelled.".into());
+        }
+        if self.extract.ref_items.is_empty() {
+            return;
+        }
+        let original = self
+            .extract
+            .ref_items
+            .iter()
+            .filter(|item| item.class == RefClass::Original)
+            .count();
+        let custom = self
+            .extract
+            .ref_items
+            .iter()
+            .filter(|item| item.class == RefClass::Custom)
+            .count();
+        let chrome = self
+            .extract
+            .ref_items
+            .iter()
+            .filter(|item| item.class == RefClass::SiteChrome)
+            .count();
+        ui.label(format!(
+            "Original-game references {original}. Custom artwork {custom}. Site chrome {chrome}. Nothing has been downloaded yet."
+        ));
+        ui.horizontal_wrapped(|ui| {
+            for (id, label) in [
+                ("original", "Original"),
+                ("custom", "Custom"),
+                ("all", "All"),
+            ] {
+                if ui
+                    .selectable_label(self.extract.ref_class == id, label)
+                    .clicked()
+                {
+                    self.extract.ref_class = id.into();
+                }
+            }
+            for label in [
+                "All",
+                "Mario",
+                "Luigi",
+                "Characters",
+                "Enemies",
+                "Items",
+                "Blocks",
+                "Tiles",
+                "Backgrounds",
+                "Other",
+            ] {
+                if ui
+                    .selectable_label(self.extract.ref_category == label, label)
+                    .clicked()
+                {
+                    self.extract.ref_category = label.into();
+                }
+            }
+        });
+        let mut pick = None;
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .id_salt("reference-gallery")
+            .show(ui, |ui| {
+                for (index, item) in self.extract.ref_items.iter().enumerate() {
+                    if !self.reference_visible(item) {
+                        continue;
+                    }
+                    let on = self.extract.ref_selected == Some(index);
+                    let state = if on && self.extract.ref_full.is_some() {
+                        "preview ready"
+                    } else {
+                        "not downloaded"
+                    };
+                    let line = format!(
+                        "{}  {}  {}  {state}",
+                        item.title,
+                        item.category,
+                        item.class.label()
+                    );
+                    if ui.selectable_label(on, line).clicked() {
+                        pick = Some(index);
+                    }
+                }
+            });
+        if let Some(index) = pick {
+            self.start_reference_preview(index);
+        }
+        self.reference_picture(ui);
+        if let Some((w, h)) = self.extract.ref_full {
+            if let Some(index) = self.extract.ref_selected {
+                if let Some(item) = self.extract.ref_items.get(index) {
+                    ui.label(format!(
+                        "{}  {}  {}  {}×{}  preview ready  {}",
+                        item.title,
+                        item.category,
+                        item.class.label(),
+                        w,
+                        h,
+                        item.image_url
+                    ));
+                    ui.label(reference::attribution(item));
+                }
+            }
+        }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Open beside ROM tiles").clicked() {
+                self.show_reference_with_tiles();
+            }
+            if ui.button("Open guided puzzle").clicked() {
+                self.begin_reference_puzzle();
+            }
+        });
+    }
+
+    fn reference_visible(&self, item: &RefImage) -> bool {
+        let class_ok = match self.extract.ref_class.as_str() {
+            "custom" => item.class == RefClass::Custom,
+            "all" => true,
+            _ => matches!(item.class, RefClass::Original | RefClass::Local),
+        };
+        let cat = self.extract.ref_category.as_str();
+        let cat_ok = cat == "All"
+            || item.category == cat
+            || (cat == "Mario" && item.category == "Characters")
+            || (cat == "Luigi" && item.category == "Characters");
+        class_ok && cat_ok
+    }
+
+    pub(super) fn reference_banner(&mut self, ui: &mut egui::Ui) {
+        if self.extract.ref_rgba.is_none() {
+            return;
+        }
+        ui.label("Reference beside ROM tiles. The picture is not CHR.");
+        self.reference_picture(ui);
+        if let Some(index) = self.extract.ref_selected {
+            if let Some(item) = self.extract.ref_items.get(index) {
+                ui.label(reference::attribution(item));
+            }
+        }
+        if let Some(session) = &self.extract.session {
+            ui.label(format!(
+                "ROM payload {}  CHR tiles {}",
+                &session.report.payload_sha256[..16.min(session.report.payload_sha256.len())],
+                session.tiles.len()
+            ));
+        }
+        if ui.button("Open guided puzzle").clicked() {
+            self.begin_reference_puzzle();
+        }
+        ui.separator();
+    }
+
+    fn reference_picture(&mut self, ui: &mut egui::Ui) {
+        self.ensure_ref_tex(ui.ctx());
+        if let Some(tex) = &self.extract.ref_tex {
+            ui.add(egui::Image::from_texture(tex).max_width(420.0));
+        }
+    }
+
+    fn ensure_ref_tex(&mut self, ctx: &egui::Context) {
+        if self.extract.ref_tex.is_some() {
+            return;
+        }
+        let Some((w, h, rgba)) = &self.extract.ref_rgba else {
+            return;
+        };
+        let image = egui::ColorImage::from_rgba_unmultiplied([*w as usize, *h as usize], rgba);
+        self.extract.ref_tex = Some(ctx.load_texture(
+            "reference-preview",
+            image,
+            egui::TextureOptions::LINEAR,
+        ));
+    }
+
+    fn start_reference_fetch(&mut self) {
+        let url = self.extract.ref_url.trim().to_string();
+        if let Err(err) = nesticles_core::pipeline::allow_reference_url(&url) {
+            let detail = format!("Failed before Connecting. {err}");
+            self.extract.ref_error = Some(detail.clone());
+            self.extract.ref_note = detail.clone();
+            self.extract.ref_log.push(detail);
+            return;
+        }
+        self.cancel_reference();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        self.extract.ref_cancel = Some(cancel.clone());
+        self.extract.ref_rx = Some(rx);
+        self.extract.ref_items.clear();
+        self.extract.ref_selected = None;
+        self.extract.ref_bytes.clear();
+        self.extract.ref_full = None;
+        self.extract.ref_rgba = None;
+        self.extract.ref_tex = None;
+        self.extract.ref_error = None;
+        self.extract.ref_log = vec!["Connecting.".into()];
+        self.extract.ref_note = "Connecting.".into();
+        std::thread::spawn(move || {
+            match openai::fetch_reference_page(&url, &cancel) {
+                Err(err) => {
+                    let _ = tx.send(RefEvent::Failed {
+                        detail: format!("Failed during Page retrieval. {err}"),
+                    });
+                }
+                Ok(bytes) => {
+                    let _ = tx.send(RefEvent::Line(format!(
+                        "Page retrieved. {} bytes. Scripts were not run.",
+                        bytes.len()
+                    )));
+                    let _ = tx.send(RefEvent::Line("Inspecting page.".into()));
+                    let html = String::from_utf8_lossy(&bytes);
+                    let items = reference::scan_reference_html(&url, &html);
+                    let _ = tx.send(RefEvent::Line(format!(
+                        "Images discovered. {} reference image link(s).",
+                        items.len()
+                    )));
+                    let _ = tx.send(RefEvent::Page(items));
+                }
+            }
+        });
+    }
+
+    fn start_reference_preview(&mut self, index: usize) {
+        let Some(item) = self.extract.ref_items.get(index).cloned() else {
+            return;
+        };
+        if item.class == RefClass::Local {
+            if let Ok(bytes) = fs::read(&item.image_url) {
+                self.accept_reference_bytes(index, bytes);
+            } else {
+                let detail = "Failed during local import. The file could not be read.".to_string();
+                self.extract.ref_error = Some(detail.clone());
+                self.extract.ref_note = detail;
+            }
+            return;
+        }
+        self.cancel_reference();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        self.extract.ref_cancel = Some(cancel.clone());
+        self.extract.ref_rx = Some(rx);
+        self.extract.ref_error = None;
+        self.extract.ref_log.push("Preparing previews.".into());
+        self.extract.ref_note = "Preparing previews.".into();
+        let url = item.image_url;
+        std::thread::spawn(move || match openai::fetch_reference_image(&url, &cancel) {
             Ok(bytes) => {
-                let text = String::from_utf8_lossy(&bytes);
-                let images = openai::image_urls(&text);
-                self.extract.last_reference = bytes.clone();
-                self.extract.ref_note = format!(
-                    "Fetched {} bytes. Scripts were not run. {} image URL(s) can be reviewed.",
-                    bytes.len(),
-                    images.len()
+                let _ = tx.send(RefEvent::Image { index, bytes });
+            }
+            Err(err) => {
+                let _ = tx.send(RefEvent::Failed {
+                    detail: format!("Failed during Preparing previews. {err}"),
+                });
+            }
+        });
+    }
+
+    fn cancel_reference(&mut self) {
+        if let Some(flag) = &self.extract.ref_cancel {
+            flag.store(true, Ordering::Relaxed);
+        }
+        self.extract.ref_rx = None;
+        self.extract.ref_cancel = None;
+    }
+
+    fn accept_reference_bytes(&mut self, index: usize, bytes: Vec<u8>) {
+        let Some(item) = self.extract.ref_items.get(index).cloned() else {
+            return;
+        };
+        match nesticles_core::pngutil::reference_preview(&bytes, 480) {
+            Ok((w, h, rgba, full_w, full_h)) => {
+                self.extract.ref_selected = Some(index);
+                if bytes.starts_with(b"\x89PNG") {
+                    self.extract.last_reference = bytes.clone();
+                }
+                self.extract.ref_bytes = bytes;
+                self.extract.ref_full = Some((full_w, full_h));
+                self.extract.ref_rgba = Some((w, h, rgba));
+                self.extract.ref_tex = None;
+                self.extract.ref_error = None;
+                let line = format!(
+                    "Preparing previews. {} is {}×{}. Ready for reference selection.",
+                    item.title, full_w, full_h
+                );
+                self.extract.ref_note = line.clone();
+                self.extract.ref_log.push(line);
+            }
+            Err(err) => {
+                let detail = format!("Failed during image decoding. {err}");
+                self.extract.ref_error = Some(detail.clone());
+                self.extract.ref_note = detail.clone();
+                self.extract.ref_log.push(detail);
+            }
+        }
+    }
+
+    fn import_local_reference(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Image", &["png", "jpg", "jpeg", "gif"])
+            .pick_file()
+        else {
+            return;
+        };
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                let detail = format!("Failed during local import. {err}");
+                self.extract.ref_error = Some(detail.clone());
+                self.extract.ref_note = detail;
+                return;
+            }
+        };
+        let title = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Local image");
+        let item = reference::local_reference(title, &path.display().to_string());
+        self.extract.ref_items.push(item);
+        let index = self.extract.ref_items.len() - 1;
+        self.accept_reference_bytes(index, bytes);
+    }
+
+    fn show_reference_with_tiles(&mut self) {
+        if self.extract.ref_rgba.is_none() {
+            self.status = "Select a reference and wait for its preview.".into();
+            return;
+        }
+        if self.extract.session.is_none() {
+            self.status = "Open a ROM before comparing tiles. The reference is not CHR.".into();
+            return;
+        }
+        self.unmaker = UnmakerView::Tiles;
+        self.status = "The reference is beside the ROM tile grid. Matching is manual.".into();
+    }
+
+    fn begin_reference_puzzle(&mut self) {
+        if self.extract.ref_rgba.is_none() {
+            self.status = "Select a reference and wait for its preview.".into();
+            return;
+        }
+        let Some(index) = self.extract.ref_selected else {
+            self.status = "Select a reference image first.".into();
+            return;
+        };
+        let Some(item) = self.extract.ref_items.get(index).cloned() else {
+            return;
+        };
+        let Some(session) = self.extract.session.as_mut() else {
+            self.status = "Open a ROM before assembling tiles.".into();
+            return;
+        };
+        let made = reference::reference_candidate(&item);
+        let id = made.id.clone();
+        session.candidates.push(made);
+        let tile_count = session.tiles.len() as u32;
+        let candidate = session
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == id)
+            .unwrap();
+        let mut puzzle = puzzle_from(candidate, tile_count);
+        puzzle.reference_note = reference::attribution(&item);
+        puzzle
+            .signals
+            .push("No automatic visual match. Place ROM tiles by hand.".into());
+        self.extract.puzzle = Some(puzzle);
+        self.unmaker = UnmakerView::Puzzle;
+        self.status = format!(
+            "Guided puzzle opened for {}. ROM tiles stay in the CHR grid.",
+            item.title
+        );
+    }
+
+    fn save_puzzle_recipe(&mut self, puzzle: &Puzzle) {
+        if self.extract.session.is_none() {
+            self.status = "Open a ROM before saving a recipe.".into();
+            return;
+        }
+        if puzzle.placed.is_empty() {
+            self.status = "Place at least one ROM tile before saving a recipe.".into();
+            return;
+        }
+        let id = puzzle.candidate_id.clone();
+        {
+            let Some(session) = self.extract.session.as_mut() else {
+                return;
+            };
+            let Some(candidate) = session
+                .candidates
+                .iter_mut()
+                .find(|candidate| candidate.id == id)
+            else {
+                self.status = "That puzzle is not attached to a candidate.".into();
+                return;
+            };
+            if let Err(err) = puzzle_submit(candidate, puzzle) {
+                self.status = err;
+                return;
+            }
+        }
+        let Some(session) = self.extract.session.as_ref() else {
+            return;
+        };
+        let Some(candidate) = session.candidates.iter().find(|candidate| candidate.id == id) else {
+            return;
+        };
+        let recipe = recipe_from(&session.report, candidate);
+        let name = recipe.name.clone();
+        match library().save_recipe(&recipe) {
+            Ok(()) => {
+                self.status = format!(
+                    "Saved a local recipe for {name}. It was not shared and it is not an approved cartridge extract unless you approved it."
                 );
             }
-            Err(err) => self.extract.ref_note = err,
+            Err(err) => self.status = err,
         }
     }
 

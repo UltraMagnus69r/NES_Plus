@@ -113,7 +113,34 @@ Compiling is not completion.
 
 Report gates as PASS, FAIL, BLOCKED, NOT TESTED, or NOT APPLICABLE. An untested gate is not PASS.
 
-Every implementation handoff names the start and end commit, branch, PR, files, what was implemented, what was not, tests that ran, tests that did not, failures, environment limits, security notes, release facts when a release was made, remaining blockers, and the next legal step.
+Separate these words. They are not interchangeable.
+
+- **IMPLEMENTED:** the code exists.
+- **TESTED:** a defined test ran.
+- **VERIFIED:** the expected behavior was seen, with evidence.
+- **ACCEPTED:** the project owner approved the milestone.
+
+A compile does not prove the GUI. A mock does not prove live OpenAI. A typed reference URL was not analyzed. Raw tiles are not an assembled character. A character without its animations is not complete. Reopening an empty project file is not a persistent cartridge session. A cloud Ubuntu or XFCE session does not prove Fedora or Bazzite. Do not mark a milestone accepted without the owner's approval. Do not describe a known limitation as a successful feature.
+
+A correct ROM hash matters. It does not outweigh an incomplete character reconstruction. Say both when both are true. Example: Mario can be correctly reported as unresolved while complete Mario reconstruction is still failing.
+
+### ChatGPT handoff
+
+The owner pastes Cursor's final report into ChatGPT. Every substantial development, test, debug, audit, or release session ends with **one fenced Markdown block** titled `NESTICLES — [PHASE / TASK] — STATUS FOR CHATGPT`. That block is the handoff. It is plain text, self-contained, and copyable. Do not split it across blocks. Do not wrap it in JSON. JSON may be saved beside it for validation; it never replaces the Markdown.
+
+Use these headings, in order: Executive Summary, Execution Environment, Repository State, Work Completed, Functional Results, Test Results, Screenshots and Evidence, Known Defects and Limitations, Security and Privacy, Release Information, Acceptance Status, Exact Next Action.
+
+Name the real OS, and say whether the run was the Fedora laptop or a remote Ubuntu machine. Name the repository URL https://github.com/UltraMagnus69r/NES_Plus, branch, start commit, end commit, working tree, PR URL when one exists, and whether the change was committed or pushed. Do not invent a commit or a PR.
+
+Each test line starts with PASS, FAIL, BLOCKED, or NOT TESTED, then what was tested, what was observed, the evidence path, and the limit. Product failures stay near the top. Do not hide them under environment checks.
+
+For a defect, give the description, severity, how to reproduce it, the confirmed cause or a labeled hypothesis, the correction, and whether that correction was tested.
+
+Security notes say whether user data changed, whether a credential was read, whether a network call was made, and whether a ROM was modified or copied. Never print a key or ship ROM bytes.
+
+If no release was made, say so. Phase 9.1 stays OPEN until the owner accepts it. Do not start Phase 10.
+
+The next action is one prioritized step, labeled as a code correction, a missing test, a user verification, a missing dependency, or an architectural decision. Do not repeat an approach that already failed twice without new evidence.
 
 ## When something fails
 

@@ -7,6 +7,7 @@
 use base64::Engine;
 use nesticles_core::guard::redact_secrets;
 use nesticles_core::pipeline::{address_blocked, allow_reference_url, classify_api, ApiStatus};
+use nesticles_core::reference::{http_status_error, IMAGE_BYTE_LIMIT, PAGE_BYTE_LIMIT};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::net::ToSocketAddrs;
@@ -246,7 +247,34 @@ pub fn analyze_image(key: &str, model: &str, png: &[u8]) -> Result<Value, String
     parse_vision_response(&body)
 }
 
+#[allow(dead_code)]
 pub fn fetch_reference(url: &str) -> Result<Vec<u8>, String> {
+    fetch_limited(url, PAGE_BYTE_LIMIT, false, &std::sync::atomic::AtomicBool::new(false))
+}
+
+pub fn fetch_reference_image(
+    url: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, String> {
+    fetch_limited(url, IMAGE_BYTE_LIMIT, true, cancel)
+}
+
+pub fn fetch_reference_page(
+    url: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, String> {
+    fetch_limited(url, PAGE_BYTE_LIMIT, false, cancel)
+}
+
+fn fetch_limited(
+    url: &str,
+    limit: usize,
+    image_only: bool,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, String> {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("The fetch was cancelled.".into());
+    }
     allow_reference_url(url)?;
     let host = reference_host(url)?;
     let addrs = (host.as_str(), 443)
@@ -269,29 +297,25 @@ pub fn fetch_reference(url: &str) -> Result<Vec<u8>, String> {
         .map_err(|_| "Could not start the fetch.".to_string())?;
     let mut current = url.to_string();
     for _ in 0..3 {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("The fetch was cancelled.".into());
+        }
         let response = client
             .get(&current)
             .send()
-            .map_err(|_| "Network unavailable".to_string())?;
+            .map_err(|_| "Network unavailable. Failed during Connecting.".to_string())?;
         let status = response.status();
         if status.is_redirection() {
             let next = response
                 .headers()
                 .get(reqwest::header::LOCATION)
                 .and_then(|value| value.to_str().ok())
-                .ok_or("The redirect had no location.")?
-                .to_string();
-            let next = if next.starts_with("https://") {
-                next
-            } else {
-                return Err("A redirect left HTTPS. The fetch was stopped.".into());
-            };
-            allow_reference_url(&next)?;
-            current = next;
+                .ok_or("The redirect had no location.")?;
+            current = follow_redirect(&current, next)?;
             continue;
         }
         if !status.is_success() {
-            return Err(format!("The reference returned HTTP {}.", status.as_u16()));
+            return Err(http_status_error("Page retrieval", status.as_u16()));
         }
         let kind = response
             .headers()
@@ -299,23 +323,71 @@ pub fn fetch_reference(url: &str) -> Result<Vec<u8>, String> {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !kind.starts_with("image/")
+        if image_only {
+            if !kind.starts_with("image/") {
+                return Err(
+                    "Failed during image retrieval. The response was not an image.".into(),
+                );
+            }
+        } else if !kind.starts_with("image/")
             && !kind.starts_with("text/html")
             && !kind.starts_with("text/plain")
+            && !kind.is_empty()
         {
             return Err("That content type is not a page or an image.".into());
         }
-        let bytes = response
-            .bytes()
-            .map_err(|_| "The download was interrupted.".to_string())?;
-        if bytes.len() > 1_000_000 {
-            return Err("The reference is larger than 1 MB. It was not kept.".into());
-        }
-        return Ok(bytes.to_vec());
+        return read_capped(response, limit, cancel);
     }
     Err("Too many redirects. The fetch was stopped.".into())
 }
 
+pub fn follow_redirect(current: &str, location: &str) -> Result<String, String> {
+    let location = location.trim();
+    let next = if location.starts_with("https://") {
+        location.to_string()
+    } else if let Some(rest) = location.strip_prefix("//") {
+        format!("https://{rest}")
+    } else if location.starts_with('/') {
+        format!("https://{}{location}", reference_host(current)?)
+    } else {
+        return Err("A redirect left HTTPS. The fetch was stopped.".into());
+    };
+    allow_reference_url(&next)?;
+    Ok(next)
+}
+
+fn read_capped(
+    mut response: reqwest::blocking::Response,
+    limit: usize,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    if let Some(len) = response.content_length() {
+        if len > limit as u64 {
+            return Err("The reference is larger than the limit. It was not kept.".into());
+        }
+    }
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("The fetch was cancelled.".into());
+        }
+        let n = response
+            .read(&mut chunk)
+            .map_err(|_| "The download was interrupted.".to_string())?;
+        if n == 0 {
+            break;
+        }
+        if buf.len() + n > limit {
+            return Err("The reference is larger than the limit. It was not kept.".into());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    Ok(buf)
+}
+
+#[allow(dead_code)]
 pub fn image_urls(html: &str) -> Vec<String> {
     let mut urls = Vec::new();
     for part in html.split("src=\"").skip(1) {
@@ -376,8 +448,81 @@ mod tests {
     }
 
     #[test]
+    fn the_old_img_scan_does_not_see_sprite_sheet_links() {
+        let html = r#"<a href="https://cdn.example/enemies.png">Enemies</a><img src="https://cdn.example/logo.png">"#;
+        let urls = image_urls(html);
+        assert_eq!(urls, vec!["https://cdn.example/logo.png".to_string()]);
+    }
+
+    #[test]
     fn private_urls_are_not_fetched() {
         assert!(fetch_reference("https://127.0.0.1/tile").is_err());
         assert!(fetch_reference("http://example.com/a").is_err());
+        assert!(fetch_reference("https://10.1.2.3/tile").is_err());
+        assert!(fetch_reference("https://localhost/tile").is_err());
+    }
+
+    #[test]
+    fn redirects_stay_on_public_https() {
+        let next = follow_redirect("https://cdn.example/sprites/page", "/sheet.png").unwrap();
+        assert_eq!(next, "https://cdn.example/sheet.png");
+        let absolute =
+            follow_redirect("https://cdn.example/a", "https://cdn.example/b.png").unwrap();
+        assert_eq!(absolute, "https://cdn.example/b.png");
+        assert!(follow_redirect("https://cdn.example/a", "http://cdn.example/b.png").is_err());
+        assert!(follow_redirect("https://cdn.example/a", "https://127.0.0.1/b.png").is_err());
+        assert!(follow_redirect("https://cdn.example/a", "https://192.168.0.4/b.png").is_err());
+    }
+
+    #[test]
+    #[ignore = "live public page"]
+    fn the_public_smb_page_yields_a_selectable_reference() {
+        use std::sync::atomic::AtomicBool;
+        let url = "https://www.mariouniverse.com/sprites-nes-smb/";
+        let bytes = fetch_reference_page(url, &AtomicBool::new(false)).expect("page");
+        let html = String::from_utf8_lossy(&bytes);
+        let items = nesticles_core::reference::scan_reference_html(url, &html);
+        let original = items
+            .iter()
+            .filter(|item| item.class == nesticles_core::reference::RefClass::Original)
+            .count();
+        let custom = items
+            .iter()
+            .filter(|item| item.class == nesticles_core::reference::RefClass::Custom)
+            .count();
+        assert!(original > 0, "original {original} custom {custom}");
+        assert!(custom > 0, "custom art was not separated");
+        assert!(items.iter().any(|item| {
+            item.category == "Mario" && item.class == nesticles_core::reference::RefClass::Original
+        }));
+        assert!(items.iter().any(|item| item.category == "Enemies"));
+        let mario = items
+            .iter()
+            .find(|item| {
+                item.category == "Mario"
+                    && item.class == nesticles_core::reference::RefClass::Original
+            })
+            .unwrap();
+        let image = fetch_reference_image(&mario.image_url, &AtomicBool::new(false)).expect("image");
+        let preview = nesticles_core::pngutil::reference_preview(&image, 64).expect("decode");
+        eprintln!(
+            "LIVE page_bytes={} images={} original={} custom={} preview={}x{} url={}",
+            bytes.len(),
+            items.len(),
+            original,
+            custom,
+            preview.3,
+            preview.4,
+            mario.image_url
+        );
+        assert!(preview.3 > 0 && preview.4 > 0);
+    }
+
+    #[test]
+    fn a_missing_key_is_still_refused_without_a_reference() {
+        assert_eq!(
+            test_connection("", "gpt-4.1-mini"),
+            ApiStatus::InvalidCredentials
+        );
     }
 }

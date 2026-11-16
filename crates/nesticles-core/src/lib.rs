@@ -8,6 +8,7 @@ pub mod anim;
 pub mod audio;
 pub mod behavior;
 pub mod pipeline;
+pub mod reference;
 pub mod blueprint;
 pub mod classify;
 pub mod codec;

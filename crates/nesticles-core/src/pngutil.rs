@@ -26,6 +26,43 @@ pub fn rgba_to_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, Stri
     Ok(cursor.into_inner())
 }
 
+/// Decode one reference image and scale the preview. The full size is returned
+/// separately so the caller can say what was downloaded.
+#[cfg(feature = "png")]
+pub fn reference_preview(
+    bytes: &[u8],
+    max_edge: u32,
+) -> Result<(u32, u32, Vec<u8>, u32, u32), String> {
+    if bytes.len() > 4_000_000 {
+        return Err("The image is larger than 4 MB. It was not decoded.".into());
+    }
+    let image = image::load_from_memory(bytes)
+        .map_err(|_| "That file is not a readable PNG, JPEG, or GIF.".to_string())?;
+    let rgba = image.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    if w == 0 || h == 0 || w > 4096 || h > 4096 {
+        return Err("That image is outside the 4096 pixel decode limit.".into());
+    }
+    let pixels = rgba.into_raw();
+    let max_edge = max_edge.clamp(1, 1024);
+    if w.max(h) <= max_edge {
+        return Ok((w, h, pixels, w, h));
+    }
+    let nw = ((u64::from(w) * u64::from(max_edge)) / u64::from(w.max(h))).max(1) as u32;
+    let nh = ((u64::from(h) * u64::from(max_edge)) / u64::from(w.max(h))).max(1) as u32;
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    for y in 0..nh {
+        for x in 0..nw {
+            let sx = (x * w / nw).min(w - 1);
+            let sy = (y * h / nh).min(h - 1);
+            let s = ((sy * w + sx) * 4) as usize;
+            let d = ((y * nw + x) * 4) as usize;
+            out[d..d + 4].copy_from_slice(&pixels[s..s + 4]);
+        }
+    }
+    Ok((nw, nh, out, w, h))
+}
+
 #[cfg(feature = "png")]
 pub fn png_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
     let image = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
