@@ -132,7 +132,10 @@ impl NestApp {
         let name = rom.name.clone();
         let recipes = library().recipes().unwrap_or_default();
         let job = self.extract.job.as_mut().unwrap();
+        let stage_name = job.stage_name.clone();
+        self.studio.note_stage(&stage_name);
         job_advance(job, &bytes, &name, &recipes, &[]);
+        self.studio.note_stage(&job.stage_name);
         if job.session.is_some() || !job.error.is_empty() || job.cancelled {
             let done = self.extract.job.take().unwrap();
             if let Some(session) = done.session {
@@ -144,7 +147,10 @@ impl NestApp {
                     session.coverage.iter().filter(|row| row.assembly == "unresolved").count()
                 );
                 self.extract.session = Some(session);
-                self.unmaker = UnmakerView::Review;
+                self.studio.state.stage = super::unmaker::Stage::Investigate;
+                self.studio.state.investigated = true;
+                self.studio.note_stage("Ready for review");
+                self.studio.state.notice = self.status.clone();
             } else if !done.error.is_empty() {
                 self.status = done.error;
             }
@@ -418,7 +424,7 @@ impl NestApp {
         );
     }
 
-    pub(super) fn puzzle_view(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn puzzle_view(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Guided assembly").font(serif(28.0)));
         let Some(mut puzzle) = self.extract.puzzle.clone() else {
             ui.label("Open a candidate from the review queue.");
@@ -906,7 +912,7 @@ impl NestApp {
         ));
     }
 
-    fn start_reference_fetch(&mut self) {
+    pub(crate) fn start_reference_fetch(&mut self) {
         let url = self.extract.ref_url.trim().to_string();
         if let Err(err) = nesticles_core::pipeline::allow_reference_url(&url) {
             let detail = format!("Failed before Connecting. {err}");

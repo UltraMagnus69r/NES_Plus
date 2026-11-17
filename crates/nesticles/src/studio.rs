@@ -43,6 +43,53 @@ pub fn cream() -> Color32 {
     Color32::from_rgb(244, 239, 230)
 }
 
+pub fn unmaker_red() -> Color32 {
+    Color32::from_rgb(176, 42, 42)
+}
+
+pub fn unmaker_ink() -> Color32 {
+    Color32::from_rgb(28, 28, 28)
+}
+
+pub fn unmaker_line() -> Color32 {
+    Color32::from_rgb(220, 220, 220)
+}
+
+pub fn unmaker_paper() -> Color32 {
+    Color32::from_rgb(255, 255, 255)
+}
+
+pub fn unmaker_mist() -> Color32 {
+    Color32::from_rgb(244, 244, 244)
+}
+
+/// UnMaker Lab only. Maker Engine keeps [`visuals`].
+pub fn unmaker_visuals() -> Visuals {
+    let mut visuals = Visuals::light();
+    let ink = unmaker_ink();
+    visuals.panel_fill = unmaker_paper();
+    visuals.window_fill = unmaker_paper();
+    visuals.extreme_bg_color = unmaker_mist();
+    visuals.faint_bg_color = Color32::from_rgb(236, 236, 236);
+    visuals.widgets.noninteractive.bg_fill = unmaker_paper();
+    visuals.widgets.noninteractive.fg_stroke.color = ink;
+    visuals.widgets.inactive.bg_fill = unmaker_paper();
+    visuals.widgets.inactive.fg_stroke.color = ink;
+    visuals.widgets.inactive.bg_stroke.color = unmaker_line();
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 236, 236);
+    visuals.widgets.hovered.fg_stroke.color = ink;
+    visuals.widgets.active.bg_fill = unmaker_red();
+    visuals.widgets.active.fg_stroke.color = Color32::WHITE;
+    visuals.selection.bg_fill = Color32::from_rgb(255, 228, 228);
+    visuals.selection.stroke.color = unmaker_red();
+    visuals.hyperlink_color = unmaker_red();
+    visuals.override_text_color = Some(ink);
+    visuals.window_stroke.color = unmaker_line();
+    visuals.warn_fg_color = unmaker_red();
+    visuals.error_fg_color = unmaker_red();
+    visuals
+}
+
 pub fn visuals() -> Visuals {
     let mut visuals = Visuals::light();
     visuals.panel_fill = parchment();

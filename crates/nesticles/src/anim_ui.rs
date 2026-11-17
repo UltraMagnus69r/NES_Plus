@@ -200,7 +200,7 @@ impl NestApp {
         );
     }
 
-    pub(super) fn assemble_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    pub(crate) fn assemble_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
             if ui.button("New sprite").clicked() {
                 self.remember_anim();
@@ -404,7 +404,7 @@ impl NestApp {
         ));
     }
 
-    pub(super) fn animate_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    pub(crate) fn animate_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.advance_preview(ctx);
         ui.horizontal_wrapped(|ui| {
             if ui.button("New animation").clicked() {
