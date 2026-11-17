@@ -2,6 +2,8 @@
 mod anim_ui;
 #[path = "pipeline_ui.rs"]
 mod pipeline_ui;
+#[path = "unmaker/mod.rs"]
+mod unmaker;
 
 use crate::audio_out;
 use crate::export_game;
@@ -232,6 +234,7 @@ pub struct NestApp {
     anim_dragging: bool,
     anim_textures: HashMap<String, TextureHandle>,
     extract: pipeline_ui::ExtractUi,
+    studio: unmaker::StudioUi,
 }
 
 #[derive(Clone)]
@@ -413,6 +416,7 @@ impl NestApp {
             anim_dragging: false,
             anim_textures: HashMap::new(),
             extract: pipeline_ui::ExtractUi::default(),
+            studio: unmaker::StudioUi::default(),
         }
     }
 
@@ -643,7 +647,11 @@ fn fresh_project() -> Project {
 
 impl eframe::App for NestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_visuals(studio::visuals());
+        if self.workspace == Workspace::Unmaker {
+            ctx.set_visuals(studio::unmaker_visuals());
+        } else {
+            ctx.set_visuals(studio::visuals());
+        }
         self.poll(ctx);
         self.pump_extract();
         self.pump_reference();
@@ -661,6 +669,7 @@ impl eframe::App for NestApp {
                     Err(err) => self.status = format!("Could not open {path}: {err}"),
                 }
             }
+            self.apply_r1_tour(ctx);
         }
         self.ensure_fullscreen(ctx);
         self.handle_close_request(ctx);
@@ -685,7 +694,7 @@ impl eframe::App for NestApp {
         } else if self.workspace == Workspace::Maker {
             self.maker_shell(ctx);
         } else {
-            self.unmaker_shell(ctx);
+            self.unmaker_studio(ctx);
         }
         self.keys_window(ctx);
         self.image_window(ctx);
@@ -4399,7 +4408,11 @@ impl NestApp {
                     self.open_project_text(&name, &text, file.path.clone());
                 }
                 "nes" | "gb" | "gbc" | "gba" | "sfc" | "smc" | "bin" | "rom" => {
-                    self.load_rom_bytes(name, bytes);
+                    if self.workspace == Workspace::Unmaker {
+                        self.open_rom_for_unmaker(name, bytes);
+                    } else {
+                        self.load_rom_bytes(name, bytes);
+                    }
                 }
                 _ => {
                     self.status = format!(
@@ -4428,18 +4441,19 @@ impl NestApp {
         }
     }
 
-    fn load_rom_bytes(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
+    /// Keeps the cartridge in memory. Does not start an investigation or edit the project.
+    fn store_rom(&mut self, name: impl Into<String>, bytes: Vec<u8>) -> Option<String> {
         let name = name.into();
         if bytes.is_empty() {
             self.status = format!("{name} is empty. The project was not changed.");
-            return;
+            return None;
         }
         if bytes.len() > MAX_ROM_BYTES {
             self.status = format!(
                 "{name} is {} bytes. Nesticles stops at 64 MB. The project was not changed.",
                 bytes.len()
             );
-            return;
+            return None;
         }
         let info = detect_rom(&bytes, &name);
         if info.format == RomFormat::Nes && info.chr_len > 0 {
@@ -4448,7 +4462,7 @@ impl NestApp {
                 self.status = format!(
                     "{name} looks truncated. The NES header asks for graphics that are not in the file. The project was not changed."
                 );
-                return;
+                return None;
             }
         }
         self.codec = info.codec;
@@ -4464,17 +4478,34 @@ impl NestApp {
             "0"
         }
         .into();
-        let style_name = if info.title.trim().is_empty() {
-            name.clone()
-        } else {
-            info.title.clone()
-        };
-        let unknown = info.format == RomFormat::Unknown;
         self.rom = Some(RomSession {
             name: name.clone(),
             bytes,
             info,
         });
+        self.studio.tiles.clear();
+        Some(name)
+    }
+
+    fn load_rom_bytes(&mut self, name: impl Into<String>, bytes: Vec<u8>) {
+        let Some(name) = self.store_rom(name, bytes) else {
+            return;
+        };
+        let style_name = self
+            .rom
+            .as_ref()
+            .map(|rom| {
+                if rom.info.title.trim().is_empty() {
+                    name.clone()
+                } else {
+                    rom.info.title.clone()
+                }
+            })
+            .unwrap_or_else(|| name.clone());
+        let unknown = self
+            .rom
+            .as_ref()
+            .is_some_and(|rom| rom.info.format == RomFormat::Unknown);
         self.begin_extract_job();
         let style_id = self.project.adopt_style(&style_name, &name);
         self.active_style = style_id;
@@ -4955,6 +4986,9 @@ fn brand_texture(ctx: &egui::Context) -> TextureHandle {
 
 impl NestApp {
     fn ensure_fullscreen(&mut self, ctx: &egui::Context) {
+        if std::env::var_os("NESTICLES_R1_WINDOW").is_some() {
+            return;
+        }
         if !studio::STARTS_FULLSCREEN || self.startup_frames >= 8 {
             return;
         }
@@ -5046,6 +5080,9 @@ impl NestApp {
         let next = self.workspace.flip();
         if next == Workspace::Unmaker {
             self.unmaker = UnmakerView::Home;
+            self.studio.state.stage = unmaker::Stage::Home;
+            self.studio.state.show_manual = false;
+            self.studio.state.legacy_tools = false;
         }
         self.workspace = next;
         self.drawer_open = false;
@@ -5116,6 +5153,10 @@ impl NestApp {
     }
 
     fn shell_bar(&mut self, ctx: &egui::Context) {
+        if self.workspace == Workspace::Unmaker {
+            self.unmaker_top_bar(ctx);
+            return;
+        }
         egui::TopBottomPanel::top("shell")
             .exact_height(studio::BAR_H)
             .frame(navy_frame())

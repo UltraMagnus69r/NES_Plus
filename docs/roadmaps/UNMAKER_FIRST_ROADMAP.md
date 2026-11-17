@@ -11,7 +11,7 @@ R0 is this audit and these documents. It does not implement R1 or the Goomba sli
 | Step | Name | Done when |
 | --- | --- | --- |
 | R0 | Architecture rebaseline and code audit | The owner accepts the KEEP/REPAIR/REPLACE decision, the asset lifecycle, and the Goomba plan in this directory. |
-| R1 | UnMaker studio foundation | One workspace shell can import a ROM, show investigation progress, and keep reconstruction state in the project file. No new visual theme yet unless the owner asks. |
+| R1 | UnMaker studio foundation | One white UnMaker shell can import a ROM, show investigation progress, and review candidates. The extraction session stays in memory until R2 writes a sprite. The owner asked for this visual theme. |
 | R2 | Verified NES extraction and automatic reconstruction | The Goomba slice in [GOOMBA_VERTICAL_SLICE.md](../architecture/GOOMBA_VERTICAL_SLICE.md) passes on the owner's ROM: animated preview, approve, save, reopen, ROM no longer required. |
 | R3 | Intelligent issue resolution and local learning | One unresolved issue is presented with a suggestion. Accept, skip, and reject are stored. A rejected grouping is not offered again unchanged. |
 | R4 | Reference intelligence and AI integration | A selected reference can sit beside the reconstruction. AI runs only with a credential and an explicit send. |

@@ -8,7 +8,7 @@ The root [README.md](README.md) describes the original workshop. Later behavior 
 
 Historical Phase 9.1 is **not accepted**. Its published build is a test candidate. Do not drop a Phase 9.1 acceptance item to make that phase look finished. Do not renumber Phases 0–9.1. Do not start historical Phase 10. Phases 10–20 stay suspended.
 
-The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is documentation and audit only. Do not implement R1 or the Goomba slice until the owner accepts R0. Maker Engine feature work stays frozen until the UnMaker-to-Maker gate. Existing Maker behavior stays.
+The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is accepted. R1 is the UnMaker studio shell. Do not implement the Goomba reconstruction until the owner accepts R1. Maker Engine feature work stays frozen until the UnMaker-to-Maker gate. Existing Maker behavior stays. The white studio theme applies to UnMaker Lab only.
 
 Blocked until the owner runs them on their own machine:
 

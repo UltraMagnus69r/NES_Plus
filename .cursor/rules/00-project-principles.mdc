@@ -15,6 +15,6 @@ Three requirements outrank speed:
 
 A mock is not a live API. A homebrew ROM is not SMB1. A unit test is not the packaged GUI. XFCE is not Bazzite. A sprite is not a gameplay primitive. A URL is not a verified download.
 
-Historical Phase 9.1 is unaccepted. Do not renumber it or start Phase 10. The active sequence is the UnMaker-first roadmap in docs/roadmaps/UNMAKER_FIRST_ROADMAP.md. Do not implement R1 until the owner accepts R0.
+Historical Phase 9.1 is unaccepted. Do not renumber it or start Phase 10. The active sequence is the UnMaker-first roadmap in docs/roadmaps/UNMAKER_FIRST_ROADMAP.md. R0 is accepted. Do not implement the Goomba slice until the owner accepts R1.
 
 End a substantial session with one copyable Markdown handoff, `NESTICLES — [PHASE / TASK] — STATUS FOR CHATGPT`. JSON does not replace it. The full shape is in AGENTS.md under "ChatGPT handoff".
