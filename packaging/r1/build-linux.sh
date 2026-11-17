@@ -3,6 +3,8 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
+# Keep the release binary in this checkout. A sandbox target would not be the file copied below.
+export CARGO_TARGET_DIR="$ROOT/target"
 cargo build --release -p nesticles --offline
 STAGE=$(mktemp -d)
 NAME=Nesticles-R1-UnmakerStudio-linux-x86_64
