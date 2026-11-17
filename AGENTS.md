@@ -6,9 +6,9 @@ The root [README.md](README.md) describes the original workshop. Later behavior 
 
 ## Current milestone
 
-Phase 9.1 is the active milestone and a hard stop. It is **not accepted**. The published build is a test candidate, not a finished Phase 9.1 release.
+Historical Phase 9.1 is **not accepted**. Its published build is a test candidate. Do not drop a Phase 9.1 acceptance item to make that phase look finished. Do not renumber Phases 0–9.1. Do not start historical Phase 10. Phases 10–20 stay suspended.
 
-Do not start Phase 10. Do not renumber the roadmap. Do not drop a Phase 9.1 acceptance item to make the phase look finished. The project owner must explicitly approve advancement after the mandatory gates pass.
+The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is documentation and audit only. Do not implement R1 or the Goomba slice until the owner accepts R0. Maker Engine feature work stays frozen until the UnMaker-to-Maker gate. Existing Maker behavior stays.
 
 Blocked until the owner runs them on their own machine:
 

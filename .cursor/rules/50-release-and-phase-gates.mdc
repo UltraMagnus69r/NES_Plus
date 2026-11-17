@@ -7,7 +7,7 @@ alwaysApply: true
 
 Detail: [AGENTS.md](../../AGENTS.md) sections "Current milestone" and "Changes and releases".
 
-Do not renumber phases. Do not start Phase 10 while Phase 9.1 is unaccepted. Owner approval is required after the mandatory gates pass.
+Do not renumber historical phases. Do not start Phase 10. Phases 10–20 stay suspended. The UnMaker-first sequence is R0–R7; do not implement R1 until the owner accepts R0. Owner approval is required after the mandatory gates pass.
 
 `main` is not the working source branch. Do not merge there unless the owner asks. Do not rewrite history. One concern per commit. No unrelated reformatting.
 
