@@ -156,6 +156,66 @@ impl Group {
     }
 }
 
+/// An older utility, opened from the stage that owns that job.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StudioTool {
+    Tiles,
+    Audio,
+    Library,
+    Export,
+    Notes,
+    Overworld,
+    Providers,
+    Behavior,
+    Guide,
+}
+
+impl StudioTool {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tiles => "Source tiles",
+            Self::Audio => "Audio",
+            Self::Library => "Library",
+            Self::Export => "Export package",
+            Self::Notes => "Notes",
+            Self::Overworld => "Overworld",
+            Self::Providers => "AI providers",
+            Self::Behavior => "Behavior graph",
+            Self::Guide => "Guide",
+        }
+    }
+
+    pub fn note(self) -> &'static str {
+        match self {
+            Self::Tiles => "Raw cartridge tiles. Looking at them does not assemble a character.",
+            Self::Audio => "Sounds stored in the project. Playback here is inspection, not a new soundtrack.",
+            Self::Library => "Local alpha packages and recipes. Opening one does not reconstruct a sprite.",
+            Self::Export => "Package export still paints the first frame only. It is not a finished character.",
+            Self::Notes => "Notes stay in the project. They are not sent anywhere.",
+            Self::Overworld => "The existing overworld list. It does not build a new map by itself.",
+            Self::Providers => "Provider settings. This screen does not call a model unless you send a request.",
+            Self::Behavior => "Existing behavior graph. Patrol and jump labels are not a second physics model.",
+            Self::Guide => "Short explanations of the workshop. They do not change the cartridge.",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "tiles" | "source" => Some(Self::Tiles),
+            "audio" => Some(Self::Audio),
+            "library" => Some(Self::Library),
+            "export" => Some(Self::Export),
+            "notes" => Some(Self::Notes),
+            "overworld" => Some(Self::Overworld),
+            "providers" | "ai" => Some(Self::Providers),
+            "behavior" => Some(Self::Behavior),
+            "guide" => Some(Self::Guide),
+            "assemble" | "animate" => None,
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StudioState {
     pub stage: Stage,
@@ -170,10 +230,10 @@ pub struct StudioState {
     pub create_animate: bool,
     pub stage_log: Vec<String>,
     pub investigated: bool,
-    /// Previous tile, audio, library, and export screens. Not the studio path.
-    pub legacy_tools: bool,
     /// Display colors for CHR evidence. Not stored in the project.
     pub review_palette: ReviewPalette,
+    /// An existing utility opened inside the current stage. Not a second application.
+    pub tool: Option<StudioTool>,
 }
 
 impl Default for StudioState {
@@ -191,8 +251,8 @@ impl Default for StudioState {
             create_animate: false,
             stage_log: Vec::new(),
             investigated: false,
-            legacy_tools: false,
             review_palette: ReviewPalette::SpriteA,
+            tool: None,
         }
     }
 }

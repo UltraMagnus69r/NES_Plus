@@ -12,7 +12,7 @@ The owner has approved an UnMaker-first rebaseline. The active sequence is R0–
 
 Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
 
-R1.2 adds review-only display palettes and a clearer recovery when a reference site returns HTTP 403. Those palettes are not original colors. R2 reconstruction has not started.
+R1.2 adds review-only display palettes and a clearer recovery when a reference site returns HTTP 403. Those palettes are not original colors. R1.3 puts UnMaker and Maker on one white visual system and opens the old source utilities from the stage that owns them. R2 reconstruction has not started.
 
 Blocked until the owner runs them on their own machine:
 

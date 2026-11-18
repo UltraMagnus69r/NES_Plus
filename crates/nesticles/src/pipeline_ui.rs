@@ -703,7 +703,7 @@ impl NestApp {
         }
     }
 
-    fn reference_panel(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn reference_panel(&mut self, ui: &mut egui::Ui) {
         let mut start = false;
         ui.horizontal_wrapped(|ui| {
             let field = ui.add(
@@ -1334,6 +1334,47 @@ impl NestApp {
                 self.extract.api_status = err.clone();
                 self.status = err;
             }
+        }
+    }
+
+    pub(crate) fn workshop_files(&mut self, ui: &mut egui::Ui) {
+        ui.label("These are the existing package and knowledge files. They do not assemble a character.");
+        if ui.button("Import alpha packages").clicked() {
+            self.import_library_packages();
+        }
+        if ui.button("Export knowledge package").clicked() {
+            self.export_knowledge_file();
+        }
+        if ui.button("Import knowledge package").clicked() {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Knowledge", &["nknowledge", "json"])
+                .pick_file()
+            {
+                match std::fs::read_to_string(&path) {
+                    Ok(text) => self.import_knowledge_file(&text),
+                    Err(err) => self.status = err.to_string(),
+                }
+            }
+        }
+        if ui
+            .button("Export approved to Maker")
+            .on_hover_text("Copies approved candidates. A package still paints the first frame only.")
+            .clicked()
+        {
+            let Some(session) = self.extract.session.clone() else {
+                self.studio.state.notice = "There is no investigation to export.".into();
+                return;
+            };
+            let gate = export_gate(&session);
+            if gate.needs_confirmation && !self.extract.export_hold {
+                self.extract.export_hold = true;
+                self.studio.state.notice =
+                    "Ignored candidates stay out of an ordinary export. Press the button again to confirm."
+                        .into();
+                return;
+            }
+            self.finish_export(&session);
+            self.extract.export_hold = false;
         }
     }
 

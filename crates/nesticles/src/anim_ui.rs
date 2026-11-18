@@ -568,7 +568,7 @@ impl NestApp {
         }
     }
 
-    pub(super) fn anim_timeline(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn anim_timeline(&mut self, ui: &mut egui::Ui) {
         let Some(set_id) = self.set_id.clone() else {
             ui.label("The timeline appears while an animation is open.");
             return;
@@ -730,7 +730,7 @@ impl NestApp {
             .unwrap_or(0)
     }
 
-    pub(super) fn anim_inspector(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn anim_inspector(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Sprite").font(serif(22.0)));
         let sprite_ids: Vec<(String, String)> = self
             .project
@@ -1117,7 +1117,7 @@ impl NestApp {
         }
     }
 
-    pub(super) fn sprite_browser(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn sprite_browser(&mut self, ui: &mut egui::Ui) {
         if self.project.sprites.is_empty() && self.project.anim_sets.is_empty() {
             return;
         }
