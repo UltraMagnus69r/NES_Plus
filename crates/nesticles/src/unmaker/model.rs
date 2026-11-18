@@ -188,13 +188,25 @@ impl StudioTool {
     pub fn note(self) -> &'static str {
         match self {
             Self::Tiles => "Raw cartridge tiles. Looking at them does not assemble a character.",
-            Self::Audio => "Sounds stored in the project. Playback here is inspection, not a new soundtrack.",
-            Self::Library => "Local alpha packages and recipes. Opening one does not reconstruct a sprite.",
-            Self::Export => "Package export still paints the first frame only. It is not a finished character.",
+            Self::Audio => {
+                "Sounds stored in the project. Playback here is inspection, not a new soundtrack."
+            }
+            Self::Library => {
+                "Local alpha packages and recipes. Opening one does not reconstruct a sprite."
+            }
+            Self::Export => {
+                "Package export still paints the first frame only. It is not a finished character."
+            }
             Self::Notes => "Notes stay in the project. They are not sent anywhere.",
-            Self::Overworld => "The existing overworld list. It does not build a new map by itself.",
-            Self::Providers => "Provider settings. This screen does not call a model unless you send a request.",
-            Self::Behavior => "Existing behavior graph. Patrol and jump labels are not a second physics model.",
+            Self::Overworld => {
+                "The existing overworld list. It does not build a new map by itself."
+            }
+            Self::Providers => {
+                "Provider settings. This screen does not call a model unless you send a request."
+            }
+            Self::Behavior => {
+                "Existing behavior graph. Patrol and jump labels are not a second physics model."
+            }
             Self::Guide => "Short explanations of the workshop. They do not change the cartridge.",
         }
     }
@@ -234,6 +246,10 @@ pub struct StudioState {
     pub review_palette: ReviewPalette,
     /// An existing utility opened inside the current stage. Not a second application.
     pub tool: Option<StudioTool>,
+    /// Walk or defeat. Playback reads the assembled frames, not a separate animation.
+    pub preview_pose: String,
+    pub preview_playing: bool,
+    pub preview_elapsed: u32,
 }
 
 impl Default for StudioState {
@@ -253,6 +269,9 @@ impl Default for StudioState {
             investigated: false,
             review_palette: ReviewPalette::SpriteA,
             tool: None,
+            preview_pose: "walk".into(),
+            preview_playing: false,
+            preview_elapsed: 0,
         }
     }
 }
@@ -473,6 +492,8 @@ pub fn issue_queue(candidates: &[Candidate], coverage: &[CoverageRow]) -> Vec<Is
                 .unwrap_or_else(|| "No extraction candidate was created.".into()),
             next_action: if unresolved {
                 "There is no artwork to fix. Skip this, or leave it unresolved.".into()
+            } else if candidate.is_some_and(|candidate| candidate.character_id == "goomba") {
+                "Approve and save writes the assembled Goomba when this is the verified SMB1 payload. A review flag by itself does not save it.".into()
             } else {
                 "You can mark the candidate reviewed or place tiles by hand. Neither one publishes an animation.".into()
             },

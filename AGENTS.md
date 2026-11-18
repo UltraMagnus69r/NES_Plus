@@ -8,11 +8,11 @@ The root [README.md](README.md) describes the original workshop. Later behavior 
 
 Historical Phase 9.1 is **not accepted**. Its published build is a test candidate. Do not drop a Phase 9.1 acceptance item to make that phase look finished. Do not renumber Phases 0–9.1. Do not start historical Phase 10. Phases 10–20 stay suspended.
 
-The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is accepted. R1 is the UnMaker studio shell. Do not implement the Goomba reconstruction until the owner accepts R1. Maker Engine feature work stays frozen until the UnMaker-to-Maker gate. Existing Maker behavior stays. The white studio theme applies to UnMaker Lab only.
+The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is accepted. R1 is the UnMaker studio shell. R2 is the Goomba reconstruction and is not accepted. Do not start R3. Maker Engine feature work stays frozen until the UnMaker-to-Maker gate. Existing Maker behavior stays. The white studio theme applies to UnMaker Lab only.
 
 Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
 
-R1.2 adds review-only display palettes and a clearer recovery when a reference site returns HTTP 403. Those palettes are not original colors. R1.3 puts UnMaker and Maker on one white visual system and opens the old source utilities from the stage that owns them. R2 reconstruction has not started.
+R1.2 adds review-only display palettes and a clearer recovery when a reference site returns HTTP 403. Those palettes are not original colors. R1.3 puts UnMaker and Maker on one white visual system and opens the old source utilities from the stage that owns them. R2 assembles the verified SMB1 Goomba into a project sprite. The walk is two mirrored poses. Defeat is a separate non-looping pose. The colors are still the review palette, not a verified original NES palette. R2 is not accepted. R3 has not started.
 
 Blocked until the owner runs them on their own machine:
 

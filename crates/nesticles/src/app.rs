@@ -670,6 +670,7 @@ impl eframe::App for NestApp {
                 }
             }
             self.apply_r1_tour(ctx);
+            self.apply_r2_hooks();
         }
         self.place_window_if_needed(ctx);
         self.handle_close_request(ctx);
@@ -4319,6 +4320,7 @@ impl NestApp {
                 self.tab = Tab::Courses;
                 self.workspace = Workspace::Maker;
                 self.status = format!("Opened {label}");
+                self.present_saved_goomba();
             }
             Err(err) => {
                 self.status = format!(

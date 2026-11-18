@@ -23,7 +23,9 @@ R0 is this audit and these documents. It does not implement R1 or the Goomba sli
 
 Phase 9.1 remains unaccepted. Its test candidate does not satisfy R2.
 
-R1.3 is a shared-interface correction. UnMaker and Maker use one white visual system. The old Source Tools destination is no longer a separate shell. Its screens open from the stage that owns the job: source tiles and audio from Discover, notes and providers from Investigate, the behavior graph from Create, and library, export, and overworld from Save. Those screens are the existing tools. They do not reconstruct a sprite. R2 has not started.
+R2 assembles one verified SMB1 Goomba. The walk row `70 71 72 73` is one metasprite, and the second pose is that metasprite mirrored for 8 frames, which is the `FrameCounter` bit 3 test in this payload. Defeat is tile `EF` twice, with the right copy flipped, and it does not loop. Approval writes `SpriteDef` and `AnimSet` into the project and does not store the cartridge. The baked colors are the review palette and are not a verified original NES palette. R2 is not accepted. R3 has not started.
+
+R1.3 is a shared-interface correction. UnMaker and Maker use one white visual system. The old Source Tools destination is no longer a separate shell. Its screens open from the stage that owns the job: source tiles and audio from Discover, notes and providers from Investigate, the behavior graph from Create, and library, export, and overworld from Save. Those screens are the existing tools. They do not by themselves reconstruct a sprite.
 
 R1.2 is a review-usability correction on the studio. Source-tile previews can use display palettes. Those colors are for review and are not a verified original palette. A reference URL that returns HTTP 403 is described as a site block, with a way to continue, import a local image, or fetch a direct image. R1.2 does not reconstruct a sprite. R2 has not started.
 

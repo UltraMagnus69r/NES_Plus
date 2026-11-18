@@ -306,6 +306,44 @@ pub fn check_canvas(w: u32, h: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Add one frame whose only piece is the whole picture.
+/// The blank frame created with a new sprite is reused for the first picture.
+pub fn append_picture_frame(
+    project: &mut Project,
+    sprite_id: &str,
+    asset_id: &str,
+    ticks: u32,
+) -> Result<String, String> {
+    if project.asset(asset_id).is_none() {
+        return Err(format!(
+            "Picture {asset_id} is not in the project. The frame was not added."
+        ));
+    }
+    let reuse = {
+        let sprite = sprite_mut(project, sprite_id)?;
+        sprite.frames.len() == 1 && sprite.frames[0].parts.is_empty()
+    };
+    let frame_id = if reuse {
+        let sprite = sprite_mut(project, sprite_id)?;
+        sprite.frames[0].ticks = ticks.max(1);
+        sprite.frames[0].id.clone()
+    } else {
+        let sprite = sprite_mut(project, sprite_id)?;
+        if sprite.frames.len() >= MAX_FRAMES {
+            return Err(format!("A sprite can hold {MAX_FRAMES} frames."));
+        }
+        let id = nid("frame-");
+        sprite.frames.push(SpriteFrame {
+            id: id.clone(),
+            parts: Vec::new(),
+            ticks: ticks.max(1),
+        });
+        id
+    };
+    add_part(project, sprite_id, &frame_id, asset_id, 0, 0)?;
+    Ok(frame_id)
+}
+
 pub fn create_sprite(project: &mut Project, name: &str, w: u32, h: u32) -> Result<String, String> {
     check_canvas(w, h)?;
     if project.sprites.len() >= MAX_SPRITES {
