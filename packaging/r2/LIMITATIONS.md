@@ -2,7 +2,7 @@
 
 This archive is a test candidate. It is not an accepted build.
 
-The verified SMB1 Goomba is assembled from tiles 0x70–0x73. The second walk pose is the horizontal mirror used by this payload's graphics handler for 8 frames. Defeat is tile 0xEF twice, with the right copy flipped, and it plays once.
+The verified SMB1 Goomba is assembled from tiles 0x70–0x73. The second walk pose is the horizontal mirror used by this payload's graphics handler for 8 frames. Defeat is tile 0xEF twice, with the right copy flipped, and it plays once. Discover shows that reconstruction when the normal investigation finishes. A different cartridge is not given a Goomba.
 
 The baked colors are the review palette. They are not a verified original NES palette. Mario and Luigi are still unresolved. Other enemies are still proposals. R3 has not started.
 

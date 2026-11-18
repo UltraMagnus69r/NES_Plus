@@ -6,7 +6,7 @@ cd "$ROOT"
 export CARGO_TARGET_DIR="$ROOT/target"
 cargo build --release -p nesticles --offline
 STAGE=$(mktemp -d)
-NAME=Nesticles-R2-GoombaReconstruction-linux-x86_64
+NAME=Nesticles-R2.1-UserWorkflow-linux-x86_64
 DIR="$STAGE/$NAME"
 mkdir -p "$DIR"
 cp -f target/release/nesticles "$DIR/nesticles"
@@ -19,13 +19,14 @@ cp -f packaging/phase91/KNOWLEDGE.md "$DIR/KNOWLEDGE.md"
 chmod 755 "$DIR/nesticles"
 COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 cat > "$DIR/VERSION" <<EOF
-Nesticles R2 Goomba reconstruction test candidate
+Nesticles R2.1 user-workflow test candidate
 version 0.1.0
 commit ${COMMIT}
 platform linux-x86_64
 R2 is not accepted. R3 has not started. Phase 9.1 is not accepted. Phase 10 is not included.
-The verified SMB1 Goomba is assembled into a project sprite. The cartridge is not stored.
-Review colors are not a verified original palette. The window starts decorated.
+Investigation of the verified SMB1 cartridge shows the reconstructed Goomba in Discover.
+The cartridge is not stored. Review colors are not a verified original palette.
+The window starts decorated.
 EOF
 OUT=${1:-$ROOT/dist}
 mkdir -p "$OUT"
