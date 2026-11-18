@@ -385,70 +385,183 @@ pub fn discover_goomba(
     )
 }
 
+/// One animation state inside a form. The `id` matches the clip and pose name
+/// already stored on the sprite. The label is only display text.
+///
+/// A later separate object, such as a moving shell, would be another state or
+/// a linked id. R2.2 does not store that link and does not add gameplay.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CardCopy {
-    pub title: String,
-    pub detail: Vec<String>,
+pub struct CharacterStateView {
+    pub id: String,
+    pub label: String,
+    pub frames: usize,
+    pub looping: bool,
 }
 
-/// Gallery text for one candidate. A successful Goomba discovery replaces the
-/// unresolved copy. It does not read environment variables.
-pub fn card_copy(
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CharacterFormView {
+    pub id: String,
+    pub label: String,
+    pub states: Vec<CharacterStateView>,
+}
+
+/// How Review presents one character. This is not a second sprite or animation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CharacterSheet {
+    pub candidate_id: String,
+    pub name: String,
+    pub status: String,
+    pub saved: bool,
+    pub forms: Vec<CharacterFormView>,
+}
+
+impl CharacterSheet {
+    pub fn form_count(&self) -> usize {
+        self.forms.len()
+    }
+
+    pub fn state_count(&self) -> usize {
+        self.forms.iter().map(|form| form.states.len()).sum()
+    }
+}
+
+/// Display name for a pose id. Unknown ids stay as stored. This does not
+/// invent graphics for Mario forms or Koopa shell states.
+pub fn label_for_state(id: &str) -> String {
+    match id {
+        "walk" => "Walk".into(),
+        "defeat" => "Defeat / Stomped".into(),
+        other => other.to_string(),
+    }
+}
+
+fn goomba_states(found: &GoombaDiscovery) -> Vec<CharacterStateView> {
+    let mut states = vec![CharacterStateView {
+        id: "walk".into(),
+        label: label_for_state("walk"),
+        frames: found.walk_frames,
+        looping: true,
+    }];
+    if found.defeat_frames > 0 {
+        states.push(CharacterStateView {
+            id: "defeat".into(),
+            label: label_for_state("defeat"),
+            frames: found.defeat_frames,
+            looping: false,
+        });
+    }
+    states
+}
+
+pub fn form_label(id: &str) -> String {
+    if id.is_empty() || id == "default" {
+        "Default".into()
+    } else {
+        id.to_string()
+    }
+}
+
+/// The sheet exists only after assemble accepts this candidate.
+pub fn character_sheet(
+    candidate: &Candidate,
+    discovery: Option<&GoombaDiscovery>,
+    saved: bool,
+) -> Option<CharacterSheet> {
+    let found = discovery?;
+    if candidate.id != found.candidate_id || candidate.character_id != "goomba" {
+        return None;
+    }
+    if found.walk_frames < 2 {
+        return None;
+    }
+    Some(CharacterSheet {
+        candidate_id: candidate.id.clone(),
+        name: candidate.name.clone(),
+        status: "Reconstructed".into(),
+        saved,
+        forms: vec![CharacterFormView {
+            id: candidate.form.clone(),
+            label: form_label(&candidate.form),
+            states: goomba_states(found),
+        }],
+    })
+}
+
+pub fn approve_label(name: &str) -> String {
+    format!("Approve & Save {name}")
+}
+
+pub fn save_status_line(saved: bool) -> &'static str {
+    if saved {
+        "Saved in the project. Reopen does not need the cartridge."
+    } else {
+        "Not saved yet."
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GalleryCard {
+    pub title: String,
+    pub status: String,
+    pub summary: String,
+    pub needs_person: bool,
+    pub open_label: String,
+}
+
+/// Compact Discover text. A reconstructed Goomba is one card, not a workspace.
+pub fn gallery_card(
     item: &GalleryItem,
     is_goomba: bool,
     discovery: Option<&Result<GoombaDiscovery, String>>,
-) -> CardCopy {
+) -> GalleryCard {
     if let Some(Ok(found)) = discovery {
         if item.id == found.candidate_id {
-            let mut detail = vec![
-                format!(
-                    "{} walk frames, looping. {} defeat frame, plays once.",
-                    found.walk_frames, found.defeat_frames
-                ),
-                format!(
-                    "{}×{} assembled character. Play uses these frames.",
-                    found.width, found.height
-                ),
-            ];
-            if !item.needs_user {
-                detail.push("Saved in the project.".into());
-            } else {
-                detail
-                    .push("Approve & Save writes the project. The cartridge is not stored.".into());
-            }
-            return CardCopy {
-                title: format!("{} — Reconstructed", item.name),
-                detail,
+            let states = goomba_states(found);
+            let forms = 1;
+            let state_count = states.len();
+            let saved = !item.needs_user;
+            return GalleryCard {
+                title: item.name.clone(),
+                status: if saved {
+                    "Reconstructed · Saved".into()
+                } else {
+                    "Reconstructed".into()
+                },
+                summary: format!("{forms} form · {state_count} states"),
+                needs_person: false,
+                open_label: format!("Open {} in Review", item.name),
             };
         }
     }
     if is_goomba {
         if let Some(Err(err)) = discovery {
-            return CardCopy {
+            return GalleryCard {
                 title: item.name.clone(),
-                detail: vec![err.clone()],
+                status: err.clone(),
+                summary: "Reconstruction failed".into(),
+                needs_person: true,
+                open_label: format!("Open {} in Review", item.name),
             };
         }
     }
-    let mut detail = Vec::new();
-    if item.frame_labels.is_empty() {
-        detail.push("No proposed form".into());
-    } else {
-        detail.push(format!("Proposed labels: {}", item.frame_labels.join(", ")));
-    }
-    if item.needs_user {
-        detail.push("Needs a person".into());
-    } else if item.reconstructed {
-        detail.push("Saved in the project".into());
-    } else {
-        detail.push("Reviewed, not published".into());
-    }
-    if !item.reconstructed {
-        detail.push("Artwork not reconstructed".into());
-    }
-    CardCopy {
+    let states = item.frame_labels.len();
+    let forms = usize::from(states > 0);
+    GalleryCard {
         title: item.name.clone(),
-        detail,
+        status: if item.needs_user {
+            "Artwork not reconstructed · Needs a person".into()
+        } else if item.reconstructed {
+            "Saved in the project".into()
+        } else {
+            "Reviewed, not published".into()
+        },
+        summary: if forms == 0 {
+            "No form yet".into()
+        } else {
+            format!("{forms} form · {states} states")
+        },
+        needs_person: item.needs_user,
+        open_label: format!("Open {} in Review", item.name),
     }
 }
 
@@ -834,20 +947,54 @@ mod tests {
         assert_eq!(discovery.defeat_frames, 1);
         assert_eq!((discovery.width, discovery.height), (16, 24));
         let items = gallery_items(&session.candidates, &session.coverage);
-        let goomba = items.iter().find(|item| item.name == "Goomba").unwrap();
-        let copy = card_copy(goomba, true, Some(&Ok(discovery.clone())));
-        assert_eq!(copy.title, "Goomba — Reconstructed");
-        let text = copy.detail.join(" ");
-        assert!(text.contains("2 walk frames"));
-        assert!(!text.contains("Artwork not reconstructed"));
-        assert!(!text.contains("Needs a person"));
-        assert!(!text.contains("No reconstructed frames"));
-        let mario = items.iter().find(|item| item.name == "Mario").unwrap();
-        let mario_copy = card_copy(mario, false, Some(&Ok(discovery)));
-        assert!(mario_copy
-            .detail
+        let goomba_item = items.iter().find(|item| item.name == "Goomba").unwrap();
+        let card = gallery_card(goomba_item, true, Some(&Ok(discovery.clone())));
+        assert_eq!(card.title, "Goomba");
+        assert_eq!(card.status, "Reconstructed");
+        assert_eq!(card.summary, "1 form · 2 states");
+        assert!(!card.needs_person);
+        assert_eq!(card.open_label, "Open Goomba in Review");
+        assert!(!card.status.contains("Artwork not reconstructed"));
+        let candidate = session
+            .candidates
             .iter()
-            .any(|line| line.contains("Artwork not reconstructed")));
+            .find(|candidate| candidate.id == discovery.candidate_id)
+            .unwrap();
+        let sheet = character_sheet(candidate, Some(&discovery), false).unwrap();
+        assert_eq!(sheet.form_count(), 1);
+        assert_eq!(sheet.state_count(), 2);
+        assert_eq!(sheet.forms[0].label, "Default");
+        assert_eq!(sheet.forms[0].states[0].label, "Walk");
+        assert_eq!(sheet.forms[0].states[0].frames, 2);
+        assert!(sheet.forms[0].states[0].looping);
+        assert_eq!(sheet.forms[0].states[1].label, "Defeat / Stomped");
+        assert_eq!(sheet.forms[0].states[1].frames, 1);
+        assert!(!sheet.forms[0].states[1].looping);
+        assert_eq!(approve_label(&sheet.name), "Approve & Save Goomba");
+        assert_eq!(save_status_line(false), "Not saved yet.");
+        let saved = character_sheet(candidate, Some(&discovery), true).unwrap();
+        assert!(saved.saved);
+        assert_eq!(
+            save_status_line(true),
+            "Saved in the project. Reopen does not need the cartridge."
+        );
+        let mario = items.iter().find(|item| item.name == "Mario").unwrap();
+        let mario_card = gallery_card(mario, false, Some(&Ok(discovery)));
+        assert!(mario_card.status.contains("Artwork not reconstructed"));
+        assert!(mario_card.needs_person);
+        assert_eq!(mario_card.open_label, "Open Mario in Review");
+    }
+
+    #[test]
+    fn a_koopa_proposal_does_not_invent_shell_states() {
+        let koopa = nesticles_core::pipeline::smb1_profile()
+            .candidates
+            .into_iter()
+            .find(|candidate| candidate.character_id == "koopa")
+            .unwrap();
+        assert!(character_sheet(&koopa, None, false).is_none());
+        assert!(koopa.frames.iter().all(|frame| frame.state != "shell"));
+        assert_eq!(label_for_state("walk-b"), "walk-b");
     }
 
     #[test]
@@ -889,8 +1036,9 @@ mod tests {
         )
         .unwrap()
         .unwrap_err();
-        let copy = card_copy(&item[0], true, Some(&Err(failed.clone())));
-        assert_eq!(copy.detail, vec![failed]);
-        assert!(!copy.title.contains("Reconstructed"));
+        let card = gallery_card(&item[0], true, Some(&Err(failed.clone())));
+        assert_eq!(card.status, failed);
+        assert!(!card.status.contains("Reconstructed"));
+        assert_ne!(card.open_label, approve_label("Goomba"));
     }
 }

@@ -154,7 +154,7 @@ impl NestApp {
                 self.select_reconstructed_goomba();
                 if self.studio.state.selected.is_some() {
                     self.status.push_str(
-                        " Goomba is reconstructed. Open Discover to play the walk and save it.",
+                        " Goomba is reconstructed. Open it in Review to play its states and save it.",
                     );
                 }
                 self.studio.state.notice = self.status.clone();
