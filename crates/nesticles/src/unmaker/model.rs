@@ -58,14 +58,17 @@ impl ReviewPalette {
     }
 }
 
-/// One NES tile in the selected review colors. The tile count is 1, so the picture is 8×8.
-pub fn review_tile_rgba(indices: &[u8], palette: ReviewPalette) -> (u32, u32, Vec<u8>) {
-    indices_to_rgba(indices, 1, 1, &palette.colors(), true)
-}
-
 /// One NES tile as gray RGBA. The tile count is 1, so the picture is 8×8.
 pub fn gray_tile_rgba(indices: &[u8]) -> (u32, u32, Vec<u8>) {
-    review_tile_rgba(indices, ReviewPalette::GrayRamp)
+    indices_to_rgba(indices, 1, 1, &ReviewPalette::GrayRamp.colors(), true)
+}
+
+/// One NES tile in the selected review colors. The tile count is 1, so the picture is 8×8.
+pub fn review_tile_rgba(indices: &[u8], palette: ReviewPalette) -> (u32, u32, Vec<u8>) {
+    if palette == ReviewPalette::GrayRamp {
+        return gray_tile_rgba(indices);
+    }
+    indices_to_rgba(indices, 1, 1, &palette.colors(), true)
 }
 
 pub const NOT_RECONSTRUCTED: &str =
