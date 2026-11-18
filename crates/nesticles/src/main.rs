@@ -23,7 +23,10 @@ fn main() -> eframe::Result {
         // Geometry is `app.ron` under the OS data dir for `nesticles-window`.
         // That file is not the alpha library and is not deleted with a project.
         persist_window: true,
-        centered: true,
+        // Centering on X11 runs after restore and would drop the saved position.
+        // The first window is placed by the desktop. An off-screen restore is
+        // moved back in `place_window_if_needed`.
+        centered: false,
         ..Default::default()
     };
     eframe::run_native(
