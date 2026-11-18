@@ -1,6 +1,12 @@
 # Goomba vertical slice
 
-R0 plan only. Do not implement until the owner accepts R0.
+R2 implements the walk and defeat described below for the verified SMB1 payload. The R0 plan text stays as the record of that plan.
+
+The walk is not four separate tiles. `place` builds one 16×24 metasprite from `70 71 72 73`, leaving the top row empty because those slots are `FC`. The second walk pose is a horizontal mirror of that picture. This payload contains `A5 09 29 08 D0 06 A5 03 49 03`, which is the graphics handler test that mirrors the sprite for 8 frames. Defeat is `EF` on the left and `EF` flipped on the right, and the clip plays once.
+
+The baked colors are the review palette. CHR does not contain the PPU palette, so those colors are labeled "Review colors only — original palette not yet verified." The R0 note that said to use a gray ramp is superseded by that labeled review palette. Approval writes the sprite into the project. It does not store the ROM. R2 is not accepted.
+
+R0 plan:
 
 ## Proof
 

@@ -1,7 +1,7 @@
 //! Decisions for the UnMaker studio. Drawing lives in `view.rs`.
 //!
-//! A documented tile list is not a reconstructed sprite. R1 never reports a
-//! completed animation from a `Candidate`.
+//! A documented tile list is not a reconstructed sprite. Discover may say
+//! "Reconstructed" only after `reconstruct::assemble` accepts the candidate.
 
 use nesticles_core::codec::indices_to_rgba;
 use nesticles_core::pipeline::{Candidate, CoverageRow, ReviewStatus};
@@ -188,13 +188,25 @@ impl StudioTool {
     pub fn note(self) -> &'static str {
         match self {
             Self::Tiles => "Raw cartridge tiles. Looking at them does not assemble a character.",
-            Self::Audio => "Sounds stored in the project. Playback here is inspection, not a new soundtrack.",
-            Self::Library => "Local alpha packages and recipes. Opening one does not reconstruct a sprite.",
-            Self::Export => "Package export still paints the first frame only. It is not a finished character.",
+            Self::Audio => {
+                "Sounds stored in the project. Playback here is inspection, not a new soundtrack."
+            }
+            Self::Library => {
+                "Local alpha packages and recipes. Opening one does not reconstruct a sprite."
+            }
+            Self::Export => {
+                "Package export still paints the first frame only. It is not a finished character."
+            }
             Self::Notes => "Notes stay in the project. They are not sent anywhere.",
-            Self::Overworld => "The existing overworld list. It does not build a new map by itself.",
-            Self::Providers => "Provider settings. This screen does not call a model unless you send a request.",
-            Self::Behavior => "Existing behavior graph. Patrol and jump labels are not a second physics model.",
+            Self::Overworld => {
+                "The existing overworld list. It does not build a new map by itself."
+            }
+            Self::Providers => {
+                "Provider settings. This screen does not call a model unless you send a request."
+            }
+            Self::Behavior => {
+                "Existing behavior graph. Patrol and jump labels are not a second physics model."
+            }
             Self::Guide => "Short explanations of the workshop. They do not change the cartridge.",
         }
     }
@@ -234,6 +246,10 @@ pub struct StudioState {
     pub review_palette: ReviewPalette,
     /// An existing utility opened inside the current stage. Not a second application.
     pub tool: Option<StudioTool>,
+    /// Walk or defeat. Playback reads the assembled frames, not a separate animation.
+    pub preview_pose: String,
+    pub preview_playing: bool,
+    pub preview_elapsed: u32,
 }
 
 impl Default for StudioState {
@@ -253,6 +269,9 @@ impl Default for StudioState {
             investigated: false,
             review_palette: ReviewPalette::SpriteA,
             tool: None,
+            preview_pose: "walk".into(),
+            preview_playing: false,
+            preview_elapsed: 0,
         }
     }
 }
@@ -310,6 +329,127 @@ pub fn nav_fits(width: f32, height: f32) -> bool {
 /// `FrameDraft` values are proposals. R2 is what turns them into sprite frames.
 pub fn reconstructed_frame_count(_candidate: &Candidate) -> usize {
     0
+}
+
+/// Discover's view of one investigation. This is not a second sprite model.
+/// `Ok` means `assemble` produced the canonical Goomba. `Err` is the reason it
+/// refused. `None` means the session has no Goomba candidate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GoombaDiscovery {
+    pub candidate_id: String,
+    pub walk_frames: usize,
+    pub defeat_frames: usize,
+    pub can_play: bool,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn discover_goomba(
+    rom: &[u8],
+    payload_sha256: &str,
+    candidates: &[Candidate],
+    palette: &[[u8; 3]; 4],
+) -> Option<Result<GoombaDiscovery, String>> {
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.character_id == "goomba")?;
+    Some(
+        match nesticles_core::reconstruct::assemble(rom, payload_sha256, candidate, palette) {
+            Ok(assembly) => {
+                let walk_frames = assembly
+                    .frames
+                    .iter()
+                    .filter(|frame| frame.state == "walk")
+                    .count();
+                let defeat_frames = assembly
+                    .frames
+                    .iter()
+                    .filter(|frame| frame.state == "defeat")
+                    .count();
+                let (width, height) = assembly
+                    .frames
+                    .first()
+                    .map(|frame| (frame.w, frame.h))
+                    .unwrap_or((0, 0));
+                Ok(GoombaDiscovery {
+                    candidate_id: candidate.id.clone(),
+                    walk_frames,
+                    defeat_frames,
+                    can_play: walk_frames > 1,
+                    width,
+                    height,
+                })
+            }
+            Err(err) => Err(err),
+        },
+    )
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CardCopy {
+    pub title: String,
+    pub detail: Vec<String>,
+}
+
+/// Gallery text for one candidate. A successful Goomba discovery replaces the
+/// unresolved copy. It does not read environment variables.
+pub fn card_copy(
+    item: &GalleryItem,
+    is_goomba: bool,
+    discovery: Option<&Result<GoombaDiscovery, String>>,
+) -> CardCopy {
+    if let Some(Ok(found)) = discovery {
+        if item.id == found.candidate_id {
+            let mut detail = vec![
+                format!(
+                    "{} walk frames, looping. {} defeat frame, plays once.",
+                    found.walk_frames, found.defeat_frames
+                ),
+                format!(
+                    "{}×{} assembled character. Play uses these frames.",
+                    found.width, found.height
+                ),
+            ];
+            if !item.needs_user {
+                detail.push("Saved in the project.".into());
+            } else {
+                detail
+                    .push("Approve & Save writes the project. The cartridge is not stored.".into());
+            }
+            return CardCopy {
+                title: format!("{} — Reconstructed", item.name),
+                detail,
+            };
+        }
+    }
+    if is_goomba {
+        if let Some(Err(err)) = discovery {
+            return CardCopy {
+                title: item.name.clone(),
+                detail: vec![err.clone()],
+            };
+        }
+    }
+    let mut detail = Vec::new();
+    if item.frame_labels.is_empty() {
+        detail.push("No proposed form".into());
+    } else {
+        detail.push(format!("Proposed labels: {}", item.frame_labels.join(", ")));
+    }
+    if item.needs_user {
+        detail.push("Needs a person".into());
+    } else if item.reconstructed {
+        detail.push("Saved in the project".into());
+    } else {
+        detail.push("Reviewed, not published".into());
+    }
+    if !item.reconstructed {
+        detail.push("Artwork not reconstructed".into());
+    }
+    CardCopy {
+        title: item.name.clone(),
+        detail,
+    }
 }
 
 pub fn preview_policy(reconstructed_frames: usize, timing_verified: bool) -> PreviewPolicy {
@@ -473,6 +613,8 @@ pub fn issue_queue(candidates: &[Candidate], coverage: &[CoverageRow]) -> Vec<Is
                 .unwrap_or_else(|| "No extraction candidate was created.".into()),
             next_action: if unresolved {
                 "There is no artwork to fix. Skip this, or leave it unresolved.".into()
+            } else if candidate.is_some_and(|candidate| candidate.character_id == "goomba") {
+                "Approve and save writes the assembled Goomba when this is the verified SMB1 payload. A review flag by itself does not save it.".into()
             } else {
                 "You can mark the candidate reviewed or place tiles by hand. Neither one publishes an animation.".into()
             },
@@ -671,5 +813,84 @@ mod tests {
             .message
             .contains("Nothing was changed"));
         assert!(!restore_feedback("Goomba").published);
+    }
+
+    #[test]
+    fn investigation_exposes_the_goomba_to_discover_without_a_launch_hook() {
+        let bytes = std::fs::read("/home/g/Desktop/Roms/smb1.nes").expect("owner ROM");
+        let session = nesticles_core::pipeline::propose_session(&bytes, "cartridge.nes", &[], &[])
+            .expect("the normal investigation session");
+        let palette = ReviewPalette::SpriteA.colors();
+        let discovery = discover_goomba(
+            &bytes,
+            &session.report.payload_sha256,
+            &session.candidates,
+            &palette,
+        )
+        .expect("the SMB1 session has a Goomba candidate")
+        .expect("assemble accepts that candidate");
+        assert!(discovery.can_play);
+        assert_eq!(discovery.walk_frames, 2);
+        assert_eq!(discovery.defeat_frames, 1);
+        assert_eq!((discovery.width, discovery.height), (16, 24));
+        let items = gallery_items(&session.candidates, &session.coverage);
+        let goomba = items.iter().find(|item| item.name == "Goomba").unwrap();
+        let copy = card_copy(goomba, true, Some(&Ok(discovery.clone())));
+        assert_eq!(copy.title, "Goomba — Reconstructed");
+        let text = copy.detail.join(" ");
+        assert!(text.contains("2 walk frames"));
+        assert!(!text.contains("Artwork not reconstructed"));
+        assert!(!text.contains("Needs a person"));
+        assert!(!text.contains("No reconstructed frames"));
+        let mario = items.iter().find(|item| item.name == "Mario").unwrap();
+        let mario_copy = card_copy(mario, false, Some(&Ok(discovery)));
+        assert!(mario_copy
+            .detail
+            .iter()
+            .any(|line| line.contains("Artwork not reconstructed")));
+    }
+
+    #[test]
+    fn an_unmatched_cartridge_does_not_invent_a_goomba() {
+        let rom = nesticles_core::pipeline::synthetic_fixture();
+        let session =
+            nesticles_core::pipeline::propose_session(&rom, "synthetic-fixture.nes", &[], &[])
+                .unwrap();
+        let palette = ReviewPalette::SpriteA.colors();
+        assert!(discover_goomba(
+            &rom,
+            &session.report.payload_sha256,
+            &session.candidates,
+            &palette,
+        )
+        .is_none());
+        let goomba = nesticles_core::pipeline::smb1_profile()
+            .candidates
+            .into_iter()
+            .find(|candidate| candidate.character_id == "goomba")
+            .unwrap();
+        let item = gallery_items(
+            std::slice::from_ref(&goomba),
+            &[CoverageRow {
+                name: "Goomba".into(),
+                category: "enemy".into(),
+                raw: "identified".into(),
+                assembly: "proposed".into(),
+                animation: "proposed".into(),
+                palette: "unverified".into(),
+                review: "awaiting".into(),
+            }],
+        );
+        let failed = discover_goomba(
+            &rom,
+            &session.report.payload_sha256,
+            std::slice::from_ref(&goomba),
+            &palette,
+        )
+        .unwrap()
+        .unwrap_err();
+        let copy = card_copy(&item[0], true, Some(&Err(failed.clone())));
+        assert_eq!(copy.detail, vec![failed]);
+        assert!(!copy.title.contains("Reconstructed"));
     }
 }

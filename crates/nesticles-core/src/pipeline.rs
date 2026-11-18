@@ -10,7 +10,6 @@
 
 use crate::anim::{self, Playback};
 use crate::behavior::BehaviorGraph;
-use crate::codec::{decode_tile, indices_to_rgba, Codec};
 use crate::detect::{self, RomFormat};
 use crate::pngutil::{b64_decode, b64_encode};
 use crate::project::{nid, Asset, AssetKind, Project};
@@ -233,13 +232,34 @@ pub struct PackState {
     pub ticks: u32,
 }
 
+/// One baked animation frame. Absent on packages written before R2.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PackPicture {
+    pub name: String,
+    pub w: u32,
+    pub h: u32,
+    pub rgba_base64: String,
+    pub ticks: u32,
+    /// `loop` or `once`. Anything else plays as a loop.
+    #[serde(default = "default_picture_playback")]
+    pub playback: String,
+}
+
+fn default_picture_playback() -> String {
+    "loop".into()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PackForm {
     pub form: String,
     pub w: u32,
     pub h: u32,
+    /// The first frame. Older readers draw only this picture.
     pub rgba_base64: String,
     pub states: Vec<PackState>,
+    /// Every frame, in playback order. Empty means this package has only `rgba_base64`.
+    #[serde(default)]
+    pub pictures: Vec<PackPicture>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -670,6 +690,7 @@ pub fn package_character(
     let mut notes = vec![
         "One package is one library item. Frames stay inside it.".into(),
         "Palette bytes are not in CHR. Palette stays unverified unless a later correction says otherwise.".into(),
+        "pictures holds every frame. rgba_base64 repeats the first frame for an older reader.".into(),
     ];
     for candidate in &group {
         if candidate
@@ -724,7 +745,14 @@ pub fn parse_package(text: &str) -> Result<ContentPackage, String> {
 
 /// One sprite, one animation set, and the frame pictures that sprite needs.
 /// Returns the sprite id. The caller shows that one library item.
+///
+/// A package with `pictures` keeps one sprite frame per picture and points each
+/// clip at those frames. A package without `pictures` keeps the older behavior:
+/// every state uses the single baked picture.
 pub fn import_package(project: &mut Project, package: &ContentPackage) -> Result<String, String> {
+    if package.forms.iter().any(|form| !form.pictures.is_empty()) {
+        return import_frame_pictures(project, package);
+    }
     let kind = kind_for(&package.category);
     let mut sprite_id = String::new();
     for form in &package.forms {
@@ -1376,75 +1404,142 @@ fn place(tiles: &[u8]) -> Vec<TileSpot> {
         .collect()
 }
 
-fn embed_form(
-    rom: &[u8],
-    _report: &ReportSaved,
-    candidate: &Candidate,
-) -> Result<PackForm, String> {
-    let info = detect::detect_rom(rom, "export");
-    let mut max_x = 8i32;
-    let mut max_y = 8i32;
-    for frame in &candidate.frames {
-        for spot in &frame.spots {
-            max_x = max_x.max(spot.x + 8);
-            max_y = max_y.max(spot.y + 8);
+fn embed_form(rom: &[u8], report: &ReportSaved, candidate: &Candidate) -> Result<PackForm, String> {
+    let palette = [[0, 0, 0], [80, 40, 16], [216, 112, 48], [248, 224, 176]];
+    let baked =
+        crate::reconstruct::bake_candidate(rom, &report.payload_sha256, candidate, &palette)?;
+    let first = baked
+        .first()
+        .ok_or_else(|| "There is no frame to bake.".to_string())?;
+    let mut states = Vec::new();
+    for frame in &baked {
+        if states
+            .iter()
+            .any(|state: &PackState| state.name == frame.state)
+        {
+            continue;
         }
-    }
-    let w = max_x.max(8) as u32;
-    let h = max_y.max(8) as u32;
-    let mut rgba = vec![0u8; w as usize * h as usize * 4];
-    let palette = [[0, 0, 0], [96, 96, 96], [168, 168, 168], [248, 248, 248]];
-    for frame in candidate.frames.iter().take(1) {
-        for spot in &frame.spots {
-            let offset = info.chr_start + spot.tile as usize * 16;
-            let indices =
-                decode_tile(rom, offset, Codec::Nes).ok_or("A tile could not be decoded.")?;
-            let (_, _, tile) = indices_to_rgba(&indices, 8, 8, &palette, true);
-            blit(
-                &mut rgba,
-                w,
-                h,
-                &tile,
-                spot.x,
-                spot.y,
-                spot.flip_x,
-                spot.flip_y,
-            );
-        }
+        states.push(PackState {
+            name: frame.state.clone(),
+            origin: frame.note.clone(),
+            ticks: frame.ticks,
+        });
     }
     Ok(PackForm {
         form: candidate.form.clone(),
-        w,
-        h,
-        rgba_base64: b64_encode(&rgba),
-        states: candidate
-            .frames
+        w: first.w,
+        h: first.h,
+        rgba_base64: b64_encode(&first.rgba),
+        states,
+        pictures: baked
             .iter()
-            .map(|frame| PackState {
+            .map(|frame| PackPicture {
                 name: frame.state.clone(),
-                origin: frame.origin.clone(),
-                ticks: 8,
+                w: frame.w,
+                h: frame.h,
+                rgba_base64: b64_encode(&frame.rgba),
+                ticks: frame.ticks,
+                playback: if frame.playback == Playback::Once {
+                    "once".into()
+                } else {
+                    "loop".into()
+                },
             })
             .collect(),
     })
 }
 
-fn blit(dst: &mut [u8], dw: u32, dh: u32, src: &[u8], x: i32, y: i32, flip_x: bool, flip_y: bool) {
-    for row in 0..8i32 {
-        for col in 0..8i32 {
-            let sx = if flip_x { 7 - col } else { col };
-            let sy = if flip_y { 7 - row } else { row };
-            let dx = x + col;
-            let dy = y + row;
-            if dx < 0 || dy < 0 || dx >= dw as i32 || dy >= dh as i32 {
-                continue;
-            }
-            let si = (sy as usize * 8 + sx as usize) * 4;
-            let di = (dy as usize * dw as usize + dx as usize) * 4;
-            dst[di..di + 4].copy_from_slice(&src[si..si + 4]);
+fn import_frame_pictures(
+    project: &mut Project,
+    package: &ContentPackage,
+) -> Result<String, String> {
+    let kind = kind_for(&package.category);
+    let mut pictures = Vec::new();
+    for form in &package.forms {
+        if form.pictures.is_empty() {
+            pictures.push(PackPicture {
+                name: form
+                    .states
+                    .first()
+                    .map(|state| state.name.clone())
+                    .unwrap_or_else(|| form.form.clone()),
+                w: form.w,
+                h: form.h,
+                rgba_base64: form.rgba_base64.clone(),
+                ticks: form.states.first().map(|state| state.ticks).unwrap_or(8),
+                playback: "loop".into(),
+            });
+        } else {
+            pictures.extend(form.pictures.iter().cloned());
         }
     }
-    let _ = dh;
+    if pictures.is_empty() || pictures.len() > 48 {
+        return Err("That package does not have a usable frame list.".into());
+    }
+    let max_w = pictures.iter().map(|picture| picture.w).max().unwrap_or(0);
+    let max_h = pictures.iter().map(|picture| picture.h).max().unwrap_or(0);
+    if max_w == 0 || max_h == 0 || max_w > 256 || max_h > 256 {
+        return Err("A form has an impossible picture size. It was not imported.".into());
+    }
+    let sprite_id = anim::create_sprite(project, &package.name, max_w, max_h)?;
+    let mut grouped: Vec<(String, String, Vec<(String, u32)>)> = Vec::new();
+    for picture in &pictures {
+        let rgba = b64_decode(&picture.rgba_base64)?;
+        let expected = picture.w as usize * picture.h as usize * 4;
+        if rgba.len() != expected || picture.w == 0 || picture.h > 256 || picture.w > 256 {
+            return Err("A frame has an impossible picture size. It was not imported.".into());
+        }
+        let asset_id = nid("asset-");
+        project.assets.push(Asset {
+            id: asset_id.clone(),
+            name: format!("{} {}", package.name, picture.name),
+            kind,
+            style_id: String::new(),
+            w: picture.w,
+            h: picture.h,
+            rgba_base64: picture.rgba_base64.clone(),
+            png_base64: String::new(),
+            wav_base64: String::new(),
+            solid: false,
+            cue: String::new(),
+            item_tag: Default::default(),
+            block_tag: Default::default(),
+            hazard_tag: Default::default(),
+            warp: None,
+        });
+        let frame_id =
+            anim::append_picture_frame(project, &sprite_id, &asset_id, picture.ticks.max(1))?;
+        if grouped.last().map(|(name, _, _)| name == &picture.name) == Some(true) {
+            grouped
+                .last_mut()
+                .unwrap()
+                .2
+                .push((frame_id, picture.ticks.max(1)));
+        } else {
+            grouped.push((
+                picture.name.clone(),
+                picture.playback.clone(),
+                vec![(frame_id, picture.ticks.max(1))],
+            ));
+        }
+    }
+    let set_id = anim::create_set(project, &package.name, &sprite_id)?;
+    for (name, playback, frames) in &grouped {
+        let clip = anim::add_clip(project, &set_id, name)?;
+        for (frame_id, ticks) in frames {
+            anim::append_frame_to_clip(project, &set_id, &clip, frame_id, *ticks)?;
+        }
+        let mode = if playback == "once" {
+            Playback::Once
+        } else {
+            Playback::Loop
+        };
+        anim::set_playback(project, &set_id, &clip, mode)?;
+    }
+    if let Some(behavior) = &package.behavior {
+        project.behaviors.push(behavior.clone());
+    }
+    Ok(sprite_id)
 }
 
 fn kind_for(category: &str) -> AssetKind {

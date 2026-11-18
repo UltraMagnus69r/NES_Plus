@@ -4,9 +4,10 @@
 //! character, and the preview does not play them as an animation.
 
 use super::model::{
-    approve_feedback, continue_available, gallery_items, ignore_feedback, issue_queue,
-    preview_policy, reconstructed_frame_count, restore_feedback, review_tile_rgba, skip_feedback,
-    Group, IssueCard, ReviewPalette, Stage, StudioState, StudioTool, NOT_RECONSTRUCTED,
+    approve_feedback, card_copy, continue_available, discover_goomba, gallery_items,
+    ignore_feedback, issue_queue, preview_policy, reconstructed_frame_count, restore_feedback,
+    review_tile_rgba, skip_feedback, Group, IssueCard, ReviewPalette, Stage, StudioState,
+    StudioTool, NOT_RECONSTRUCTED,
 };
 use crate::app::NestApp;
 use crate::studio::{self, Workspace};
@@ -25,6 +26,9 @@ pub struct StudioUi {
     pub tiles: HashMap<u32, TextureHandle>,
     painted: ReviewPalette,
     tool_env_applied: bool,
+    r2_env_applied: bool,
+    preview_accum: f32,
+    assembled: HashMap<String, TextureHandle>,
 }
 
 impl Default for StudioUi {
@@ -34,6 +38,9 @@ impl Default for StudioUi {
             tiles: HashMap::new(),
             painted: ReviewPalette::default(),
             tool_env_applied: false,
+            r2_env_applied: false,
+            preview_accum: 0.0,
+            assembled: HashMap::new(),
         }
     }
 }
@@ -142,7 +149,7 @@ impl NestApp {
             )
             .show(ctx, |ui| {
                 ui.label(
-                    "Approval does not publish a sprite. Mario and Luigi have no tile mapping. Palette and timing are unverified.",
+                    "Goomba approval writes that sprite into the project. Other approvals do not. Mario and Luigi have no tile mapping. Review colors are not a verified palette.",
                 );
             });
         egui::SidePanel::left("unmaker-nav")
@@ -456,7 +463,7 @@ impl NestApp {
             ui.label(format!("{}. {name}", index + 1));
         }
         ui.add_space(8.0);
-        if let Some(session) = &self.extract.session {
+        if let Some(session) = self.extract.session.clone() {
             let unresolved = session
                 .coverage
                 .iter()
@@ -466,9 +473,24 @@ impl NestApp {
                 "Candidates identified: {}",
                 session.candidates.len()
             ));
-            ui.label("Assets with reconstructed frames: 0");
+            let ready = session
+                .candidates
+                .iter()
+                .filter(|candidate| {
+                    self.rom.as_ref().is_some_and(|rom| {
+                        nesticles_core::reconstruct::assemble(
+                            &rom.bytes,
+                            &session.report.payload_sha256,
+                            candidate,
+                            &self.studio.state.review_palette.colors(),
+                        )
+                        .is_ok()
+                    })
+                })
+                .count();
+            ui.label(format!("Assets with reconstructed frames: {ready}"));
             ui.label(format!("Unresolved coverage rows: {unresolved}"));
-            ui.label("Reconstructed frames stay at 0 until a later step assembles them.");
+            ui.label("Only a verified Goomba is assembled. Other names stay proposals.");
             if ui.button("Open the gallery").clicked() {
                 self.studio.state.stage = Stage::Discover;
             }
@@ -485,7 +507,10 @@ impl NestApp {
                     StudioTool::Providers,
                     "Provider settings. Nothing is sent until you ask.",
                 ),
-                (StudioTool::Guide, "Short explanations. They do not change the cartridge."),
+                (
+                    StudioTool::Guide,
+                    "Short explanations. They do not change the cartridge.",
+                ),
             ],
         );
     }
@@ -495,7 +520,10 @@ impl NestApp {
         self.tool_row(
             ui,
             &[
-                (StudioTool::Tiles, "Inspect the raw tiles from the cartridge."),
+                (
+                    StudioTool::Tiles,
+                    "Inspect the raw tiles from the cartridge.",
+                ),
                 (StudioTool::Audio, "Inspect sounds kept in the project."),
             ],
         );
@@ -508,6 +536,41 @@ impl NestApp {
             return;
         };
         let items = gallery_items(&session.candidates, &session.coverage);
+        let discovery = self.goomba_discovery(&session);
+        if self.studio.state.selected.is_none() {
+            if let Some(Ok(found)) = &discovery {
+                self.studio.state.selected = Some(found.candidate_id.clone());
+            }
+        }
+        let goomba_open = matches!(
+            &discovery,
+            Some(Ok(found))
+                if self.studio.state.selected.as_deref() == Some(found.candidate_id.as_str())
+        );
+        if goomba_open {
+            ui.label(RichText::new("Goomba — Reconstructed").size(22.0));
+            match self.assemble_selected(&session) {
+                Some(Ok(assembly)) => self.draw_assembly(ui, ctx, &assembly),
+                Some(Err(err)) => {
+                    ui.colored_label(studio::unmaker_red(), &err);
+                    ui.label("Source tiles were not shown in place of this failure.");
+                }
+                None => {
+                    ui.label("The cartridge is not open, so the Goomba frames cannot be drawn.");
+                }
+            }
+            ui.add_space(8.0);
+        } else if let Some(Err(err)) = &discovery {
+            let selected_goomba = session.candidates.iter().any(|candidate| {
+                self.studio.state.selected.as_deref() == Some(candidate.id.as_str())
+                    && candidate.character_id == "goomba"
+            });
+            if selected_goomba {
+                ui.colored_label(studio::unmaker_red(), err);
+                ui.label("Source tiles were not shown in place of this failure.");
+                ui.add_space(8.0);
+            }
+        }
         ui.horizontal_wrapped(|ui| {
             if ui
                 .selectable_label(self.studio.state.filter.is_none(), "All")
@@ -524,11 +587,17 @@ impl NestApp {
         });
         ui.add_space(8.0);
         let filter = self.studio.state.filter;
-        let shown: Vec<_> = items
+        let mut shown: Vec<_> = items
             .iter()
             .filter(|item| filter.is_none_or(|group| item.group == group))
             .cloned()
             .collect();
+        if let Some(Ok(found)) = &discovery {
+            if let Some(index) = shown.iter().position(|item| item.id == found.candidate_id) {
+                let item = shown.remove(index);
+                shown.insert(0, item);
+            }
+        }
         ui.columns(2, |columns| {
             columns[0].label("Candidates");
             egui::ScrollArea::vertical()
@@ -550,23 +619,15 @@ impl NestApp {
                             ui.horizontal(|ui| {
                                 self.thumb(ui, ctx, item.tile_ids.first().copied());
                                 ui.vertical(|ui| {
-                                    ui.label(RichText::new(&item.name).size(18.0));
-                                    ui.label(format!("{} · {}", item.group.label(), item.status));
-                                    if item.frame_labels.is_empty() {
-                                        ui.label("No proposed form");
-                                    } else {
-                                        ui.label(format!(
-                                            "Proposed labels: {}",
-                                            item.frame_labels.join(", ")
-                                        ));
-                                    }
-                                    ui.label(if item.needs_user {
-                                        "Needs a person"
-                                    } else {
-                                        "Reviewed, not published"
+                                    let is_goomba = session.candidates.iter().any(|candidate| {
+                                        candidate.id == item.id
+                                            && candidate.character_id == "goomba"
                                     });
-                                    if !item.reconstructed {
-                                        ui.label("Artwork not reconstructed");
+                                    let copy = card_copy(item, is_goomba, discovery.as_ref());
+                                    ui.label(RichText::new(&copy.title).size(18.0));
+                                    ui.label(format!("{} · {}", item.group.label(), item.status));
+                                    for line in &copy.detail {
+                                        ui.label(line);
                                     }
                                 });
                             });
@@ -578,10 +639,15 @@ impl NestApp {
                         ui.add_space(6.0);
                     }
                 });
-            let selected = items
-                .iter()
-                .find(|item| self.studio.state.selected.as_deref() == Some(item.id.as_str()));
-            self.preview_column(&mut columns[1], ctx, selected, &session.candidates);
+            if goomba_open {
+                columns[1].label("The reconstructed Goomba is above this list.");
+                columns[1].label("Mario and Luigi are still unresolved.");
+            } else {
+                let selected = items
+                    .iter()
+                    .find(|item| self.studio.state.selected.as_deref() == Some(item.id.as_str()));
+                self.preview_column(&mut columns[1], ctx, selected, &session.candidates);
+            }
         });
         if ui
             .button("Review the open issue for this candidate")
@@ -624,7 +690,9 @@ impl NestApp {
         ui.label(&issue.attempted);
         ui.label(&issue.next_action);
         ui.label("Suggested fix: none. No automatic correction engine is running.");
-        ui.label("Ignored candidates stay in the session. The Ignored filter on Discover lists them.");
+        ui.label(
+            "Ignored candidates stay in the session. The Ignored filter on Discover lists them.",
+        );
         let item = gallery_items(&session.candidates, &session.coverage)
             .into_iter()
             .find(|item| item.name == issue.name);
@@ -693,7 +761,18 @@ impl NestApp {
             }
         });
         ui.add_space(8.0);
-        if ui
+        let publishable = session.candidates.iter().any(|candidate| {
+            issue.candidate_id.as_ref() == Some(&candidate.id) && candidate.character_id == "goomba"
+        });
+        if publishable {
+            if ui
+                .button("Approve & Save Goomba")
+                .on_hover_text("Writes the assembled walk and defeat into this project. The cartridge is not stored.")
+                .clicked()
+            {
+                self.publish_selected_goomba();
+            }
+        } else if ui
             .button("Mark candidate reviewed")
             .on_hover_text("Changes the review flag only. It does not publish a sprite.")
             .clicked()
@@ -715,7 +794,7 @@ impl NestApp {
     fn create_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.label(RichText::new("Create").size(28.0));
         ui.label("Original sprites live in the project. They are separate from ROM candidates.");
-        ui.label("Assemble and Animate are the existing editors. They do not reconstruct a Goomba.");
+        ui.label("Assemble and Animate edit sprites already in the project. A saved Goomba plays here without the cartridge.");
         self.tool_row(
             ui,
             &[(
@@ -770,8 +849,8 @@ impl NestApp {
         }
         ui.add_space(8.0);
         ui.label("Still true after this save:");
-        ui.label("• approve_candidate changes a review flag and does not create a sprite.");
-        ui.label("• A package would bake the first frame only, and every clip would share it.");
+        ui.label("• Approving the reconstructed Goomba writes its sprite. Other approvals only change a review flag.");
+        ui.label("• A new package keeps every frame in pictures. An older reader still sees the first frame.");
         ui.label("• Mario and Luigi have no reconstruction.");
         ui.label("• Reference pages are not matched to ROM tiles.");
         ui.label("• Palettes and animation timings are not verified.");
@@ -801,11 +880,7 @@ impl NestApp {
     fn tool_row(&mut self, ui: &mut egui::Ui, tools: &[(StudioTool, &str)]) {
         ui.horizontal_wrapped(|ui| {
             for (tool, tip) in tools {
-                if ui
-                    .button(tool.label())
-                    .on_hover_text(*tip)
-                    .clicked()
-                {
+                if ui.button(tool.label()).on_hover_text(*tip).clicked() {
                     self.studio.state.tool = Some(*tool);
                     self.studio.state.notice = format!("{} — {}", tool.label(), tool.note());
                 }
@@ -814,7 +889,11 @@ impl NestApp {
     }
 
     fn embedded_tool(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, tool: StudioTool) {
-        if ui.button("Back").on_hover_text("Return to this stage.").clicked() {
+        if ui
+            .button("Back")
+            .on_hover_text("Return to this stage.")
+            .clicked()
+        {
             self.studio.state.tool = None;
             return;
         }
@@ -878,9 +957,38 @@ impl NestApp {
             ui.label("Choose a candidate to see its evidence.");
             return;
         };
-        let frames = candidates
+        let candidate = candidates
             .iter()
             .find(|candidate| candidate.id == item.id)
+            .cloned();
+        let palette = self.studio.state.review_palette.colors();
+        let payload = self
+            .extract
+            .session
+            .as_ref()
+            .map(|session| session.report.payload_sha256.clone());
+        let bytes = self.rom.as_ref().map(|rom| rom.bytes.clone());
+        let assembly = match (candidate.as_ref(), bytes.as_deref(), payload.as_deref()) {
+            (Some(candidate), Some(bytes), Some(payload)) => Some((
+                candidate.character_id.clone(),
+                nesticles_core::reconstruct::assemble(bytes, payload, candidate, &palette),
+            )),
+            _ => None,
+        };
+        match assembly {
+            Some((_, Ok(assembly))) => {
+                self.draw_assembly(ui, ctx, &assembly);
+                return;
+            }
+            Some((id, Err(err))) if id == "goomba" => {
+                ui.colored_label(studio::unmaker_red(), &err);
+                ui.label("Source tiles were not shown in place of this failure.");
+                return;
+            }
+            _ => {}
+        }
+        let frames = candidate
+            .as_ref()
             .map(reconstructed_frame_count)
             .unwrap_or(0);
         let policy = preview_policy(frames, false);
@@ -934,6 +1042,299 @@ impl NestApp {
                 .add_enabled(policy.can_play, egui::Button::new("Play"))
                 .on_disabled_hover_text("There are no reconstructed frames to play.");
         });
+    }
+
+    fn draw_assembly(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        assembly: &nesticles_core::reconstruct::Assembly,
+    ) {
+        self.advance_goomba_preview(ctx);
+        ui.label("Assembled Goomba. These are cartridge tiles, not a reference picture.");
+        ui.label(&assembly.palette_note);
+        ui.label(&assembly.timing_note);
+        ui.horizontal_wrapped(|ui| {
+            for pose in ["walk", "defeat"] {
+                let selected = self.studio.state.preview_pose == pose;
+                if ui.selectable_label(selected, pose).clicked() {
+                    self.studio.state.preview_pose = pose.to_string();
+                    self.studio.state.preview_elapsed = 0;
+                    self.studio.preview_accum = 0.0;
+                }
+            }
+            if ui.button("Play").clicked() {
+                self.studio.state.preview_playing = true;
+            }
+            if ui.button("Pause").clicked() {
+                self.studio.state.preview_playing = false;
+            }
+            if ui.button("Zoom in").clicked() {
+                self.studio.state.zoom = (self.studio.state.zoom + 1.0).min(16.0);
+            }
+            if ui.button("Zoom out").clicked() {
+                self.studio.state.zoom = (self.studio.state.zoom - 1.0).max(2.0);
+            }
+        });
+        let pose = self.studio.state.preview_pose.clone();
+        let elapsed = self.studio.state.preview_elapsed;
+        let Some((index, frame)) =
+            nesticles_core::reconstruct::pose_frame(assembly, &pose, elapsed)
+        else {
+            ui.label("That animation state is not in this reconstruction.");
+            return;
+        };
+        let in_pose = assembly
+            .frames
+            .iter()
+            .filter(|item| item.state.eq_ignore_ascii_case(&pose))
+            .count();
+        let looping = frame.playback == nesticles_core::anim::Playback::Loop;
+        ui.label(format!(
+            "{} · frame {} of {} · {} · {} ticks",
+            frame.state,
+            index + 1,
+            in_pose,
+            if looping { "looping" } else { "plays once" },
+            frame.ticks
+        ));
+        ui.label(&frame.note);
+        let zoom = self.studio.state.zoom;
+        let size = Vec2::new(frame.w as f32 * zoom, frame.h as f32 * zoom);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        checker(ui.painter(), rect);
+        let key = format!(
+            "{:?}-{}-{}",
+            self.studio.state.review_palette, frame.state, index
+        );
+        let texture = if let Some(texture) = self.studio.assembled.get(&key) {
+            texture.clone()
+        } else {
+            let image = egui::ColorImage::from_rgba_unmultiplied(
+                [frame.w as usize, frame.h as usize],
+                &frame.rgba,
+            );
+            let texture = ctx.load_texture(&key, image, TextureOptions::NEAREST);
+            self.studio.assembled.insert(key, texture.clone());
+            texture
+        };
+        ui.painter().image(
+            texture.id(),
+            rect,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        ui.add_space(8.0);
+        if ui
+            .button("Approve & Save Goomba")
+            .on_hover_text("Writes the assembled walk and defeat into this project. The cartridge is not stored.")
+            .clicked()
+        {
+            self.publish_selected_goomba();
+        }
+    }
+
+    fn advance_goomba_preview(&mut self, ctx: &egui::Context) {
+        if !self.studio.state.preview_playing {
+            return;
+        }
+        let dt = ctx.input(|input| input.stable_dt);
+        self.studio.preview_accum += dt;
+        let step = 1.0 / 60.0;
+        let mut ticks = 0;
+        while self.studio.preview_accum >= step && ticks < 8 {
+            self.studio.preview_accum -= step;
+            self.studio.state.preview_elapsed = self.studio.state.preview_elapsed.saturating_add(1);
+            ticks += 1;
+        }
+        ctx.request_repaint();
+    }
+
+    fn goomba_discovery(
+        &self,
+        session: &nesticles_core::pipeline::ExtractionSession,
+    ) -> Option<Result<super::model::GoombaDiscovery, String>> {
+        let rom = self.rom.as_ref()?;
+        discover_goomba(
+            &rom.bytes,
+            &session.report.payload_sha256,
+            &session.candidates,
+            &self.studio.state.review_palette.colors(),
+        )
+    }
+
+    fn assemble_selected(
+        &self,
+        session: &nesticles_core::pipeline::ExtractionSession,
+    ) -> Option<Result<nesticles_core::reconstruct::Assembly, String>> {
+        let rom = self.rom.as_ref()?;
+        let candidate = session.candidates.iter().find(|candidate| {
+            self.studio.state.selected.as_deref() == Some(candidate.id.as_str())
+        })?;
+        Some(nesticles_core::reconstruct::assemble(
+            &rom.bytes,
+            &session.report.payload_sha256,
+            candidate,
+            &self.studio.state.review_palette.colors(),
+        ))
+    }
+
+    /// Select the reconstructed Goomba when an investigation finishes and the
+    /// user has not chosen someone else. Launch hooks are not involved.
+    pub(crate) fn select_reconstructed_goomba(&mut self) {
+        if self.studio.state.selected.is_some() {
+            return;
+        }
+        let Some(session) = self.extract.session.clone() else {
+            return;
+        };
+        if let Some(Ok(found)) = self.goomba_discovery(&session) {
+            self.studio.state.selected = Some(found.candidate_id);
+        }
+    }
+
+    pub(crate) fn publish_selected_goomba(&mut self) {
+        let Some(bytes) = self.rom.as_ref().map(|rom| rom.bytes.clone()) else {
+            self.studio.state.notice = "Open the cartridge before saving a Goomba.".into();
+            self.status = self.studio.state.notice.clone();
+            return;
+        };
+        let Some(candidate) = self.extract.session.as_ref().and_then(|session| {
+            session
+                .candidates
+                .iter()
+                .find(|candidate| candidate.character_id == "goomba")
+                .cloned()
+        }) else {
+            self.studio.state.notice = "There is no Goomba candidate to save.".into();
+            self.status = self.studio.state.notice.clone();
+            return;
+        };
+        let palette = self.studio.state.review_palette.colors();
+        match nesticles_core::reconstruct::publish_goomba(
+            &mut self.project,
+            &bytes,
+            &candidate,
+            &palette,
+        ) {
+            Ok(published) => {
+                self.sprite_id = Some(published.sprite_id.clone());
+                self.set_id = Some(published.set_id.clone());
+                self.clip_id = Some(published.walk_clip_id.clone());
+                self.frame_id = published.frame_ids.first().cloned();
+                let path = self.goomba_save_path();
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                self.write_project(&path);
+                let wrote = self.project_path.as_ref() == Some(&path) && !self.dirty;
+                if wrote {
+                    if let Some(session) = self.extract.session.as_mut() {
+                        if let Some(item) = session
+                            .candidates
+                            .iter_mut()
+                            .find(|item| item.character_id == "goomba")
+                        {
+                            item.status = nesticles_core::pipeline::ReviewStatus::Approved;
+                        }
+                    }
+                    self.studio.state.notice =
+                        format!("{} Saved to {}.", published.message, path.display());
+                } else {
+                    self.studio.state.notice = format!(
+                        "{} The project file was not written, so reopen will not find it yet.",
+                        published.message
+                    );
+                }
+                self.status = self.studio.state.notice.clone();
+            }
+            Err(err) => {
+                self.studio.state.notice = err;
+                self.status = self.studio.state.notice.clone();
+            }
+        }
+    }
+
+    fn goomba_save_path(&self) -> std::path::PathBuf {
+        if let Some(path) = &self.project_path {
+            if path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+            {
+                return path.clone();
+            }
+        }
+        directories::ProjectDirs::from("dev", "Nesticles", "Nesticles")
+            .map(|dirs| dirs.data_dir().join("creations").join("goomba.json"))
+            .unwrap_or_else(|| std::path::PathBuf::from("goomba.json"))
+    }
+
+    pub(crate) fn present_saved_goomba(&mut self) {
+        let Some(sprite) = self
+            .project
+            .sprites
+            .iter()
+            .find(|sprite| {
+                sprite
+                    .tags
+                    .iter()
+                    .any(|tag| tag == nesticles_core::reconstruct::TAG)
+            })
+            .map(|sprite| sprite.id.clone())
+        else {
+            return;
+        };
+        let Some(set) = self
+            .project
+            .anim_sets
+            .iter()
+            .find(|set| set.sprite_id == sprite)
+        else {
+            return;
+        };
+        let set_id = set.id.clone();
+        let clip_id = set
+            .clips
+            .iter()
+            .find(|clip| clip.name == "walk")
+            .or_else(|| set.clips.first())
+            .map(|clip| clip.id.clone());
+        self.workspace = studio::Workspace::Unmaker;
+        self.studio.state.stage = Stage::Create;
+        self.studio.state.create_animate = true;
+        self.studio.state.tool = None;
+        self.sprite_id = Some(sprite);
+        self.set_id = Some(set_id);
+        self.clip_id = clip_id;
+        self.status =
+            "Opened the saved Goomba. No cartridge is loaded. Press Play to watch the walk.".into();
+    }
+
+    pub(crate) fn apply_r2_hooks(&mut self) {
+        if self.studio.r2_env_applied {
+            return;
+        }
+        self.studio.r2_env_applied = true;
+        if let Ok(pose) = std::env::var("NESTICLES_R2_POSE") {
+            if pose == "walk" || pose == "defeat" {
+                self.studio.state.preview_pose = pose;
+            }
+        }
+        if let Ok(frame) = std::env::var("NESTICLES_R2_FRAME") {
+            if let Ok(index) = frame.parse::<u32>() {
+                self.studio.state.preview_elapsed = index.saturating_mul(8);
+                self.preview_clock.elapsed = index.saturating_mul(8);
+                self.anim_playing = false;
+            }
+        }
+        if std::env::var("NESTICLES_R2_PLAY").ok().as_deref() == Some("1") {
+            self.studio.state.preview_playing = true;
+            self.anim_playing = true;
+        }
+        if std::env::var("NESTICLES_R2_PUBLISH").ok().as_deref() == Some("1") {
+            self.publish_selected_goomba();
+        }
     }
 
     fn draw_evidence(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, tile: u32) {
@@ -990,6 +1391,7 @@ impl NestApp {
                 if ui.selectable_label(selected, palette.label()).clicked() && !selected {
                     self.studio.state.review_palette = palette;
                     self.studio.tiles.clear();
+                    self.studio.assembled.clear();
                     self.studio.painted = palette;
                     self.studio.state.notice =
                         format!("Showing {}. {}", palette.label(), ReviewPalette::NOTE);
@@ -1086,8 +1488,7 @@ impl NestApp {
         {
             let bytes = nesticles_core::pipeline::synthetic_fixture();
             self.load_rom_bytes("synthetic-fixture.nes", bytes);
-            self.studio.state.notice =
-                "Synthetic fixture only. It is not Super Mario Bros.".into();
+            self.studio.state.notice = "Synthetic fixture only. It is not Super Mario Bros.".into();
         }
     }
 

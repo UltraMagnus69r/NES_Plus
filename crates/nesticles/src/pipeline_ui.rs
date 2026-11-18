@@ -151,6 +151,12 @@ impl NestApp {
                 self.studio.state.stage = super::unmaker::Stage::Investigate;
                 self.studio.state.investigated = true;
                 self.studio.note_stage("Ready for review");
+                self.select_reconstructed_goomba();
+                if self.studio.state.selected.is_some() {
+                    self.status.push_str(
+                        " Goomba is reconstructed. Open Discover to play the walk and save it.",
+                    );
+                }
                 self.studio.state.notice = self.status.clone();
             } else if !done.error.is_empty() {
                 self.status = done.error;
