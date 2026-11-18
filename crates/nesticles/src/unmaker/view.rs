@@ -1117,10 +1117,7 @@ impl NestApp {
     }
 
     pub(crate) fn apply_r1_tour(&mut self, ctx: &egui::Context) {
-        if std::env::var_os("NESTICLES_R1_WINDOW").is_some() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(1366.0, 768.0)));
-        }
+        let _ = ctx;
         let Ok(tour) = std::env::var("NESTICLES_R1_TOUR") else {
             return;
         };

@@ -3,8 +3,17 @@
 
 use eframe::egui::{Color32, Visuals};
 
-/// The desktop build opens fullscreen. A windowed fallback is not the default.
-pub const STARTS_FULLSCREEN: bool = true;
+/// The desktop build opens as a decorated window. Fullscreen is never automatic.
+pub const STARTS_FULLSCREEN: bool = false;
+
+/// Inner size for a 1366×768 desktop. The title bar and panel stay outside this.
+pub const INITIAL_INNER: [f32; 2] = [1200.0, 640.0];
+
+/// Smallest inner size. The layout scrolls rather than covering the title bar.
+pub const MIN_INNER: [f32; 2] = [960.0, 540.0];
+
+/// Window geometry file. This is not the alpha library directory.
+pub const WINDOW_APP_ID: &str = "nesticles-window";
 
 /// Next visual pass: white field, light grey, dark text, a little red, large controls.
 /// Phase 9.1 does not restyle the screens that already shipped.
@@ -208,13 +217,59 @@ pub const RAIL_TOOLS: [&str; 7] = [
     "Inspect",
 ];
 
+/// Move a restored window back if fewer than 48 points remain on the monitor.
+/// A `None` result means the saved place is still usable. Maximized windows are
+/// left to the window manager.
+pub fn restored_origin(
+    outer_min: [f32; 2],
+    outer_size: [f32; 2],
+    monitor: [f32; 2],
+) -> Option<[f32; 2]> {
+    let (x, y) = (outer_min[0], outer_min[1]);
+    let (w, h) = (outer_size[0], outer_size[1]);
+    let (mw, mh) = (monitor[0], monitor[1]);
+    if mw <= 0.0 || mh <= 0.0 || w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let visible_w = (x + w).min(mw) - x.max(0.0);
+    let visible_h = (y + h).min(mh) - y.max(0.0);
+    if visible_w >= 48.0 && visible_h >= 48.0 {
+        return None;
+    }
+    let nx = ((mw - w) * 0.5).clamp(8.0, (mw - 64.0).max(8.0));
+    let ny = ((mh - h) * 0.5).clamp(8.0, (mh - 64.0).max(8.0));
+    Some([nx, ny])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_desktop_build_starts_fullscreen() {
-        assert!(STARTS_FULLSCREEN);
+    fn the_desktop_build_starts_in_a_window() {
+        assert!(!STARTS_FULLSCREEN);
+        assert!(INITIAL_INNER[0] < 1366.0);
+        assert!(INITIAL_INNER[1] < 700.0);
+        assert!(MIN_INNER[0] <= INITIAL_INNER[0]);
+        assert!(MIN_INNER[1] <= INITIAL_INNER[1]);
+        assert_eq!(WINDOW_APP_ID, "nesticles-window");
+        assert_ne!(WINDOW_APP_ID, "nesticles");
+    }
+
+    #[test]
+    fn an_on_screen_window_is_not_moved() {
+        assert_eq!(
+            restored_origin([40.0, 40.0], [800.0, 600.0], [1366.0, 768.0]),
+            None
+        );
+    }
+
+    #[test]
+    fn an_off_screen_window_is_brought_back() {
+        let origin = restored_origin([-4000.0, -4000.0], [800.0, 600.0], [1366.0, 768.0]);
+        let origin = origin.expect("off-screen geometry should move");
+        assert!(origin[0] >= 0.0 && origin[0] < 1366.0);
+        assert!(origin[1] >= 0.0 && origin[1] < 768.0);
     }
 
     #[test]

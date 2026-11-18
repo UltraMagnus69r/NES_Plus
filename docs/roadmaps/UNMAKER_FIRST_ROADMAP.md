@@ -22,3 +22,5 @@ R0 is this audit and these documents. It does not implement R1 or the Goomba sli
 | After | Historical Maker roadmap | Phases 10–20 may resume. They do not start before the gate. |
 
 Phase 9.1 remains unaccepted. Its test candidate does not satisfy R2.
+
+R1.1 corrects the window. The R1 test candidate started fullscreen. The owner replaced that requirement: Nesticles launches in a decorated, resizable window. UnMaker Lab and Maker Engine share it. Fullscreen is optional and starts only from the menu or F11. Escape leaves fullscreen. Older release notes that say the app opened fullscreen describe those builds, not this requirement.

@@ -671,7 +671,7 @@ impl eframe::App for NestApp {
             }
             self.apply_r1_tour(ctx);
         }
-        self.ensure_fullscreen(ctx);
+        self.place_window_if_needed(ctx);
         self.handle_close_request(ctx);
         self.handle_shortcuts(ctx);
         if self.close_when_clean && !self.dirty {
@@ -4985,19 +4985,38 @@ fn brand_texture(ctx: &egui::Context) -> TextureHandle {
 }
 
 impl NestApp {
-    fn ensure_fullscreen(&mut self, ctx: &egui::Context) {
-        if std::env::var_os("NESTICLES_R1_WINDOW").is_some() {
+    /// One check after the window manager has placed the frame. A maximized or
+    /// fullscreen window is left alone. An off-screen restored window is moved
+    /// back. This does not turn fullscreen on.
+    fn place_window_if_needed(&mut self, ctx: &egui::Context) {
+        if self.startup_frames >= 8 {
             return;
         }
-        if !studio::STARTS_FULLSCREEN || self.startup_frames >= 8 {
-            return;
-        }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-        if let Some(size) = ctx.input(|input| input.viewport().monitor_size) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
-        }
+        let (fullscreen, maximized, outer, monitor) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.fullscreen.unwrap_or(false),
+                viewport.maximized.unwrap_or(false),
+                viewport.outer_rect,
+                viewport.monitor_size,
+            )
+        });
         self.startup_frames += 1;
+        if fullscreen || maximized {
+            self.startup_frames = 8;
+            return;
+        }
+        let (Some(outer), Some(monitor)) = (outer, monitor) else {
+            return;
+        };
+        self.startup_frames = 8;
+        if let Some([x, y]) = studio::restored_origin(
+            [outer.min.x, outer.min.y],
+            [outer.width(), outer.height()],
+            [monitor.x, monitor.y],
+        ) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+        }
     }
 
     fn handle_close_request(&mut self, ctx: &egui::Context) {
@@ -5014,7 +5033,7 @@ impl NestApp {
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         let typing = ctx.wants_keyboard_input();
-        let (save, open, undo, redo, play, flip) = ctx.input(|input| {
+        let (save, open, undo, redo, play, flip, fullscreen_key, escape) = ctx.input(|input| {
             let command = input.modifiers.command;
             (
                 command && input.key_pressed(egui::Key::S),
@@ -5025,6 +5044,8 @@ impl NestApp {
                         || (input.key_pressed(egui::Key::Z) && input.modifiers.shift)),
                 input.key_pressed(egui::Key::F5),
                 input.key_pressed(egui::Key::F6),
+                input.key_pressed(egui::Key::F11),
+                input.key_pressed(egui::Key::Escape),
             )
         });
         if save {
@@ -5059,6 +5080,24 @@ impl NestApp {
         if flip && !typing {
             self.flip_workspace();
         }
+        if fullscreen_key && !typing {
+            self.toggle_fullscreen(ctx);
+        }
+        if escape && !typing {
+            self.leave_fullscreen(ctx);
+        }
+    }
+
+    fn toggle_fullscreen(&mut self, ctx: &egui::Context) {
+        let on = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!on));
+    }
+
+    fn leave_fullscreen(&mut self, ctx: &egui::Context) {
+        let on = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
+        if on {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
     }
 
     fn request_exit(&mut self, ctx: &egui::Context) {
@@ -5077,6 +5116,7 @@ impl NestApp {
             self.stop_music();
             self.tab = Tab::Courses;
         }
+        // A workspace change is a view. It does not resize, maximize, or hide decorations.
         let next = self.workspace.flip();
         if next == Workspace::Unmaker {
             self.unmaker = UnmakerView::Home;
@@ -5799,6 +5839,10 @@ impl NestApp {
                 }
                 if ui.button("Godot preview (experimental)").clicked() {
                     self.godot_open = true;
+                    self.app_menu = false;
+                }
+                if ui.button("Full screen  F11").clicked() {
+                    self.toggle_fullscreen(ctx);
                     self.app_menu = false;
                 }
                 if ui.button("Exit to Desktop").clicked() {

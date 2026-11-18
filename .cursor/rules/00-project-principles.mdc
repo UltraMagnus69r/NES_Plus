@@ -17,4 +17,6 @@ A mock is not a live API. A homebrew ROM is not SMB1. A unit test is not the pac
 
 Historical Phase 9.1 is unaccepted. Do not renumber it or start Phase 10. The active sequence is the UnMaker-first roadmap in docs/roadmaps/UNMAKER_FIRST_ROADMAP.md. R0 is accepted. Do not implement the Goomba slice until the owner accepts R1.
 
+Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
+
 End a substantial session with one copyable Markdown handoff, `NESTICLES — [PHASE / TASK] — STATUS FOR CHATGPT`. JSON does not replace it. The full shape is in AGENTS.md under "ChatGPT handoff".
