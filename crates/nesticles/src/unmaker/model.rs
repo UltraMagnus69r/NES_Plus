@@ -6,11 +6,69 @@
 use nesticles_core::codec::indices_to_rgba;
 use nesticles_core::pipeline::{Candidate, CoverageRow, ReviewStatus};
 
-const GRAY: [[u8; 3]; 4] = [[0, 0, 0], [96, 96, 96], [168, 168, 168], [248, 248, 248]];
+/// Display colors for source-tile review. None of these is an original palette.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ReviewPalette {
+    GrayRamp,
+    #[default]
+    SpriteA,
+    SpriteB,
+    Terrain,
+}
+
+impl ReviewPalette {
+    pub const ALL: [ReviewPalette; 4] = [
+        ReviewPalette::GrayRamp,
+        ReviewPalette::SpriteA,
+        ReviewPalette::SpriteB,
+        ReviewPalette::Terrain,
+    ];
+
+    pub const NOTE: &'static str = "Review colors only — original palette not yet verified.";
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::GrayRamp => "Gray ramp",
+            Self::SpriteA => "Sprite review A",
+            Self::SpriteB => "Sprite review B",
+            Self::Terrain => "Terrain review",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim().to_ascii_lowercase().as_str() {
+            "gray" | "grey" | "ramp" => Some(Self::GrayRamp),
+            "a" | "sprite-a" | "warm" => Some(Self::SpriteA),
+            "b" | "sprite-b" | "contrast" => Some(Self::SpriteB),
+            "terrain" | "ground" => Some(Self::Terrain),
+            _ => None,
+        }
+    }
+
+    /// Four display colors. Index 0 stays transparent in the preview.
+    pub fn colors(self) -> [[u8; 3]; 4] {
+        match self {
+            Self::GrayRamp => [[0, 0, 0], [96, 96, 96], [168, 168, 168], [248, 248, 248]],
+            // Warm browns so separate character pieces stay distinguishable.
+            Self::SpriteA => [[0, 0, 0], [80, 40, 16], [216, 112, 48], [248, 224, 176]],
+            // Stronger contrast than palette A. Still not a verified game palette.
+            Self::SpriteB => [[0, 0, 0], [32, 32, 120], [220, 40, 40], [248, 232, 64]],
+            Self::Terrain => [[0, 0, 0], [48, 96, 32], [144, 88, 40], [200, 216, 112]],
+        }
+    }
+}
 
 /// One NES tile as gray RGBA. The tile count is 1, so the picture is 8×8.
 pub fn gray_tile_rgba(indices: &[u8]) -> (u32, u32, Vec<u8>) {
-    indices_to_rgba(indices, 1, 1, &GRAY, true)
+    indices_to_rgba(indices, 1, 1, &ReviewPalette::GrayRamp.colors(), true)
+}
+
+/// One NES tile in the selected review colors. The tile count is 1, so the picture is 8×8.
+pub fn review_tile_rgba(indices: &[u8], palette: ReviewPalette) -> (u32, u32, Vec<u8>) {
+    if palette == ReviewPalette::GrayRamp {
+        return gray_tile_rgba(indices);
+    }
+    indices_to_rgba(indices, 1, 1, &palette.colors(), true)
 }
 
 pub const NOT_RECONSTRUCTED: &str =
@@ -114,6 +172,8 @@ pub struct StudioState {
     pub investigated: bool,
     /// Previous tile, audio, library, and export screens. Not the studio path.
     pub legacy_tools: bool,
+    /// Display colors for CHR evidence. Not stored in the project.
+    pub review_palette: ReviewPalette,
 }
 
 impl Default for StudioState {
@@ -132,6 +192,7 @@ impl Default for StudioState {
             stage_log: Vec::new(),
             investigated: false,
             legacy_tools: false,
+            review_palette: ReviewPalette::SpriteA,
         }
     }
 }
@@ -197,8 +258,7 @@ pub fn preview_policy(reconstructed_frames: usize, timing_verified: bool) -> Pre
             can_play: false,
             message: NOT_RECONSTRUCTED.into(),
             timing_label: "No reconstructed frames, so there is no timing to play.".into(),
-            palette_label: "Palette is unverified. Source tiles, when shown, use a gray ramp."
-                .into(),
+            palette_label: ReviewPalette::NOTE.into(),
         };
     }
     PreviewPolicy {
@@ -506,6 +566,22 @@ mod tests {
     fn a_source_tile_is_eight_by_eight() {
         let (w, h, rgba) = gray_tile_rgba(&[0u8; 64]);
         assert_eq!((w, h, rgba.len()), (8, 8, 256));
+    }
+
+    #[test]
+    fn review_palettes_change_the_visible_color() {
+        let indices = [1u8; 64];
+        let gray = review_tile_rgba(&indices, ReviewPalette::GrayRamp).2;
+        let warm = review_tile_rgba(&indices, ReviewPalette::SpriteA).2;
+        let contrast = review_tile_rgba(&indices, ReviewPalette::SpriteB).2;
+        let terrain = review_tile_rgba(&indices, ReviewPalette::Terrain).2;
+        assert_ne!(gray, warm);
+        assert_ne!(warm, contrast);
+        assert_ne!(contrast, terrain);
+        assert_eq!(&warm[0..3], &[80, 40, 16]);
+        assert!(ReviewPalette::NOTE.contains("Review colors only"));
+        assert!(ReviewPalette::NOTE.contains("not yet verified"));
+        assert_eq!(ReviewPalette::parse("b"), Some(ReviewPalette::SpriteB));
     }
 
     #[test]

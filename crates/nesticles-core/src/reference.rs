@@ -49,7 +49,19 @@ pub fn bounded_body(len: usize, limit: usize) -> Result<(), String> {
 }
 
 pub fn http_status_error(stage: &str, status: u16) -> String {
+    if status == 403 {
+        return "This site blocked automated access (HTTP 403). The website refused the automated request. The address is not being reported as invalid. This is a site restriction, not an application crash or a page-parse failure. You can continue without a reference, try a direct image URL, or import a local image instead.".into();
+    }
     format!("Failed during {stage}. The server returned HTTP {status}.")
+}
+
+/// Keep a message that is already written for the user. Other failures keep the stage name.
+pub fn present_fetch_error(stage: &str, err: &str) -> String {
+    if err.contains("blocked automated access") || err.starts_with("Failed during") {
+        err.to_string()
+    } else {
+        format!("Failed during {stage}. {err}")
+    }
 }
 
 pub fn scan_reference_html(page_url: &str, html: &str) -> Vec<RefImage> {
@@ -408,8 +420,9 @@ mod tests {
         assert!(urls.contains(&"https://cdn.example/sprites/nes/smb/enemies.png"));
         assert!(urls.contains(&"https://cdn.example/sprites/items.gif"));
         assert!(urls.iter().all(|url| !url.ends_with("notes.html")));
-        assert!(found.iter().any(|item| item.category == "Mario"
-            && item.class == RefClass::Custom));
+        assert!(found
+            .iter()
+            .any(|item| item.category == "Mario" && item.class == RefClass::Custom));
         assert!(found
             .iter()
             .any(|item| item.category == "Enemies" && item.class == RefClass::Original));
@@ -428,15 +441,18 @@ mod tests {
         assert!(found
             .iter()
             .any(|item| item.category == "Backgrounds" && item.class == RefClass::Original));
-        assert!(found
-            .iter()
-            .any(|item| item.class == RefClass::SiteChrome));
+        assert!(found.iter().any(|item| item.class == RefClass::SiteChrome));
     }
 
     #[test]
     fn malformed_and_empty_pages_do_not_invent_images() {
         let broken = scan_reference_html(PAGE, "<img src=\"https://cdn.example/a.png\"");
-        assert!(broken.is_empty() || broken.iter().all(|item| item.image_url.starts_with("https://")));
+        assert!(
+            broken.is_empty()
+                || broken
+                    .iter()
+                    .all(|item| item.image_url.starts_with("https://"))
+        );
         assert!(scan_reference_html(PAGE, "<p>No pictures here</p>").is_empty());
         assert!(scan_reference_html(PAGE, "<a href=\"relative-page\">Mario</a>").is_empty());
     }
@@ -462,6 +478,14 @@ mod tests {
         let text = http_status_error("Page retrieval", 404);
         assert!(text.contains("404"));
         assert!(text.contains("Page retrieval"));
+        let blocked = http_status_error("Page retrieval", 403);
+        assert!(blocked.contains("blocked automated access"));
+        assert!(blocked.contains("HTTP 403"));
+        assert!(blocked.contains("not being reported as invalid"));
+        assert!(blocked.contains("not an application crash"));
+        assert!(!blocked.to_ascii_lowercase().contains("bad url"));
+        let shown = present_fetch_error("Page retrieval", &blocked);
+        assert_eq!(shown, blocked);
     }
 
     #[test]

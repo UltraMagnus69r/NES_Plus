@@ -22,6 +22,7 @@ enum RefEvent {
     Line(String),
     Page(Vec<RefImage>),
     Image { index: usize, bytes: Vec<u8> },
+    Direct { url: String, bytes: Vec<u8> },
     Failed { detail: String },
 }
 
@@ -675,6 +676,19 @@ impl NestApp {
                     self.accept_reference_bytes(index, bytes);
                     done = true;
                 }
+                RefEvent::Direct { url, bytes } => {
+                    let item = RefImage {
+                        title: "Direct image".into(),
+                        category: "Other".into(),
+                        class: RefClass::Custom,
+                        page_url: url.clone(),
+                        image_url: url,
+                    };
+                    self.extract.ref_items.push(item);
+                    let index = self.extract.ref_items.len() - 1;
+                    self.accept_reference_bytes(index, bytes);
+                    done = true;
+                }
                 RefEvent::Failed { detail } => {
                     self.extract.ref_error = Some(detail.clone());
                     self.extract.ref_note = detail.clone();
@@ -702,9 +716,7 @@ impl NestApp {
                 start = true;
             }
             if ui.button("Continue without reference").clicked() {
-                self.extract.ref_note = "Continuing with the ROM bytes only.".into();
-                self.extract.ref_log
-                    .push("Continuing with the ROM bytes only.".into());
+                self.continue_without_reference();
             }
             if ui.button("Import local image").clicked() {
                 self.import_local_reference();
@@ -719,6 +731,12 @@ impl NestApp {
         if let Some(err) = &self.extract.ref_error.clone() {
             ui.label(RichText::new(err).strong());
             ui.horizontal_wrapped(|ui| {
+                if ui.button("Continue without reference").clicked() {
+                    self.continue_without_reference();
+                }
+                if ui.button("Fetch as a direct image").clicked() {
+                    self.start_direct_image_reference();
+                }
                 if ui.button("Retry").clicked() {
                     self.start_reference_fetch();
                 }
@@ -939,7 +957,7 @@ impl NestApp {
             match openai::fetch_reference_page(&url, &cancel) {
                 Err(err) => {
                     let _ = tx.send(RefEvent::Failed {
-                        detail: format!("Failed during Page retrieval. {err}"),
+                        detail: reference::present_fetch_error("Page retrieval", &err),
                     });
                 }
                 Ok(bytes) => {
@@ -989,7 +1007,7 @@ impl NestApp {
             }
             Err(err) => {
                 let _ = tx.send(RefEvent::Failed {
-                    detail: format!("Failed during Preparing previews. {err}"),
+                    detail: reference::present_fetch_error("Preparing previews", &err),
                 });
             }
         });
@@ -1034,7 +1052,65 @@ impl NestApp {
         }
     }
 
-    fn import_local_reference(&mut self) {
+    pub(crate) fn continue_without_reference(&mut self) {
+        self.cancel_reference();
+        self.extract.ref_error = None;
+        let line = "Continuing with the ROM bytes only.".to_string();
+        self.extract.ref_note = line.clone();
+        self.extract.ref_log.push(line);
+        self.studio.state.notice =
+            "Continuing without a reference. The cartridge investigation does not need one."
+                .into();
+    }
+
+    pub(crate) fn reference_recovery_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Continue without reference").clicked() {
+                self.continue_without_reference();
+            }
+            if ui.button("Import local image").clicked() {
+                self.import_local_reference();
+            }
+            if ui.button("Fetch as a direct image").clicked() {
+                self.start_direct_image_reference();
+            }
+            if ui.button("Retry").clicked() {
+                self.start_reference_fetch();
+            }
+        });
+    }
+
+    pub(crate) fn start_direct_image_reference(&mut self) {
+        let url = self.extract.ref_url.trim().to_string();
+        if let Err(err) = nesticles_core::pipeline::allow_reference_url(&url) {
+            let detail = format!("Failed before Connecting. {err}");
+            self.extract.ref_error = Some(detail.clone());
+            self.extract.ref_note = detail.clone();
+            self.extract.ref_log.push(detail);
+            return;
+        }
+        self.cancel_reference();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        self.extract.ref_cancel = Some(cancel.clone());
+        self.extract.ref_rx = Some(rx);
+        self.extract.ref_error = None;
+        self.extract.ref_log
+            .push("Fetching that address as an image.".into());
+        self.extract.ref_note = "Fetching that address as an image.".into();
+        std::thread::spawn(move || match openai::fetch_reference_image(&url, &cancel) {
+            Ok(bytes) => {
+                let _ = tx.send(RefEvent::Direct { url, bytes });
+            }
+            Err(err) => {
+                let _ = tx.send(RefEvent::Failed {
+                    detail: reference::present_fetch_error("image retrieval", &err),
+                });
+            }
+        });
+    }
+
+    pub(crate) fn import_local_reference(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Image", &["png", "jpg", "jpeg", "gif"])
             .pick_file()
