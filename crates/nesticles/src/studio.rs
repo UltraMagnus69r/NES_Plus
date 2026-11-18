@@ -72,7 +72,7 @@ pub fn unmaker_mist() -> Color32 {
     Color32::from_rgb(244, 244, 244)
 }
 
-/// UnMaker Lab only. Maker Engine keeps [`visuals`].
+/// Shared widget theme. Maker Engine and UnMaker Lab both use it.
 pub fn unmaker_visuals() -> Visuals {
     let mut visuals = Visuals::light();
     let ink = unmaker_ink();
@@ -99,27 +99,14 @@ pub fn unmaker_visuals() -> Visuals {
     visuals
 }
 
+/// Maker Engine uses the same surfaces as UnMaker Lab.
 pub fn visuals() -> Visuals {
-    let mut visuals = Visuals::light();
-    visuals.panel_fill = parchment();
-    visuals.window_fill = parchment();
-    visuals.extreme_bg_color = Color32::from_rgb(255, 248, 236);
-    visuals.faint_bg_color = Color32::from_rgb(232, 214, 186);
-    visuals.widgets.noninteractive.bg_fill = parchment();
-    visuals.widgets.noninteractive.fg_stroke.color = ink();
-    visuals.widgets.inactive.bg_fill = Color32::from_rgb(255, 248, 236);
-    visuals.widgets.inactive.fg_stroke.color = ink();
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 214, 140);
-    visuals.widgets.hovered.fg_stroke.color = ink();
-    visuals.widgets.active.bg_fill = amber();
-    visuals.widgets.active.fg_stroke.color = ink();
-    visuals.selection.bg_fill = amber();
-    visuals.selection.stroke.color = ink();
-    visuals.hyperlink_color = Color32::from_rgb(36, 96, 120);
-    visuals.override_text_color = Some(ink());
-    visuals.window_stroke.color = Color32::from_rgb(180, 156, 120);
-    visuals.widgets.inactive.expansion = 1.0;
-    visuals
+    unmaker_visuals()
+}
+
+/// Course canvas. Light enough to sit in the shared theme, distinct from the panels.
+pub fn canvas() -> Color32 {
+    Color32::from_rgb(198, 220, 228)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -244,6 +231,12 @@ pub fn restored_origin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maker_uses_the_same_paper_as_unmaker() {
+        assert_eq!(visuals().panel_fill, unmaker_visuals().panel_fill);
+        assert_ne!(visuals().panel_fill, parchment());
+    }
 
     #[test]
     fn the_desktop_build_starts_in_a_window() {

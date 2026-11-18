@@ -6,7 +6,7 @@
 use super::model::{
     approve_feedback, continue_available, gallery_items, ignore_feedback, issue_queue,
     preview_policy, reconstructed_frame_count, restore_feedback, review_tile_rgba, skip_feedback,
-    Group, IssueCard, ReviewPalette, Stage, StudioState, NOT_RECONSTRUCTED,
+    Group, IssueCard, ReviewPalette, Stage, StudioState, StudioTool, NOT_RECONSTRUCTED,
 };
 use crate::app::NestApp;
 use crate::studio::{self, Workspace};
@@ -24,6 +24,7 @@ pub struct StudioUi {
     pub state: StudioState,
     pub tiles: HashMap<u32, TextureHandle>,
     painted: ReviewPalette,
+    tool_env_applied: bool,
 }
 
 impl Default for StudioUi {
@@ -32,6 +33,7 @@ impl Default for StudioUi {
             state: StudioState::default(),
             tiles: HashMap::new(),
             painted: ReviewPalette::default(),
+            tool_env_applied: false,
         }
     }
 }
@@ -76,22 +78,6 @@ impl NestApp {
                             .size(16.0)
                             .color(studio::unmaker_red()),
                     );
-                    if ui
-                        .add(self.bar_button(
-                            if self.studio.state.legacy_tools {
-                                "Studio"
-                            } else {
-                                "Source tools"
-                            },
-                            false,
-                        ))
-                        .on_hover_text(
-                            "Source tools are the earlier tile page, audio, library, and export. They are not the reconstruction studio.",
-                        )
-                        .clicked()
-                    {
-                        self.studio.state.legacy_tools = !self.studio.state.legacy_tools;
-                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(self.bar_button("Exit", true))
@@ -146,10 +132,7 @@ impl NestApp {
     }
 
     pub(crate) fn unmaker_studio(&mut self, ctx: &egui::Context) {
-        if self.studio.state.legacy_tools {
-            self.unmaker_shell(ctx);
-            return;
-        }
+        self.apply_studio_tool_env();
         egui::TopBottomPanel::bottom("unmaker-foot")
             .exact_height(40.0)
             .frame(
@@ -175,12 +158,14 @@ impl NestApp {
                 if self.stage_button(ui, Stage::Home).clicked() {
                     self.studio.state.stage = Stage::Home;
                     self.studio.state.show_manual = false;
+                    self.studio.state.tool = None;
                 }
                 ui.add_space(8.0);
                 for stage in Stage::journey() {
                     if self.stage_button(ui, stage).clicked() {
                         self.studio.state.stage = stage;
                         self.studio.state.show_manual = false;
+                        self.studio.state.tool = None;
                     }
                 }
                 ui.add_space(12.0);
@@ -225,14 +210,20 @@ impl NestApp {
                 }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |ui| match self.studio.state.stage {
-                        Stage::Home => self.home_stage(ui),
-                        Stage::Import => self.import_stage(ui),
-                        Stage::Investigate => self.investigate_stage(ui),
-                        Stage::Discover => self.discover_stage(ui, ctx),
-                        Stage::Review => self.review_stage(ui, ctx),
-                        Stage::Create => self.create_stage(ui, ctx),
-                        Stage::Save => self.save_stage(ui),
+                    .show(ui, |ui| {
+                        if let Some(tool) = self.studio.state.tool {
+                            self.embedded_tool(ui, ctx, tool);
+                        } else {
+                            match self.studio.state.stage {
+                                Stage::Home => self.home_stage(ui),
+                                Stage::Import => self.import_stage(ui),
+                                Stage::Investigate => self.investigate_stage(ui),
+                                Stage::Discover => self.discover_stage(ui, ctx),
+                                Stage::Review => self.review_stage(ui, ctx),
+                                Stage::Create => self.create_stage(ui, ctx),
+                                Stage::Save => self.save_stage(ui),
+                            }
+                        }
                     });
             });
     }
@@ -479,10 +470,31 @@ impl NestApp {
         } else if self.extract.job.is_some() {
             ui.label("Counts appear when this pass finishes.");
         }
+        ui.add_space(8.0);
+        ui.label("Notes, the guide, and provider settings stay with this investigation.");
+        self.tool_row(
+            ui,
+            &[
+                (StudioTool::Notes, "Project notes. They are not uploaded."),
+                (
+                    StudioTool::Providers,
+                    "Provider settings. Nothing is sent until you ask.",
+                ),
+                (StudioTool::Guide, "Short explanations. They do not change the cartridge."),
+            ],
+        );
     }
 
     fn discover_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.label(RichText::new("Discover").size(28.0));
+        self.tool_row(
+            ui,
+            &[
+                (StudioTool::Tiles, "Inspect the raw tiles from the cartridge."),
+                (StudioTool::Audio, "Inspect sounds kept in the project."),
+            ],
+        );
+        ui.add_space(8.0);
         let Some(session) = self.extract.session.clone() else {
             ui.label("There is no investigation to show. Start one from Import.");
             if ui.button("Go to Import").clicked() {
@@ -607,6 +619,7 @@ impl NestApp {
         ui.label(&issue.attempted);
         ui.label(&issue.next_action);
         ui.label("Suggested fix: none. No automatic correction engine is running.");
+        ui.label("Ignored candidates stay in the session. The Ignored filter on Discover lists them.");
         let item = gallery_items(&session.candidates, &session.coverage)
             .into_iter()
             .find(|item| item.name == issue.name);
@@ -697,6 +710,14 @@ impl NestApp {
     fn create_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.label(RichText::new("Create").size(28.0));
         ui.label("Original sprites live in the project. They are separate from ROM candidates.");
+        ui.label("Assemble and Animate are the existing editors. They do not reconstruct a Goomba.");
+        self.tool_row(
+            ui,
+            &[(
+                StudioTool::Behavior,
+                "Existing behavior graph. It is not a second physics model.",
+            )],
+        );
         ui.horizontal(|ui| {
             if ui
                 .selectable_label(!self.studio.state.create_animate, "Assemble")
@@ -742,6 +763,92 @@ impl NestApp {
         ui.label("• Reference pages are not matched to ROM tiles.");
         ui.label("• Palettes and animation timings are not verified.");
         ui.label("• Live OpenAI has not been accepted. This screen does not call it.");
+        ui.add_space(8.0);
+        ui.label("Library, package export, and the overworld list are the existing tools.");
+        self.tool_row(
+            ui,
+            &[
+                (
+                    StudioTool::Library,
+                    "Local packages and recipes. Nothing here publishes a reconstructed sprite.",
+                ),
+                (
+                    StudioTool::Export,
+                    "Package export still paints the first frame only.",
+                ),
+                (
+                    StudioTool::Overworld,
+                    "Existing overworld list. It does not build a map by itself.",
+                ),
+            ],
+        );
+    }
+
+    fn tool_row(&mut self, ui: &mut egui::Ui, tools: &[(StudioTool, &str)]) {
+        ui.horizontal_wrapped(|ui| {
+            for (tool, tip) in tools {
+                if ui
+                    .button(tool.label())
+                    .on_hover_text(*tip)
+                    .clicked()
+                {
+                    self.studio.state.tool = Some(*tool);
+                    self.studio.state.notice = format!("{} — {}", tool.label(), tool.note());
+                }
+            }
+        });
+    }
+
+    fn embedded_tool(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, tool: StudioTool) {
+        if ui.button("Back").on_hover_text("Return to this stage.").clicked() {
+            self.studio.state.tool = None;
+            return;
+        }
+        ui.label(RichText::new(tool.label()).size(28.0));
+        ui.label(tool.note());
+        ui.separator();
+        match tool {
+            StudioTool::Tiles => {
+                self.reference_banner(ui);
+                self.cartridge(ui);
+                ui.separator();
+                self.tiles(ui, ctx);
+            }
+            StudioTool::Audio => self.audio(ui),
+            StudioTool::Library => self.library(ui),
+            StudioTool::Export => self.export_tab(ui),
+            StudioTool::Notes => self.notes(ui),
+            StudioTool::Overworld => self.overworld(ui),
+            StudioTool::Providers => self.providers_view(ui),
+            StudioTool::Behavior => self.behavior_view(ui),
+            StudioTool::Guide => self.guide(ui),
+        }
+    }
+
+    fn apply_studio_tool_env(&mut self) {
+        if self.studio.tool_env_applied {
+            return;
+        }
+        self.studio.tool_env_applied = true;
+        let Ok(name) = std::env::var("NESTICLES_STUDIO_TOOL") else {
+            return;
+        };
+        let name = name.to_ascii_lowercase();
+        if name == "animate" {
+            self.studio.state.stage = Stage::Create;
+            self.studio.state.create_animate = true;
+            self.studio.state.tool = None;
+            return;
+        }
+        if name == "assemble" {
+            self.studio.state.stage = Stage::Create;
+            self.studio.state.create_animate = false;
+            self.studio.state.tool = None;
+            return;
+        }
+        if let Some(tool) = StudioTool::parse(&name) {
+            self.studio.state.tool = Some(tool);
+        }
     }
 
     fn preview_column(

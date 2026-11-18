@@ -5122,7 +5122,7 @@ impl NestApp {
             self.unmaker = UnmakerView::Home;
             self.studio.state.stage = unmaker::Stage::Home;
             self.studio.state.show_manual = false;
-            self.studio.state.legacy_tools = false;
+            self.studio.state.tool = None;
         }
         self.workspace = next;
         self.drawer_open = false;
@@ -5205,36 +5205,41 @@ impl NestApp {
                 ui.horizontal(|ui| {
                     let flip = egui::Button::new(
                         RichText::new(self.workspace.other_label())
-                            .color(studio::ink())
+                            .color(studio::unmaker_ink())
                             .size(18.0),
                     )
-                    .fill(studio::parchment())
+                    .fill(studio::unmaker_paper())
+                    .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
                     .min_size(Vec2::new(168.0, 40.0));
                     if ui.add(flip).on_hover_text("Flip workspace (F6)").clicked() {
                         self.flip_workspace();
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let exit = egui::Button::new(
-                            RichText::new("Exit").color(studio::cream()).size(18.0),
+                            RichText::new("Exit").color(Color32::WHITE).size(18.0),
                         )
-                        .fill(studio::clay())
+                        .fill(studio::unmaker_red())
                         .min_size(Vec2::new(84.0, 40.0));
                         if ui.add(exit).on_hover_text("Exit to Desktop").clicked() {
                             self.request_exit(ctx);
                         }
                         let menu = egui::Button::new(
-                            RichText::new("Menu").color(studio::ink()).size(18.0),
+                            RichText::new("Menu").color(studio::unmaker_ink()).size(18.0),
                         )
-                        .fill(studio::parchment())
+                        .fill(studio::unmaker_paper())
+                        .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
                         .min_size(Vec2::new(88.0, 40.0));
                         if ui.add(menu).clicked() {
                             self.app_menu = !self.app_menu;
                         }
                         let save_label = if self.dirty { "Save ●" } else { "Save" };
                         let save = egui::Button::new(
-                            RichText::new(save_label).color(studio::cream()).size(18.0),
+                            RichText::new(save_label)
+                                .color(studio::unmaker_ink())
+                                .size(18.0),
                         )
-                        .fill(studio::grass())
+                        .fill(studio::unmaker_paper())
+                        .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
                         .min_size(Vec2::new(110.0, 40.0));
                         if ui.add(save).on_hover_text("Save (Ctrl+S)").clicked() {
                             self.save_project_quick();
@@ -5246,7 +5251,7 @@ impl NestApp {
                     egui::Align2::CENTER_CENTER,
                     self.workspace.title(),
                     serif(22.0),
-                    studio::cream(),
+                    studio::unmaker_ink(),
                 );
             });
     }
@@ -5282,7 +5287,7 @@ impl NestApp {
                 .show(ctx, |ui| self.maker_inspector(ui));
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(studio::sky()).inner_margin(8.0))
+            .frame(egui::Frame::NONE.fill(studio::canvas()).inner_margin(8.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
@@ -5300,14 +5305,14 @@ impl NestApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(&self.status)
-                            .color(studio::cream())
+                            .color(studio::unmaker_ink())
                             .size(16.0),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let back = egui::Button::new(
-                            RichText::new("Edit").color(studio::cream()).size(20.0),
+                            RichText::new("Edit").color(Color32::WHITE).size(20.0),
                         )
-                        .fill(studio::grass())
+                        .fill(studio::unmaker_red())
                         .min_size(Vec2::new(160.0, 48.0));
                         if ui
                             .add(back)
@@ -5320,7 +5325,7 @@ impl NestApp {
                 });
             });
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(studio::sky()).inner_margin(8.0))
+            .frame(egui::Frame::NONE.fill(studio::canvas()).inner_margin(8.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.play_view(ui));
             });
@@ -5357,7 +5362,7 @@ impl NestApp {
                 .show(ctx, |ui| self.unmaker_inspector(ui));
         }
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(studio::sky()).inner_margin(8.0))
+            .frame(egui::Frame::NONE.fill(studio::canvas()).inner_margin(8.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::both()
                     .auto_shrink([false, false])
@@ -5446,7 +5451,7 @@ impl NestApp {
     ) -> bool {
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(studio::THUMB), Sense::click());
         ui.painter()
-            .rect_filled(rect, 8.0, Color32::from_rgb(255, 248, 236));
+            .rect_filled(rect, 8.0, studio::unmaker_mist());
         if let Some(tex) = self.textures.get(asset_id) {
             ui.painter().image(
                 tex.id(),
@@ -5456,12 +5461,12 @@ impl NestApp {
             );
         } else if !asset_id.is_empty() {
             ui.painter()
-                .rect_filled(rect.shrink(16.0), 4.0, studio::amber());
+                .rect_filled(rect.shrink(16.0), 4.0, studio::unmaker_line());
         }
         let stroke = if selected {
-            studio::amber()
+            studio::unmaker_red()
         } else {
-            Color32::from_rgb(180, 156, 120)
+            studio::unmaker_line()
         };
         ui.painter().rect_stroke(
             rect,
@@ -5495,11 +5500,11 @@ impl NestApp {
         let (rect, response) = ui.allocate_exact_size(Vec2::splat(studio::TOOL), Sense::click());
         let on = self.rail == name;
         let fill = if on {
-            studio::amber()
+            Color32::from_rgb(255, 236, 236)
         } else if response.hovered() {
-            Color32::from_rgb(255, 214, 140)
+            studio::unmaker_mist()
         } else {
-            Color32::from_rgb(255, 248, 236)
+            studio::unmaker_paper()
         };
         ui.painter().rect_filled(rect, 8.0, fill);
         draw_tool_icon(ui.painter(), rect, name);
@@ -5571,15 +5576,15 @@ impl NestApp {
             })
             .unwrap_or_else(|| "Nothing selected".into());
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(format!("{tool}  ·  {object}  ·  100%"))
-                    .color(studio::cream())
-                    .size(16.0),
-            );
+                ui.label(
+                    RichText::new(format!("{tool}  ·  {object}  ·  100%"))
+                        .color(studio::unmaker_ink())
+                        .size(16.0),
+                );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let play =
-                    egui::Button::new(RichText::new("PLAY").color(studio::cream()).size(22.0))
-                        .fill(studio::grass())
+                    egui::Button::new(RichText::new("PLAY").color(Color32::WHITE).size(22.0))
+                        .fill(studio::unmaker_red())
                         .min_size(Vec2::new(160.0, 48.0));
                 if ui
                     .add(play)
@@ -5589,8 +5594,9 @@ impl NestApp {
                     self.toggle_play();
                 }
                 ui.add_space(24.0);
-                let more = egui::Button::new(RichText::new("More").color(studio::ink()).size(16.0))
-                    .fill(studio::parchment())
+                let more = egui::Button::new(RichText::new("More").color(studio::unmaker_ink()).size(16.0))
+                    .fill(studio::unmaker_paper())
+                    .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
                     .min_size(Vec2::new(72.0, 48.0));
                 if ui
                     .add(more)
@@ -5784,14 +5790,14 @@ impl NestApp {
                 }
             });
         ui.horizontal(|ui| {
-            ui.label(RichText::new(name).color(studio::cream()).size(16.0));
+            ui.label(RichText::new(name).color(studio::unmaker_ink()).size(16.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let use_it = egui::Button::new(
                     RichText::new("Use in Maker")
-                        .color(studio::cream())
+                        .color(Color32::WHITE)
                         .size(20.0),
                 )
-                .fill(studio::grass())
+                .fill(studio::unmaker_red())
                 .min_size(Vec2::new(200.0, 48.0));
                 if ui.add(use_it).clicked() {
                     self.use_in_maker();
@@ -5899,21 +5905,21 @@ impl NestApp {
 
 fn navy_frame() -> egui::Frame {
     egui::Frame::NONE
-        .fill(studio::navy())
+        .fill(studio::unmaker_mist())
         .inner_margin(egui::Margin::symmetric(12, 8))
 }
 
 fn paper_frame() -> egui::Frame {
     egui::Frame::NONE
-        .fill(studio::parchment())
+        .fill(studio::unmaker_paper())
         .inner_margin(egui::Margin::symmetric(8, 6))
 }
 
 fn strip_button(ui: &mut egui::Ui, label: &str, on: bool) -> egui::Response {
     let fill = if on {
-        studio::amber()
+        Color32::from_rgb(255, 236, 236)
     } else {
-        Color32::from_rgb(255, 248, 236)
+        studio::unmaker_paper()
     };
     ui.add(
         egui::Button::new(RichText::new(label).color(studio::ink()).size(16.0))
