@@ -770,6 +770,7 @@ impl NestApp {
         ui.label("• Live OpenAI has not been accepted. This screen does not call it.");
         ui.add_space(8.0);
         ui.label("Library, package export, and the overworld list are the existing tools.");
+        self.workshop_files(ui);
         self.tool_row(
             ui,
             &[
@@ -1070,6 +1071,16 @@ impl NestApp {
             }
         }
         ui.label("Session storage: memory only, until a sprite is written into the project.");
+        if ui
+            .button("Load synthetic fixture")
+            .on_hover_text("A tiny local test cartridge. It is not Super Mario Bros.")
+            .clicked()
+        {
+            let bytes = nesticles_core::pipeline::synthetic_fixture();
+            self.load_rom_bytes("synthetic-fixture.nes", bytes);
+            self.studio.state.notice =
+                "Synthetic fixture only. It is not Super Mario Bros.".into();
+        }
     }
 
     fn choose_studio_rom(&mut self) {
