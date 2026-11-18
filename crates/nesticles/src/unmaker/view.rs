@@ -4,9 +4,9 @@
 //! character, and the preview does not play them as an animation.
 
 use super::model::{
-    approve_feedback, continue_available, gallery_items, gray_tile_rgba, ignore_feedback,
-    issue_queue, preview_policy, reconstructed_frame_count, restore_feedback, skip_feedback, Group,
-    IssueCard, Stage, StudioState, NOT_RECONSTRUCTED,
+    approve_feedback, continue_available, gallery_items, ignore_feedback, issue_queue,
+    preview_policy, reconstructed_frame_count, restore_feedback, review_tile_rgba, skip_feedback,
+    Group, IssueCard, ReviewPalette, Stage, StudioState, NOT_RECONSTRUCTED,
 };
 use crate::app::NestApp;
 use crate::studio::{self, Workspace};
@@ -23,6 +23,7 @@ use std::collections::HashMap;
 pub struct StudioUi {
     pub state: StudioState,
     pub tiles: HashMap<u32, TextureHandle>,
+    painted: ReviewPalette,
 }
 
 impl Default for StudioUi {
@@ -30,6 +31,7 @@ impl Default for StudioUi {
         Self {
             state: StudioState::default(),
             tiles: HashMap::new(),
+            painted: ReviewPalette::default(),
         }
     }
 }
@@ -403,8 +405,9 @@ impl NestApp {
                 self.start_investigation();
             }
         });
-        if let Some(err) = &self.extract.ref_error {
-            ui.colored_label(studio::unmaker_red(), err);
+        if let Some(err) = self.extract.ref_error.clone() {
+            ui.colored_label(studio::unmaker_red(), &err);
+            self.reference_recovery_row(ui);
         } else if let Some(line) = self.extract.ref_log.last() {
             ui.label(line);
         }
@@ -749,6 +752,7 @@ impl NestApp {
         candidates: &[nesticles_core::pipeline::Candidate],
     ) {
         ui.label(RichText::new("Preview").size(20.0));
+        self.review_palette_bar(ui);
         let Some(item) = item else {
             ui.label("Choose a candidate to see its evidence.");
             return;
@@ -857,6 +861,22 @@ impl NestApp {
         }
     }
 
+    fn review_palette_bar(&mut self, ui: &mut egui::Ui) {
+        ui.label(ReviewPalette::NOTE);
+        ui.horizontal_wrapped(|ui| {
+            for palette in ReviewPalette::ALL {
+                let selected = self.studio.state.review_palette == palette;
+                if ui.selectable_label(selected, palette.label()).clicked() && !selected {
+                    self.studio.state.review_palette = palette;
+                    self.studio.tiles.clear();
+                    self.studio.painted = palette;
+                    self.studio.state.notice =
+                        format!("Showing {}. {}", palette.label(), ReviewPalette::NOTE);
+                }
+            }
+        });
+    }
+
     fn evidence_texture(&mut self, ctx: &egui::Context, tile: u32) -> Option<TextureHandle> {
         if let Some(texture) = self.studio.tiles.get(&tile) {
             return Some(texture.clone());
@@ -864,9 +884,17 @@ impl NestApp {
         let rom = self.rom.as_ref()?;
         let offset = rom.info.chr_start + tile as usize * 16;
         let indices = decode_tile(&rom.bytes, offset, Codec::Nes)?;
-        let (w, h, rgba) = gray_tile_rgba(&indices);
+        if self.studio.painted != self.studio.state.review_palette {
+            self.studio.tiles.clear();
+            self.studio.painted = self.studio.state.review_palette;
+        }
+        let (w, h, rgba) = review_tile_rgba(&indices, self.studio.state.review_palette);
         let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
-        let texture = ctx.load_texture(format!("evidence-{tile}"), image, TextureOptions::NEAREST);
+        let texture = ctx.load_texture(
+            format!("evidence-{:?}-{tile}", self.studio.state.review_palette),
+            image,
+            TextureOptions::NEAREST,
+        );
         self.studio.tiles.insert(tile, texture.clone());
         Some(texture)
     }
@@ -1127,6 +1155,32 @@ impl NestApp {
         }
         self.workspace = Workspace::Unmaker;
         self.studio.state.stage = Stage::Home;
+        if let Ok(name) = std::env::var("NESTICLES_REVIEW_PALETTE") {
+            if let Some(palette) = ReviewPalette::parse(&name) {
+                self.studio.state.review_palette = palette;
+                self.studio.tiles.clear();
+            }
+        }
+        if tour == "reference" {
+            if let Ok(url) = std::env::var("NESTICLES_REFERENCE_URL") {
+                self.extract.ref_url = url;
+            }
+            if let Some(path) = std::env::var("NESTICLES_ROM").ok() {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    let name = std::path::Path::new(&path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("cartridge")
+                        .to_string();
+                    self.open_rom_for_unmaker(name, bytes);
+                }
+            }
+            if !self.extract.ref_url.trim().is_empty() {
+                self.start_reference_fetch();
+            }
+            self.studio.state.stage = Stage::Import;
+            return;
+        }
         if tour == "home" {
             return;
         }
