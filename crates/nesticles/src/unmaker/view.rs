@@ -739,8 +739,16 @@ impl NestApp {
         });
         if self.studio.state.create_animate {
             self.animate_view(ui, ctx);
+            ui.separator();
+            ui.label("Timeline and inspector from the existing animation editor.");
+            self.anim_timeline(ui);
+            ui.separator();
+            self.anim_inspector(ui);
         } else {
             self.assemble_view(ui, ctx);
+            ui.separator();
+            ui.label("Sprites already in this project.");
+            self.sprite_browser(ui);
         }
     }
 
