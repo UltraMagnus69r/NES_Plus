@@ -703,7 +703,7 @@ impl NestApp {
         }
     }
 
-    fn reference_panel(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn reference_panel(&mut self, ui: &mut egui::Ui) {
         let mut start = false;
         ui.horizontal_wrapped(|ui| {
             let field = ui.add(

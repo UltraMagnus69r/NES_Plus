@@ -406,6 +406,11 @@ impl NestApp {
             "{} reference image(s) listed.",
             self.extract.ref_items.len()
         ));
+        if !self.extract.ref_items.is_empty() {
+            ui.separator();
+            ui.label("Choose a listed image. It is not matched to the cartridge.");
+            self.reference_panel(ui);
+        }
     }
 
     fn investigate_stage(&mut self, ui: &mut egui::Ui) {
