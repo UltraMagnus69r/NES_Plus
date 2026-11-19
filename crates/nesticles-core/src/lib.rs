@@ -17,6 +17,7 @@ pub mod enemy_ai;
 pub mod engine;
 pub mod godot;
 pub mod guard;
+pub mod issues;
 pub mod physics;
 pub mod pipeline;
 pub mod player;
