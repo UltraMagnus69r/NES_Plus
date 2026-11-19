@@ -8,4 +8,4 @@ Mario, Luigi, and other candidates are not reconstructed. The Maker course start
 
 The verified SMB1 Goomba is still tiles 0x70–0x73, with the second walk pose mirrored, and defeat from tile 0xEF. Package pictures still keep every frame.
 
-Phase 9.1 is not accepted. Phase 10 is not included. R3 has not started. The application starts in a decorated window. Fullscreen is optional.
+Phase 9.1 is not accepted. Phase 10 is not included. The application starts in a decorated window. Fullscreen is optional. The owner later accepted this milestone on November 18, 2026. That acceptance does not remove the limits in this file.

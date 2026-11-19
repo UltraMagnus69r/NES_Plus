@@ -8,11 +8,13 @@ The root [README.md](README.md) describes the original workshop. Later behavior 
 
 Historical Phase 9.1 is **not accepted**. Its published build is a test candidate. Do not drop a Phase 9.1 acceptance item to make that phase look finished. Do not renumber Phases 0–9.1. Do not start historical Phase 10. Phases 10–20 stay suspended.
 
-The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is accepted. R1 is the UnMaker studio shell. R2 is the Goomba reconstruction and is not accepted. R2.3 is the Design Language 2.0 visual pass for UnMaker Lab and Maker Engine. It is not accepted. Do not start R3. Do not add reconstruction, style conversion, or new gameplay in the visual pass. Existing Maker behavior stays. The shared tokens are in `studio` and `design`.
+The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). The status list is [docs/roadmaps/MILESTONE_STATUS.md](docs/roadmaps/MILESTONE_STATUS.md). R0 is accepted. R1 remains the UnMaker studio shell as previously recorded; this update does not add a new R1 acceptance mark. The owner accepted R2 and R2.3 on November 18, 2026. R3, intelligent issue resolution and local learning, is authorized. R4 and later functional milestones are not accepted. Do not start historical Phase 10.
+
+Visual build labels R4, R5, R6, and R6.1 are presentation iterations on the R2.3 architecture. They are not roadmap milestones R4, R5, or R6. The accepted working presentation is the R6.1 chrome: UnMaker and Maker stay separate workspaces in one decorated window, with the glossy controls, scenic editor wallpaper, Discover gallery, and Maker parts browser. Do not restart that redesign and do not roll it back. The wallpaper is editor decoration. It is not course data.
 
 Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
 
-R1.2 adds review-only display palettes and a clearer recovery when a reference site returns HTTP 403. Those palettes are not original colors. R1.3 puts UnMaker and Maker on one white visual system and opens the old source utilities from the stage that owns them. R2 assembles the verified SMB1 Goomba into a project sprite. The walk is two mirrored poses. Defeat is a separate non-looping pose. The colors are still the review palette, not a verified original NES palette. R2 is not accepted. R3 has not started.
+R1.2 adds review-only display palettes and a clearer recovery when a reference site returns HTTP 403. Those palettes are not original colors. R1.3 puts UnMaker and Maker on one visual system and opens the old source utilities from the stage that owns them. R2 assembles the verified SMB1 Goomba into a project sprite. The walk is two mirrored poses. Defeat is a separate non-looping pose. The colors are still the review palette, not a verified original NES palette. Owner acceptance of R2 does not convert that palette into a verified NES palette, and it does not reconstruct Mario or Luigi.
 
 Blocked until the owner runs them on their own machine:
 
@@ -77,7 +79,7 @@ Godot export is an experimental preview. It does not play Phase 9 clips.
 
 OpenAI in UnMaker Lab is a real HTTPS client when the user turns the feature on and consents. The older workshop assistant and image maker still use `keys.json` (mode `0600`) as described in the root README. New credential work must not add another plaintext store. See [packaging/phase91/API.md](packaging/phase91/API.md), [ROM.md](packaging/phase91/ROM.md), and [KNOWLEDGE.md](packaging/phase91/KNOWLEDGE.md).
 
-R2.3 applies Design Language 2.0 to both workspaces. Do not start another visual direction while that pass is open.
+R2.3 Design Language 2.0, as presented by the accepted R6.1 visual baseline, is the current studio chrome. Do not open another visual direction while R3 is the functional milestone. Shared tokens live in `studio` and `design`. UI images load through `ui_assets`.
 
 ## Code
 

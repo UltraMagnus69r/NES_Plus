@@ -1,6 +1,6 @@
 # ADR 0001 — Retain the core and rebuild UnMaker orchestration
 
-Status: proposed for owner acceptance of R0. Not implemented.
+Status: the owner accepted R0, which selected this decision. The R6.1 chrome is the accepted presentation. Roadmap R3 is the next functional work. The option text below is the R0 record.
 
 ## Decision
 

@@ -21,10 +21,11 @@ Functionally tested means a Rust test or a driven UI action. Visually tested mea
 | Test Play | Implemented. | Same `toggle_play` as before |
 | Responsive collapse | Implemented in code. | Inspector side panel only when screen width >= 1100. Narrow path uses a window |
 | Mouse tour of SMB1 Goomba | Blocked on this machine. | `investigation_exposes_the_goomba_to_discover_without_a_launch_hook` panics: `/home/g/Desktop/Roms/smb1.nes` is not here. No ROM was substituted |
-| Owner visual acceptance | Blocked. | Owner has not accepted R2.3 |
+| Owner visual acceptance | Accepted by the owner on November 18, 2026. | Acceptance is the owner's decision. It does not convert framebuffer screenshots or env tours into a mouse pass. The accepted chrome is the later R6.1 visual label |
 | 16-bit, Modern Pixel, Retro Palette rendering | Future milestone. | Shown disabled. Not R2.3 |
 | Mario, Luigi, Koopa reconstruction | Future milestone. | Cards stay unresolved. Not R2.3 |
 | Moving a placed part, course zoom, pan tool, snap toggle | Future milestone. | Disabled with reasons |
-| R3 and historical Phase 10 | Future milestone. | Not started |
+| R3 | Authorized on November 18, 2026. | Functional work starts after this baseline. It is not part of the visual chrome |
+| Historical Phase 10 | Not started. | Stays suspended |
 
 Visual screenshot files, when captured from this build, are listed in the session handoff. Concept images in `docs/design/references/` are not test evidence.

@@ -15,7 +15,7 @@ Three requirements outrank speed:
 
 A mock is not a live API. A homebrew ROM is not SMB1. A unit test is not the packaged GUI. XFCE is not Bazzite. A sprite is not a gameplay primitive. A URL is not a verified download.
 
-Historical Phase 9.1 is unaccepted. Do not renumber it or start Phase 10. The active sequence is the UnMaker-first roadmap in docs/roadmaps/UNMAKER_FIRST_ROADMAP.md. R0 is accepted. R2 is the Goomba reconstruction and is not accepted. Do not start R3.
+Historical Phase 9.1 is unaccepted. Do not renumber it or start Phase 10. The active sequence is the UnMaker-first roadmap in docs/roadmaps/UNMAKER_FIRST_ROADMAP.md. R0, R2, and R2.3 are accepted. R3 may proceed. R4 and later functional milestones are not accepted. Visual labels R4, R5, R6, and R6.1 are not those roadmap milestones. The accepted presentation is the R6.1 chrome. Do not redesign it.
 
 Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
 

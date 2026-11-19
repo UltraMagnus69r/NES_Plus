@@ -6,6 +6,8 @@ You open a ROM, page it as tiles, tag the pieces yourself, keep sounds, and pain
 
 The window opens on an empty project. It does not load a sample game. Nothing in the repository is a commercial ROM, sprite sheet, or soundtrack.
 
+Current roadmap position, November 18, 2026: R0, R2, and R2.3 are accepted. R3 is the next functional milestone. The R6.1 name on the launch scripts is a visual build label, not roadmap R6. Run the desktop app from this directory with `bash run-r6.sh`. That script uses Distrobox `nesticles-visual-dev` when it exists, and it does not overwrite files already in `~/Desktop/Nesticle/Assets`. See [docs/roadmaps/MILESTONE_STATUS.md](docs/roadmaps/MILESTONE_STATUS.md).
+
 ## Flow
 
 1. **Cartridge.** Open a file you supply. Nesticles reads NES / iNES / NES 2.0 (the 512-byte trainer flag included), Game Boy, Game Boy Color, Super NES LoROM and HiROM (a 512-byte copier header included), and Game Boy Advance. A file it does not recognize still opens as a tile pager. Files larger than 64 MB are refused. Encrypted Switch, 3DS, and Wii U images are not decrypted.

@@ -7,7 +7,7 @@ alwaysApply: true
 
 Detail: [AGENTS.md](../../AGENTS.md) sections "Current milestone" and "Changes and releases".
 
-Do not renumber historical phases. Do not start Phase 10. Phases 10–20 stay suspended. The UnMaker-first sequence is R0–R7. R0 is accepted. R2 is the Goomba reconstruction and is not accepted. Do not start R3. Owner approval is required after the mandatory gates pass.
+Do not renumber historical phases. Do not start Phase 10. Phases 10–20 stay suspended. The UnMaker-first sequence is R0–R7. R0, R2, and R2.3 are accepted as of November 18, 2026. R3 is authorized. R4 and later functional milestones are not accepted. Visual labels R4, R5, R6, and R6.1 are not roadmap milestones. Owner approval is still required after each later milestone's gates pass.
 
 Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
 

@@ -2,6 +2,8 @@
 
 Inspected at `78ae99be642075563f55f7dbe5960982f7c2a971` on `cursor/phase91-reference-url`. No gameplay code was changed for this audit.
 
+Status as of November 18, 2026: this audit is historical. R2 later writes the Goomba sprite on approve. The accepted presentation is the R6.1 chrome, which is a visual label, not roadmap R6. Rows that describe the pre-R2 approve path or the parchment UnMaker strip describe that inspection, not the current studio.
+
 A passing unit test is not a KEEP by itself. KEEP means the code can serve the product workflow without a new model.
 
 ## KEEP
