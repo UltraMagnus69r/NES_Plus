@@ -25,7 +25,7 @@ Functionally tested means a Rust test or a driven UI action. Visually tested mea
 | 16-bit, Modern Pixel, Retro Palette rendering | Future milestone. | Shown disabled. Not R2.3 |
 | Mario, Luigi, Koopa reconstruction | Future milestone. | Cards stay unresolved. Not R2.3 |
 | Moving a placed part, course zoom, pan tool, snap toggle | Future milestone. | Disabled with reasons |
-| R3 issue decisions | Authorized. First slice is in memory and unit-tested. It does not save decisions and it does not change the Investigate screen | `issues::tests`, six passed in this session. `docs/roadmaps/R3_FIRST_SLICE.md` |
+| R3 issue decisions | Implemented for one Investigate issue. Decisions save on the project. R3 is not complete | `Project.issue_decisions`. `docs/roadmaps/R3_FIRST_SLICE.md` |
 | Historical Phase 10 | Not started. | Stays suspended |
 
 Visual screenshot files, when captured from this build, are listed in the session handoff. Concept images in `docs/design/references/` are not test evidence.

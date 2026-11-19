@@ -676,6 +676,119 @@ fn group_for(category: &str) -> Group {
     }
 }
 
+/// One investigation issue the owner can accept, skip, or reject.
+/// `reconstructed` names are already assembled and are not offered again.
+pub struct ShownIssue {
+    pub issue: nesticles_core::issues::Issue,
+    pub category: String,
+    pub confidence: String,
+}
+
+fn asset_key(name: &str, character_id: &str) -> String {
+    let source = if character_id.is_empty() {
+        name
+    } else {
+        character_id
+    };
+    let mut key = String::new();
+    for ch in source.chars() {
+        if ch.is_ascii_alphanumeric() {
+            key.push(ch.to_ascii_lowercase());
+        }
+    }
+    if key.is_empty() {
+        "unnamed".into()
+    } else {
+        key
+    }
+}
+
+/// The first suggestion that is still eligible. Identity comes from the asset
+/// name and the tile order, not from a process-specific candidate id.
+pub fn open_investigation_issue(
+    candidates: &[Candidate],
+    coverage: &[CoverageRow],
+    reconstructed: &[String],
+    decisions: &[nesticles_core::issues::Decision],
+) -> Option<ShownIssue> {
+    let mut issues = Vec::new();
+    let mut used = Vec::new();
+    for row in coverage {
+        if reconstructed.iter().any(|name| name == &row.name) {
+            continue;
+        }
+        let found = candidates
+            .iter()
+            .find(|candidate| candidate.name == row.name);
+        if found.is_some_and(|candidate| candidate.status == ReviewStatus::Approved) {
+            continue;
+        }
+        if let Some(candidate) = found {
+            used.push(candidate.id.clone());
+        }
+        issues.push(shown_from(row.name.as_str(), row.category.as_str(), found));
+    }
+    for candidate in candidates {
+        if used.iter().any(|id| id == &candidate.id) {
+            continue;
+        }
+        if reconstructed.iter().any(|name| name == &candidate.name) {
+            continue;
+        }
+        if candidate.status == ReviewStatus::Approved {
+            continue;
+        }
+        issues.push(shown_from(
+            candidate.name.as_str(),
+            candidate.category.as_str(),
+            Some(candidate),
+        ));
+    }
+    let log = nesticles_core::issues::DecisionLog::from_records(decisions);
+    issues
+        .into_iter()
+        .find(|shown| log.propose(&shown.issue).is_some())
+}
+
+fn shown_from(name: &str, category: &str, candidate: Option<&Candidate>) -> ShownIssue {
+    let character_id = candidate
+        .map(|candidate| candidate.character_id.as_str())
+        .unwrap_or("");
+    let asset_id = asset_key(name, character_id);
+    let tiles = candidate
+        .map(|candidate| candidate.tile_ids())
+        .unwrap_or_default();
+    let mut evidence = vec![format!("coverage:{name}")];
+    if let Some(candidate) = candidate {
+        let note = candidate.evidence.as_str();
+        let path_like =
+            note.contains('/') || note.contains('\\') || note.to_ascii_lowercase().contains(".nes");
+        if !note.is_empty() && !path_like {
+            evidence.push(format!("note:{note}"));
+        }
+    }
+    let confidence = candidate
+        .map(|candidate| {
+            if candidate.confidence.is_empty() {
+                "unverified".into()
+            } else {
+                candidate.confidence.clone()
+            }
+        })
+        .unwrap_or_else(|| "No candidate. Not a verified finding.".into());
+    ShownIssue {
+        issue: nesticles_core::issues::suggest_unresolved(
+            &nesticles_core::issues::stable_issue_id(&asset_id),
+            &asset_id,
+            name,
+            &tiles,
+            &evidence,
+        ),
+        category: category.to_string(),
+        confidence,
+    }
+}
+
 pub fn issue_queue(candidates: &[Candidate], coverage: &[CoverageRow]) -> Vec<IssueCard> {
     let mut cards = Vec::new();
     for item in gallery_items(candidates, coverage) {
@@ -863,6 +976,80 @@ mod tests {
         let issues = issue_queue(&[], &items_to_coverage(&items));
         assert!(issues[0].suggestion.is_none());
         assert!(issues[0].uncertainty.contains("no documented tile mapping"));
+    }
+
+    #[test]
+    fn an_unchanged_rejected_grouping_stays_hidden_and_a_revision_does_not() {
+        use nesticles_core::issues::{candidate_fingerprint, decide, DecisionKind};
+        let candidate = Candidate {
+            id: "process-specific".into(),
+            name: "Koopa".into(),
+            category: "enemy".into(),
+            target_style: String::new(),
+            collection: String::new(),
+            character_id: "koopa".into(),
+            form: "enemy".into(),
+            frames: vec![FrameDraft {
+                state: "walk".into(),
+                origin: "proposal".into(),
+                spots: vec![
+                    TileSpot {
+                        tile: 0x10,
+                        x: 0,
+                        y: 0,
+                        flip_x: false,
+                        flip_y: false,
+                    },
+                    TileSpot {
+                        tile: 0x11,
+                        x: 8,
+                        y: 0,
+                        flip_x: false,
+                        flip_y: false,
+                    },
+                ],
+            }],
+            palette: 0,
+            status: ReviewStatus::Awaiting,
+            fail_reason: String::new(),
+            confidence: "proposal".into(),
+            evidence: "table".into(),
+            attempts: Vec::new(),
+            rejected_tiles: Vec::new(),
+        };
+        let coverage = vec![CoverageRow {
+            name: "Koopa".into(),
+            category: "enemy".into(),
+            raw: "identified".into(),
+            assembly: "proposed".into(),
+            animation: "unresolved".into(),
+            palette: "unverified".into(),
+            review: "awaiting".into(),
+        }];
+        let first = open_investigation_issue(&[candidate.clone()], &coverage, &[], &[]).unwrap();
+        let second = open_investigation_issue(&[candidate.clone()], &coverage, &[], &[]).unwrap();
+        assert_eq!(first.issue.asset_id, "koopa");
+        assert_eq!(first.issue.id, second.issue.id);
+        assert_eq!(
+            candidate_fingerprint(&first.issue.asset_id, &first.issue.suggestion.grouping),
+            candidate_fingerprint(&second.issue.asset_id, &second.issue.suggestion.grouping)
+        );
+        assert!(!first.issue.suggestion.is_verified_finding());
+        let rejected = decide(&first.issue, DecisionKind::Reject);
+        assert!(open_investigation_issue(
+            &[candidate.clone()],
+            &coverage,
+            &[],
+            &[rejected.clone()]
+        )
+        .is_none());
+        let mut revised = candidate.clone();
+        revised.frames[0].spots[1].tile = 0x12;
+        let next = open_investigation_issue(&[revised], &coverage, &[], &[rejected]).unwrap();
+        assert_eq!(next.issue.suggestion.grouping, vec![0x10, 0x12]);
+        assert!(
+            open_investigation_issue(&[candidate], &coverage, &["Koopa".into()], &[]).is_none()
+        );
     }
 
     fn items_to_coverage(items: &[GalleryItem]) -> Vec<CoverageRow> {

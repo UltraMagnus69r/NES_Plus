@@ -1,8 +1,9 @@
 //! R3 decision rules for one reconstruction issue.
 //!
 //! A suggestion is a hypothesis. It is not a verified finding and it does not
-//! write a sprite. Decisions stay in this log. Choosing where they survive a
-//! save is a separate project-file decision and is not done here.
+//! write a sprite. Saved decisions live on `Project::issue_decisions`.
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Issue {
@@ -27,19 +28,69 @@ impl Suggestion {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DecisionKind {
     Accept,
     Skip,
     Reject,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Decision {
     pub issue_id: String,
     pub asset_id: String,
+    /// Derived from the asset id and the tile order. Not a process id.
+    #[serde(default)]
+    pub fingerprint: String,
     pub kind: DecisionKind,
     pub grouping: Vec<u32>,
+}
+
+/// Stable issue id for an asset. The same asset keeps this id across runs.
+pub fn stable_issue_id(asset_id: &str) -> String {
+    format!("issue:{asset_id}")
+}
+
+/// Identity of one proposal. Tile order is significant. An empty list is not a grouping.
+pub fn candidate_fingerprint(asset_id: &str, grouping: &[u32]) -> String {
+    let mut text = format!("cand:{asset_id}|");
+    for (index, tile) in grouping.iter().enumerate() {
+        if index > 0 {
+            text.push(',');
+        }
+        text.push_str(&format!("{tile:02x}"));
+    }
+    text
+}
+
+/// One decision record. It does not write a sprite.
+pub fn decide(issue: &Issue, kind: DecisionKind) -> Decision {
+    Decision {
+        issue_id: issue.id.clone(),
+        asset_id: issue.asset_id.clone(),
+        fingerprint: candidate_fingerprint(&issue.asset_id, &issue.suggestion.grouping),
+        kind,
+        grouping: issue.suggestion.grouping.clone(),
+    }
+}
+
+/// Latest decision for this proposal, if one was stored.
+pub fn latest_kind(decisions: &[Decision], issue: &Issue) -> Option<DecisionKind> {
+    decisions
+        .iter()
+        .rev()
+        .find(|decision| same_candidate(decision, issue))
+        .map(|decision| decision.kind)
+}
+
+fn same_candidate(decision: &Decision, issue: &Issue) -> bool {
+    let expected = candidate_fingerprint(&issue.asset_id, &issue.suggestion.grouping);
+    if !decision.fingerprint.is_empty() {
+        decision.fingerprint == expected
+    } else {
+        decision.asset_id == issue.asset_id && decision.grouping == issue.suggestion.grouping
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -48,13 +99,14 @@ pub struct DecisionLog {
 }
 
 impl DecisionLog {
+    pub fn from_records(decisions: &[Decision]) -> Self {
+        Self {
+            decisions: decisions.to_vec(),
+        }
+    }
+
     pub fn record(&mut self, issue: &Issue, kind: DecisionKind) -> Decision {
-        let decision = Decision {
-            issue_id: issue.id.clone(),
-            asset_id: issue.asset_id.clone(),
-            kind,
-            grouping: issue.suggestion.grouping.clone(),
-        };
+        let decision = decide(issue, kind);
         self.decisions.push(decision.clone());
         decision
     }
@@ -71,9 +123,7 @@ impl DecisionLog {
         let grouping = &issue.suggestion.grouping;
         if !grouping.is_empty()
             && self.decisions.iter().any(|decision| {
-                decision.kind == DecisionKind::Reject
-                    && decision.asset_id == issue.asset_id
-                    && decision.grouping == *grouping
+                decision.kind == DecisionKind::Reject && same_candidate(decision, issue)
             })
         {
             return None;
@@ -216,5 +266,96 @@ mod tests {
         assert!(log.propose(&empty).is_some());
         let later = suggest_unresolved("issue-mario-2", "mario", "Mario", &[0x3A], &[]);
         assert!(log.propose(&later).is_some());
+    }
+
+    #[test]
+    fn fingerprint_is_the_same_on_every_run() {
+        let first = candidate_fingerprint("koopa", &[0x70, 0x71]);
+        let second = candidate_fingerprint("koopa", &[0x70, 0x71]);
+        assert_eq!(first, second);
+        assert_eq!(first, "cand:koopa|70,71");
+        assert_ne!(first, candidate_fingerprint("koopa", &[0x71, 0x70]));
+        assert_eq!(stable_issue_id("koopa"), "issue:koopa");
+        assert!(!first.contains('/'));
+        assert!(!first.contains(".nes"));
+    }
+
+    #[test]
+    fn legacy_project_json_loads_without_decisions() {
+        let project: crate::project::Project = serde_json::from_str(r#"{"name":"Old"}"#).unwrap();
+        assert!(project.issue_decisions.is_empty());
+        assert!(project.sprites.is_empty());
+        assert!(project.blueprints.is_empty());
+        assert!(project.transitions.is_empty());
+        assert!(project.levels.is_empty());
+    }
+
+    #[test]
+    fn a_new_project_serializes_an_empty_decision_list_by_omitting_it() {
+        let project = crate::project::Project::blank("Empty");
+        let text = serde_json::to_string(&project).unwrap();
+        assert!(!text.contains("issue_decisions"));
+        let loaded: crate::project::Project = serde_json::from_str(&text).unwrap();
+        assert!(loaded.issue_decisions.is_empty());
+        assert_eq!(rest_of(project), rest_of(loaded));
+    }
+
+    #[test]
+    fn accept_skip_and_reject_survive_save_and_migration() {
+        let mut project = crate::project::Project::blank("Decisions");
+        let accepted = suggest_unresolved(
+            &stable_issue_id("koopa"),
+            "koopa",
+            "Koopa",
+            &[0x10, 0x11],
+            &[],
+        );
+        let skipped = suggest_unresolved(&stable_issue_id("mario"), "mario", "Mario", &[], &[]);
+        let rejected =
+            suggest_unresolved(&stable_issue_id("plant"), "plant", "Piranha", &[0x20], &[]);
+        project
+            .issue_decisions
+            .push(decide(&accepted, DecisionKind::Accept));
+        project
+            .issue_decisions
+            .push(decide(&skipped, DecisionKind::Skip));
+        project
+            .issue_decisions
+            .push(decide(&rejected, DecisionKind::Reject));
+        let bare = crate::project::Project::blank("Decisions");
+        let text = serde_json::to_string(&project).unwrap();
+        assert!(!text.contains(".nes"));
+        assert!(!text.contains("sk-"));
+        let loaded = crate::blueprint::load_project_json(&text).unwrap();
+        let loaded_bare =
+            crate::blueprint::load_project_json(&serde_json::to_string(&bare).unwrap()).unwrap();
+        assert_eq!(loaded.issue_decisions.len(), 3);
+        assert_eq!(loaded.issue_decisions[0].kind, DecisionKind::Accept);
+        assert_eq!(loaded.issue_decisions[1].kind, DecisionKind::Skip);
+        assert_eq!(loaded.issue_decisions[2].kind, DecisionKind::Reject);
+        assert_eq!(loaded.issue_decisions, project.issue_decisions);
+        assert_eq!(rest_of(loaded.clone()), rest_of(loaded_bare));
+        let log = DecisionLog::from_records(&loaded.issue_decisions);
+        assert!(log.propose(&rejected).is_none());
+        assert!(log.propose(&accepted).is_some());
+        assert!(log.propose(&skipped).is_some());
+        let revised =
+            suggest_unresolved(&stable_issue_id("plant"), "plant", "Piranha", &[0x21], &[]);
+        assert!(log.propose(&revised).is_some());
+        assert_eq!(
+            latest_kind(&loaded.issue_decisions, &accepted),
+            Some(DecisionKind::Accept)
+        );
+        assert_eq!(
+            latest_kind(&loaded.issue_decisions, &skipped),
+            Some(DecisionKind::Skip)
+        );
+        assert!(!accepted.suggestion.is_verified_finding());
+    }
+
+    fn rest_of(project: crate::project::Project) -> serde_json::Value {
+        let mut value = serde_json::to_value(project).unwrap();
+        value.as_object_mut().unwrap().remove("issue_decisions");
+        value
     }
 }

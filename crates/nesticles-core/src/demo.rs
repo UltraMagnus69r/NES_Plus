@@ -348,6 +348,7 @@ pub fn demo_project() -> Project {
         sprites: Vec::new(),
         anim_sets: Vec::new(),
         behaviors: Vec::new(),
+        issue_decisions: Vec::new(),
     }
 }
 

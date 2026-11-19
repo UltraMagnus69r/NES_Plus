@@ -656,6 +656,23 @@ impl NestApp {
                             217.0, 48.0, design::CapsuleTone::Blue).clicked() {
                             self.studio.state.stage = Stage::Discover;
                         }
+                        ui.add_space(12.0);
+                        let mut reconstructed = Vec::new();
+                        for candidate in &session.candidates {
+                            let assembled = self.rom.as_ref().is_some_and(|rom| {
+                                nesticles_core::reconstruct::assemble(
+                                    &rom.bytes,
+                                    &session.report.payload_sha256,
+                                    candidate,
+                                    &self.studio.state.review_palette.colors(),
+                                )
+                                .is_ok()
+                            });
+                            if assembled {
+                                reconstructed.push(candidate.name.clone());
+                            }
+                        }
+                        self.investigation_issue_panel(ui, &session, &reconstructed);
                     } else if self.extract.job.is_some() {
                         ui.label("Counts appear when this pass finishes.");
                     }
@@ -668,6 +685,74 @@ impl NestApp {
             (StudioTool::Providers, "Provider settings. Nothing is sent until you ask."),
             (StudioTool::Guide, "Explanations. They do not change the cartridge."),
         ]);
+    }
+
+    fn investigation_issue_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        session: &nesticles_core::pipeline::ExtractionSession,
+        reconstructed: &[String],
+    ) {
+        use nesticles_core::issues::{decide, latest_kind, DecisionKind};
+        ui.label(RichText::new("Open issue").size(18.0).strong().color(studio::unmaker_ink()));
+        ui.add_space(6.0);
+        let shown = super::model::open_investigation_issue(
+            &session.candidates,
+            &session.coverage,
+            reconstructed,
+            &self.project.issue_decisions,
+        );
+        let Some(shown) = shown else {
+            ui.label("No open issue. An unchanged rejected grouping stays hidden. Nothing was invented.");
+            return;
+        };
+        ui.label(RichText::new(&shown.issue.question).size(16.0).strong().color(studio::unmaker_ink()));
+        ui.label(RichText::new(format!("Category: {}", shown.category)).size(13.0).color(studio::caption()));
+        ui.label(RichText::new(format!("Evidence: {}", shown.issue.evidence_ids.join(", "))).size(13.0).color(studio::caption()));
+        ui.add_space(4.0);
+        ui.label(RichText::new(&shown.issue.suggestion.summary).size(14.0).color(studio::unmaker_ink()));
+        let state = match latest_kind(&self.project.issue_decisions, &shown.issue) {
+            Some(DecisionKind::Accept) => "Accepted — not a verified reconstruction",
+            Some(DecisionKind::Skip) => "Skipped — still unresolved",
+            Some(DecisionKind::Reject) => "Rejected",
+            None => "No decision yet",
+        };
+        ui.horizontal(|ui| {
+            design::status_chip(ui, state);
+            design::status_chip(ui, &format!("Confidence: {}", shown.confidence));
+        });
+        ui.label(RichText::new("This suggestion is not a verified finding.").size(13.0).color(studio::caption()));
+        ui.add_space(8.0);
+        let issue = shown.issue.clone();
+        let mut chosen = None;
+        ui.horizontal_wrapped(|ui| {
+            if design::capsule_button(ui, "Accept", None, 120.0, 44.0, design::CapsuleTone::Green)
+                .on_hover_text("Record this suggestion. It does not write a sprite.").clicked()
+            {
+                chosen = Some(DecisionKind::Accept);
+            }
+            if design::capsule_button(ui, "Skip", None, 110.0, 44.0, design::CapsuleTone::White)
+                .on_hover_text("Leave the evidence unresolved and come back later.").clicked()
+            {
+                chosen = Some(DecisionKind::Skip);
+            }
+            if design::capsule_button(ui, "Reject", None, 120.0, 44.0, design::CapsuleTone::Red)
+                .on_hover_text("Hide this exact grouping. A different grouping can still appear.").clicked()
+            {
+                chosen = Some(DecisionKind::Reject);
+            }
+        });
+        if let Some(kind) = chosen {
+            if latest_kind(&self.project.issue_decisions, &issue) != Some(kind) {
+                self.project.issue_decisions.push(decide(&issue, kind));
+                self.dirty = true;
+            }
+            self.studio.state.notice = match kind {
+                DecisionKind::Accept => "Accepted. This did not write a sprite or change gameplay.".into(),
+                DecisionKind::Skip => "Skipped. The evidence is still unresolved.".into(),
+                DecisionKind::Reject => "Rejected. That exact grouping will not be offered again.".into(),
+            };
+        }
     }
 
     fn discover_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {

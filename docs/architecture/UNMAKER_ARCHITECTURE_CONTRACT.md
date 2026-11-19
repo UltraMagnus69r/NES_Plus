@@ -1,6 +1,6 @@
 # UnMaker architecture contract
 
-Status as of November 18, 2026: the owner accepted R0 earlier, and accepted R2 and R2.3 on this date. R3 is authorized. The tables below are the R0 record at `78ae99b`. Later code writes the Goomba `SpriteDef` and `AnimSet` on approve. Do not read a row that says "Approve does not create them" as the current Goomba path. The issue queue in the R0 record is still the R3 job. `issues` in `nesticles-core` holds the first decision rules and does not yet write the project file.
+Status as of November 18, 2026: the owner accepted R0 earlier, and accepted R2 and R2.3 on this date. R3 is authorized. The tables below are the R0 record at `78ae99b`. Later code writes the Goomba `SpriteDef` and `AnimSet` on approve. Do not read a row that says "Approve does not create them" as the current Goomba path. The issue queue in the R0 record is still the R3 job. `issues` in `nesticles-core` holds the decision rules. Slice 2 stores them on `Project.issue_decisions`. Investigate shows one eligible issue. That does not finish R3.
 
 R0 proposal text follows. Grounded in `Project`, `SpriteDef`, `Candidate`, and `ContentPackage` as they exist at `78ae99b`.
 

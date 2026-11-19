@@ -473,6 +473,10 @@ pub struct Project {
     /// Restricted behavior graphs. Old projects omit this. Not scripts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behaviors: Vec<BehaviorGraph>,
+    /// Owner decisions about reconstruction suggestions. Old projects omit this.
+    /// A decision is not a sprite, a blueprint, or a verified ROM finding.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issue_decisions: Vec<crate::issues::Decision>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -504,6 +508,7 @@ impl Project {
             sprites: Vec::new(),
             anim_sets: Vec::new(),
             behaviors: Vec::new(),
+            issue_decisions: Vec::new(),
         }
     }
 
