@@ -10,9 +10,11 @@ use super::model::{
     Group, IssueCard, ReviewPalette, Stage, StudioState, StudioTool, NOT_RECONSTRUCTED,
 };
 use crate::app::NestApp;
+use crate::design;
 use crate::studio::{self, Workspace};
 use eframe::egui::{
-    self, Color32, Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions, Vec2,
+    self, Color32, CornerRadius, Rect, RichText, Sense, Stroke, TextureHandle, TextureOptions,
+    Vec2,
 };
 use nesticles_core::codec::{decode_tile, Codec};
 use nesticles_core::pipeline::{
@@ -55,40 +57,52 @@ impl StudioUi {
 
 impl NestApp {
     pub(crate) fn unmaker_top_bar(&mut self, ctx: &egui::Context) {
+        let fill = if self.workspace == Workspace::Maker {
+            studio::maker_paper()
+        } else {
+            studio::unmaker_paper()
+        };
         egui::TopBottomPanel::top("shell")
             .exact_height(studio::BAR_H)
-            .frame(egui::Frame::NONE.fill(studio::unmaker_paper()).inner_margin(8.0))
+            .frame(
+                egui::Frame::NONE
+                    .fill(fill)
+                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .stroke(Stroke::new(1.0, studio::unmaker_line())),
+            )
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    let flip = egui::Button::new(
-                        RichText::new("Maker Engine")
-                            .size(16.0)
-                            .color(studio::unmaker_ink()),
-                    )
-                    .fill(studio::unmaker_paper())
-                    .stroke(Stroke::new(1.0_f32, studio::unmaker_line()))
-                    .min_size(Vec2::new(148.0, 36.0));
-                    if ui
-                        .add(flip)
-                        .on_hover_text("Flip back to Maker Engine (F6)")
-                        .clicked()
+                    self.brand_mark(ui);
+                    ui.add_space(8.0);
+                    self.workspace_chip(ui, Workspace::Unmaker);
+                    ui.add_space(6.0);
+                    self.workspace_chip(ui, Workspace::Maker);
+                    let cluster = if self.workspace == Workspace::Maker && self.tab != crate::app::Tab::Play
                     {
-                        self.flip_workspace();
+                        430.0
+                    } else {
+                        290.0
+                    };
+                    let rest = ui.available_width();
+                    if rest > cluster + 80.0 {
+                        let caption = self.project_caption();
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(rest - cluster - 8.0, 36.0),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(caption).size(14.0).color(studio::caption()),
+                                    )
+                                    .truncate(),
+                                );
+                            },
+                        );
                     }
-                    ui.label(
-                        RichText::new("UnMaker Lab")
-                            .size(20.0)
-                            .color(studio::unmaker_ink()),
-                    );
-                    ui.label(
-                        RichText::new(self.studio.state.stage.label())
-                            .size(16.0)
-                            .color(studio::unmaker_red()),
-                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(self.bar_button("Exit", true))
-                            .on_hover_text("Exit to Desktop")
+                            .on_hover_text("Exit to Desktop. The window buttons still work.")
                             .clicked()
                         {
                             self.request_exit(ctx);
@@ -109,16 +123,126 @@ impl NestApp {
                             .clicked()
                         {
                             self.save_project_quick();
-                            self.studio.state.notice = if self.dirty {
-                                "The project save did not finish. Nothing was published.".into()
-                            } else {
-                                "Project file saved. The extraction session is still only in memory."
-                                    .into()
-                            };
+                            if self.workspace == Workspace::Unmaker {
+                                self.studio.state.notice = if self.dirty {
+                                    "The project save did not finish. Nothing was published.".into()
+                                } else {
+                                    "Project file saved. The extraction session is still only in memory."
+                                        .into()
+                                };
+                            }
+                        }
+                        if self.workspace == Workspace::Maker && self.tab != crate::app::Tab::Play {
+                            if ui
+                                .add(self.play_button("Test Play"))
+                                .on_hover_text("Play this course (F5)")
+                                .clicked()
+                            {
+                                self.toggle_play();
+                            }
                         }
                     });
                 });
             });
+    }
+
+    fn brand_mark(&self, ui: &mut egui::Ui) {
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(132.0, 36.0), Sense::hover());
+        let icon = Rect::from_min_size(rect.min + Vec2::new(0.0, 4.0), Vec2::splat(28.0));
+        design::paint_egg(ui.painter(), icon);
+        ui.painter().text(
+            rect.min + Vec2::new(34.0, 18.0),
+            egui::Align2::LEFT_CENTER,
+            "Nesticles",
+            egui::FontId::proportional(20.0),
+            studio::unmaker_ink(),
+        );
+        response.on_hover_text("Nesticles");
+    }
+
+    fn workspace_chip(&mut self, ui: &mut egui::Ui, which: Workspace) {
+        let on = self.workspace == which;
+        let wide = ui.available_width() > 520.0 || on;
+        let label = if wide {
+            match which {
+                Workspace::Unmaker => "UnMaker Lab",
+                Workspace::Maker => "Maker Engine",
+            }
+        } else {
+            match which {
+                Workspace::Unmaker => "UnMaker",
+                Workspace::Maker => "Maker",
+            }
+        };
+        let width = if wide { 168.0 } else { 112.0 };
+        let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 40.0), Sense::click());
+        let fill = if on && which == Workspace::Maker {
+            studio::maker_mist()
+        } else if on {
+            Color32::from_rgb(255, 248, 220)
+        } else if response.hovered() {
+            studio::panel()
+        } else {
+            studio::unmaker_paper()
+        };
+        let stroke = if on {
+            Stroke::new(2.0, studio::apple_blue())
+        } else {
+            Stroke::new(1.0, studio::unmaker_line())
+        };
+        ui.painter()
+            .rect(rect, CornerRadius::same(12), fill, stroke, egui::StrokeKind::Inside);
+        let icon = Rect::from_min_size(rect.min + Vec2::new(8.0, 8.0), Vec2::splat(24.0));
+        design::paint_mark(ui.painter(), icon, which == Workspace::Maker);
+        ui.painter().text(
+            rect.min + Vec2::new(38.0, 20.0),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(14.0),
+            studio::unmaker_ink(),
+        );
+        let tip = match which {
+            Workspace::Unmaker => "UnMaker Lab investigates and reconstructs. Yellow egg.",
+            Workspace::Maker => "Maker Engine builds and plays courses. Small castle.",
+        };
+        if response.on_hover_text(tip).clicked() && !on {
+            self.flip_workspace();
+        }
+    }
+
+    fn project_caption(&self) -> String {
+        let name = if self.project.name.is_empty() {
+            "Untitled"
+        } else {
+            self.project.name.as_str()
+        };
+        if self.workspace == Workspace::Unmaker {
+            if self.rom.is_some() {
+                let file = std::path::Path::new(&self.rom_path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("cartridge");
+                format!("{name} · {file}")
+            } else {
+                format!("{name} · no cartridge")
+            }
+        } else {
+            let course = self
+                .project
+                .levels
+                .get(self.level_sel)
+                .map(|level| level.name.as_str())
+                .unwrap_or("no course");
+            format!("{name} · {course}")
+        }
+    }
+
+    fn play_button(&self, label: &str) -> egui::Button<'_> {
+        egui::Button::new(RichText::new(label).size(16.0).color(Color32::WHITE))
+            .fill(studio::game_green())
+            .stroke(Stroke::NONE)
+            .corner_radius(CornerRadius::same(12))
+            .min_size(Vec2::new(120.0, 40.0))
     }
 
     fn bar_button(&self, label: &str, danger: bool) -> egui::Button<'_> {
@@ -134,24 +258,17 @@ impl NestApp {
         };
         egui::Button::new(RichText::new(label).size(16.0).color(color))
             .fill(fill)
-            .stroke(Stroke::new(1.0_f32, studio::unmaker_line()))
-            .min_size(Vec2::new(84.0, 36.0))
+            .stroke(if danger {
+                Stroke::NONE
+            } else {
+                Stroke::new(1.0_f32, studio::unmaker_line())
+            })
+            .corner_radius(CornerRadius::same(12))
+            .min_size(Vec2::new(84.0, 40.0))
     }
 
     pub(crate) fn unmaker_studio(&mut self, ctx: &egui::Context) {
         self.apply_studio_tool_env();
-        egui::TopBottomPanel::bottom("unmaker-foot")
-            .exact_height(40.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(studio::unmaker_mist())
-                    .inner_margin(8.0),
-            )
-            .show(ctx, |ui| {
-                ui.label(
-                    "Goomba approval writes that sprite into the project. Other approvals do not. Mario and Luigi have no tile mapping. Review colors are not a verified palette.",
-                );
-            });
         egui::SidePanel::left("unmaker-nav")
             .exact_width(188.0)
             .resizable(false)
@@ -184,6 +301,14 @@ impl NestApp {
                 {
                     self.studio.state.show_technical = !details;
                 }
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new("About this build")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.label("Goomba approval writes that sprite into the project. Other approvals do not.");
+                        ui.label("Mario and Luigi have no tile mapping.");
+                        ui.label("Review colors are not a verified palette.");
+                    });
             });
         if self.studio.state.show_technical {
             egui::SidePanel::right("unmaker-tech")
@@ -201,23 +326,31 @@ impl NestApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::NONE
-                    .fill(studio::unmaker_paper())
+                    .fill(studio::unmaker_mist())
                     .inner_margin(16.0),
             )
             .show(ctx, |ui| {
                 if !self.studio.state.notice.is_empty() {
                     egui::Frame::NONE
-                        .fill(studio::unmaker_mist())
-                        .inner_margin(8.0)
-                        .stroke(Stroke::new(3.0_f32, studio::unmaker_red()))
+                        .fill(Color32::from_rgb(255, 244, 214))
+                        .corner_radius(CornerRadius::same(12))
+                        .inner_margin(10.0)
+                        .stroke(Stroke::new(1.0, studio::accent_yellow()))
                         .show(ui, |ui| {
-                            ui.label(RichText::new(&self.studio.state.notice).size(16.0));
+                            ui.label(RichText::new(&self.studio.state.notice).size(15.0));
                         });
                     ui.add_space(8.0);
+                }
+                let gallery = self.studio.state.tool.is_none()
+                    && self.studio.state.stage == Stage::Discover;
+                if gallery {
+                    self.discover_stage(ui, ctx);
+                    return;
                 }
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
                         if let Some(tool) = self.studio.state.tool {
                             self.embedded_tool(ui, ctx, tool);
                         } else {
@@ -240,18 +373,19 @@ impl NestApp {
         let width = ui.available_width();
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 40.0), Sense::click());
         let fill = if active {
-            Color32::from_rgb(255, 236, 236)
+            Color32::from_rgb(232, 242, 255)
         } else if response.hovered() {
-            studio::unmaker_mist()
+            studio::panel()
         } else {
             studio::unmaker_paper()
         };
-        ui.painter().rect_filled(rect, 4.0, fill);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(10), fill);
         if active {
             ui.painter().rect_filled(
-                Rect::from_min_size(rect.min, Vec2::new(3.0, rect.height())),
+                Rect::from_min_size(rect.min, Vec2::new(4.0, rect.height())),
                 0.0,
-                studio::unmaker_red(),
+                studio::apple_blue(),
             );
         }
         let icon = rect.min + Vec2::new(12.0, 12.0);
@@ -267,11 +401,11 @@ impl NestApp {
     }
 
     fn home_stage(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("What do you want to work on?").size(28.0));
-        ui.label(
+        design::screen_title(
+            ui,
+            "What do you want to work on?",
             "UnMaker investigates a cartridge, then shows what it could and could not identify.",
         );
-        ui.add_space(16.0);
         if self
             .home_card(
                 ui,
@@ -334,13 +468,13 @@ impl NestApp {
         let width = ui.available_width().min(520.0);
         let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 72.0), Sense::click());
         let fill = if response.hovered() {
-            Color32::from_rgb(255, 236, 236)
+            Color32::from_rgb(232, 242, 255)
         } else {
             studio::unmaker_paper()
         };
         ui.painter().rect(
             rect,
-            6.0,
+            CornerRadius::same(16),
             fill,
             Stroke::new(1.0_f32, studio::unmaker_line()),
             egui::StrokeKind::Inside,
@@ -364,11 +498,11 @@ impl NestApp {
     }
 
     fn import_stage(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Import").size(28.0));
-        ui.label(
+        design::screen_title(
+            ui,
+            "Import",
             "Open a cartridge. A reference page is optional and is not fetched until you ask.",
         );
-        ui.add_space(8.0);
         if ui
             .add(self.primary("Open ROM"))
             .on_hover_text("Choose a cartridge file. The name is not its identity.")
@@ -421,7 +555,11 @@ impl NestApp {
     }
 
     fn investigate_stage(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Investigation").size(28.0));
+        design::screen_title(
+            ui,
+            "Investigation",
+            "This pass stays on this machine. Counts appear when it finishes.",
+        );
         let running = self
             .extract
             .job
@@ -516,7 +654,11 @@ impl NestApp {
     }
 
     fn discover_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.label(RichText::new("Discover").size(28.0));
+        design::screen_title(
+            ui,
+            "Discover",
+            "Browse what the investigation found. Open a character in Review to inspect it.",
+        );
         self.tool_row(
             ui,
             &[
@@ -527,38 +669,79 @@ impl NestApp {
                 (StudioTool::Audio, "Inspect sounds kept in the project."),
             ],
         );
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         let Some(session) = self.extract.session.clone() else {
             ui.label("There is no investigation to show. Start one from Import.");
-            if ui.button("Go to Import").clicked() {
+            if design::secondary_button(ui, "Go to Import").clicked() {
                 self.studio.state.stage = Stage::Import;
             }
             return;
         };
-        let items = gallery_items(&session.candidates, &session.coverage);
-        let discovery = self.goomba_discovery(&session);
-        let goomba_art = self.assemble_goomba(&session);
-        ui.label("Browse what the investigation found. Open a character in Review to inspect it.");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.studio.state.gallery_query)
+                .hint_text("Search assets")
+                .desired_width(280.0)
+                .min_size(Vec2::new(220.0, 36.0)),
+        );
+        ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
             if ui
                 .selectable_label(self.studio.state.filter.is_none(), "All")
+                .on_hover_text("Show every category")
                 .clicked()
             {
                 self.studio.state.filter = None;
             }
             for group in Group::all() {
                 let on = self.studio.state.filter == Some(group);
-                if ui.selectable_label(on, group.label()).clicked() {
+                if ui
+                    .selectable_label(on, group.label())
+                    .on_hover_text(format!("Show {}", group.label()))
+                    .clicked()
+                {
                     self.studio.state.filter = Some(group);
                 }
             }
         });
         ui.add_space(8.0);
+        let width = ui.available_width();
+        let split = studio::discover_shows_inspector(width);
+        if split {
+            let inspector_w = studio::INSPECTOR_W;
+            let gallery_w = (width - inspector_w - 12.0).max(studio::GALLERY_CARD_W);
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    Vec2::new(gallery_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.discover_gallery(ui, ctx, &session),
+                );
+                ui.add_space(12.0);
+                ui.allocate_ui_with_layout(
+                    Vec2::new(inspector_w, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| self.discover_inspector(ui, ctx, &session),
+                );
+            });
+        } else {
+            self.discover_gallery(ui, ctx, &session);
+        }
+    }
+
+    fn discover_shown(
+        &self,
+        session: &nesticles_core::pipeline::ExtractionSession,
+    ) -> (
+        Vec<super::model::GalleryItem>,
+        Option<Result<super::model::GoombaDiscovery, String>>,
+    ) {
+        let items = gallery_items(&session.candidates, &session.coverage);
+        let discovery = self.goomba_discovery(session);
         let filter = self.studio.state.filter;
+        let query = self.studio.state.gallery_query.to_lowercase();
         let mut shown: Vec<_> = items
-            .iter()
+            .into_iter()
             .filter(|item| filter.is_none_or(|group| item.group == group))
-            .cloned()
+            .filter(|item| query.is_empty() || item.name.to_lowercase().contains(&query))
             .collect();
         if let Some(Ok(found)) = &discovery {
             if let Some(index) = shown.iter().position(|item| item.id == found.candidate_id) {
@@ -566,55 +749,183 @@ impl NestApp {
                 shown.insert(0, item);
             }
         }
+        (shown, discovery)
+    }
+
+    fn discover_gallery(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        session: &nesticles_core::pipeline::ExtractionSession,
+    ) {
+        let (shown, discovery) = self.discover_shown(session);
+        let goomba_art = self.assemble_goomba(session);
+        if shown.is_empty() {
+            ui.label("No assets match this filter.");
+            return;
+        }
+        let scroll_h = ui.available_height().max(160.0);
         egui::ScrollArea::vertical()
             .id_salt("discover-gallery")
             .auto_shrink([false, false])
+            .max_height(scroll_h)
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    for item in &shown {
-                        let is_goomba = session.candidates.iter().any(|candidate| {
-                            candidate.id == item.id && candidate.character_id == "goomba"
-                        });
-                        let card = gallery_card(item, is_goomba, discovery.as_ref());
-                        let reconstructed = card.status.starts_with("Reconstructed");
-                        ui.scope(|ui| {
-                            ui.set_min_width(210.0);
-                            ui.set_max_width(210.0);
-                            let selected =
-                                self.studio.state.selected.as_deref() == Some(item.id.as_str());
-                            let frame = egui::Frame::NONE
-                                .fill(if selected {
-                                    Color32::from_rgb(255, 236, 236)
-                                } else {
-                                    studio::unmaker_paper()
-                                })
-                                .stroke(Stroke::new(1.0_f32, studio::unmaker_line()))
-                                .inner_margin(8.0);
-                            frame.show(ui, |ui| {
-                                if reconstructed {
-                                    if let Some(assembly) = goomba_art.as_ref() {
-                                        self.assembly_thumb(ui, ctx, assembly);
-                                    }
-                                    ui.label("Reconstructed frame");
-                                } else if item.tile_ids.is_empty() {
-                                    self.thumb(ui, ctx, None);
-                                    ui.label("No artwork");
-                                } else {
-                                    self.thumb(ui, ctx, item.tile_ids.first().copied());
-                                    ui.label("Source tile");
-                                }
-                                ui.label(RichText::new(&card.title).size(16.0));
-                                ui.label(item.group.label());
-                                ui.label(&card.status);
-                                ui.label(&card.summary);
-                                if ui.button(&card.open_label).clicked() {
-                                    self.open_candidate_in_review(&session, &item.id);
-                                }
+                let width = ui.available_width();
+                let cols = studio::gallery_columns(width);
+                let card_w = studio::gallery_card_width(width);
+                for row in shown.chunks(cols) {
+                    ui.horizontal(|ui| {
+                        ui.set_min_width(width);
+                        for item in row {
+                            let is_goomba = session.candidates.iter().any(|candidate| {
+                                candidate.id == item.id && candidate.character_id == "goomba"
                             });
-                        });
+                            let card = gallery_card(item, is_goomba, discovery.as_ref());
+                            self.discover_card(
+                                ui,
+                                ctx,
+                                session,
+                                item,
+                                &card,
+                                goomba_art.as_ref(),
+                                card_w,
+                            );
+                            ui.add_space(studio::GALLERY_GAP);
+                        }
+                    });
+                    ui.add_space(studio::GALLERY_GAP);
+                }
+            });
+    }
+
+    fn discover_card(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        session: &nesticles_core::pipeline::ExtractionSession,
+        item: &super::model::GalleryItem,
+        card: &super::model::GalleryCard,
+        goomba_art: Option<&nesticles_core::reconstruct::Assembly>,
+        card_w: f32,
+    ) {
+        let selected = self.studio.state.selected.as_deref() == Some(item.id.as_str());
+        let reconstructed = card.status.starts_with("Reconstructed");
+        let stroke = if selected {
+            Stroke::new(2.0, studio::accent_yellow())
+        } else {
+            Stroke::new(1.0, studio::unmaker_line())
+        };
+        let fill = if selected {
+            Color32::from_rgb(255, 250, 230)
+        } else {
+            studio::unmaker_paper()
+        };
+        let frame = egui::Frame::NONE
+            .fill(fill)
+            .stroke(stroke)
+            .corner_radius(CornerRadius::same(16))
+            .inner_margin(10.0)
+            .shadow(if selected {
+                design::soft_shadow()
+            } else {
+                egui::epaint::Shadow::NONE
+            });
+        ui.allocate_ui_with_layout(
+            Vec2::new(card_w, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_max_width(card_w);
+                let inner = frame.show(ui, |ui| {
+                    ui.set_min_width(card_w - 24.0);
+                    if reconstructed {
+                        if let Some(assembly) = goomba_art {
+                            self.assembly_thumb(ui, ctx, assembly);
+                        }
+                    } else if item.tile_ids.is_empty() {
+                        self.thumb(ui, ctx, None);
+                    } else {
+                        self.thumb(ui, ctx, item.tile_ids.first().copied());
+                    }
+                    ui.label(RichText::new(&card.title).size(16.0).strong());
+                    ui.label(
+                        RichText::new(item.group.label())
+                            .size(12.0)
+                            .color(studio::caption()),
+                    );
+                    design::status_chip(ui, &card.status);
+                    ui.label(RichText::new(&card.summary).size(13.0));
+                    if design::secondary_button(ui, "Open in Review")
+                        .on_hover_text(&card.open_label)
+                        .clicked()
+                    {
+                        self.open_candidate_in_review(session, &item.id);
                     }
                 });
-            });
+                if inner.response.clicked() {
+                    self.studio.state.selected = Some(item.id.clone());
+                }
+            },
+        );
+    }
+
+    fn discover_inspector(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        session: &nesticles_core::pipeline::ExtractionSession,
+    ) {
+        let frame = design::floating_frame(studio::unmaker_paper());
+        frame.show(ui, |ui| {
+            ui.set_min_width(studio::INSPECTOR_W - 36.0);
+            egui::ScrollArea::vertical()
+                .id_salt("discover-inspector")
+                .max_height(ui.available_height().max(200.0))
+                .show(ui, |ui| self.discover_inspector_body(ui, ctx, session));
+        });
+    }
+
+    fn discover_inspector_body(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &egui::Context,
+        session: &nesticles_core::pipeline::ExtractionSession,
+    ) {
+            ui.label(RichText::new("Selected").size(16.0).strong());
+            let selected = self.studio.state.selected.clone();
+            let Some(id) = selected else {
+                ui.label("Select a card to preview it here.");
+                return;
+            };
+            let (shown, discovery) = self.discover_shown(session);
+            let Some(item) = shown.into_iter().find(|item| item.id == id) else {
+                ui.label("The selection is hidden by the current filter.");
+                return;
+            };
+            let is_goomba = session
+                .candidates
+                .iter()
+                .any(|candidate| candidate.id == item.id && candidate.character_id == "goomba");
+            let card = gallery_card(&item, is_goomba, discovery.as_ref());
+            ui.label(RichText::new(&card.title).size(22.0).strong());
+            design::status_chip(ui, &card.status);
+            ui.label(&card.summary);
+            if let Some(Ok(found)) = discovery.as_ref() {
+                if found.candidate_id == item.id {
+                    if let Some(assembly) = self.assemble_goomba(session) {
+                        self.draw_assembly(ui, ctx, &assembly);
+                    }
+                    ui.label("Review colors are provisional. They are not a verified NES palette.");
+                }
+            } else if item.tile_ids.is_empty() {
+                ui.label(NOT_RECONSTRUCTED);
+            } else {
+                ui.label("Source tile only. This is not a reconstructed character.");
+                self.thumb(ui, ctx, item.tile_ids.first().copied());
+            }
+            if design::primary_button(ui, "Open in Review").clicked() {
+                self.open_candidate_in_review(session, &item.id);
+            }
     }
 
     fn review_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -732,7 +1043,11 @@ impl NestApp {
     }
 
     fn create_stage(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        ui.label(RichText::new("Create").size(28.0));
+        design::screen_title(
+            ui,
+            "Create",
+            "Original sprites live in the project. A finished creation workflow is not running.",
+        );
         ui.label("Original sprites live in the project. They are separate from ROM candidates.");
         ui.label("Assemble and Animate edit sprites already in the project. A saved Goomba plays here without the cartridge.");
         self.tool_row(
@@ -772,7 +1087,11 @@ impl NestApp {
     }
 
     fn save_stage(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Save").size(28.0));
+        design::screen_title(
+            ui,
+            "Save",
+            "Save writes the project file. It does not store the ROM.",
+        );
         ui.label(
             "Save writes the project file. It does not store the extraction session, the ROM, or a published Goomba animation.",
         );
@@ -992,34 +1311,66 @@ impl NestApp {
     ) {
         self.advance_goomba_preview(ctx);
         ui.label("Assembled Goomba. These are cartridge tiles, not a reference picture.");
-        ui.label(&assembly.palette_note);
-        ui.label(&assembly.timing_note);
-        ui.horizontal_wrapped(|ui| {
-            let mut poses = Vec::new();
-            for frame in &assembly.frames {
-                if poses.iter().all(|id: &String| id != &frame.state) {
-                    poses.push(frame.state.clone());
-                }
+        let mut poses = Vec::new();
+        for frame in &assembly.frames {
+            if poses.iter().all(|id: &String| id != &frame.state) {
+                poses.push(frame.state.clone());
             }
-            for pose in poses {
-                let selected = self.studio.state.preview_pose == pose;
-                if ui.selectable_label(selected, label_for_state(&pose)).clicked() {
-                    self.studio.state.preview_pose = pose;
+        }
+        ui.horizontal_wrapped(|ui| {
+            for pose in &poses {
+                let selected = self.studio.state.preview_pose == *pose;
+                let button = egui::Button::new(
+                    RichText::new(label_for_state(pose)).size(15.0).color(if selected {
+                        Color32::WHITE
+                    } else {
+                        studio::unmaker_ink()
+                    }),
+                )
+                .fill(if selected {
+                    studio::apple_blue()
+                } else {
+                    studio::unmaker_paper()
+                })
+                .corner_radius(CornerRadius::same(12))
+                .min_size(Vec2::new(120.0, 36.0));
+                if ui
+                    .add(button)
+                    .on_hover_text(label_for_state(pose))
+                    .clicked()
+                    && !selected
+                {
+                    self.studio.state.preview_pose = pose.clone();
                     self.studio.state.preview_elapsed = 0;
                     self.studio.preview_accum = 0.0;
                     self.studio.state.preview_playing = false;
                 }
             }
-            if ui.button("Play").clicked() {
+        });
+        ui.horizontal_wrapped(|ui| {
+            let playing = self.studio.state.preview_playing;
+            let play = egui::Button::new(RichText::new("Play").size(15.0).color(Color32::WHITE))
+                .fill(studio::game_green())
+                .corner_radius(CornerRadius::same(12))
+                .min_size(Vec2::new(88.0, 36.0));
+            if ui
+                .add_enabled(!playing, play)
+                .on_hover_text("Play the selected state")
+                .on_disabled_hover_text("Already playing")
+                .clicked()
+            {
                 self.studio.state.preview_playing = true;
             }
-            if ui.button("Pause").clicked() {
+            if design::secondary_button(ui, "Pause")
+                .on_hover_text("Pause on the current frame")
+                .clicked()
+            {
                 self.studio.state.preview_playing = false;
             }
-            if ui.button("Zoom in").clicked() {
+            if design::secondary_button(ui, "Zoom in").clicked() {
                 self.studio.state.zoom = (self.studio.state.zoom + 1.0).min(16.0);
             }
-            if ui.button("Zoom out").clicked() {
+            if design::secondary_button(ui, "Zoom out").clicked() {
                 self.studio.state.zoom = (self.studio.state.zoom - 1.0).max(2.0);
             }
         });
@@ -1047,9 +1398,19 @@ impl NestApp {
         ));
         ui.label(&frame.note);
         let zoom = self.studio.state.zoom;
-        let size = Vec2::new(frame.w as f32 * zoom, frame.h as f32 * zoom);
-        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-        checker(ui.painter(), rect);
+        let sprite = Vec2::new(frame.w as f32 * zoom, frame.h as f32 * zoom);
+        let well = Vec2::new(
+            ui.available_width().clamp(180.0, 480.0),
+            sprite.y.max(160.0).min(240.0),
+        );
+        let (rect, _) = ui.allocate_exact_size(well, Sense::hover());
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(16),
+            Color32::from_rgb(236, 240, 246),
+        );
+        let image_rect = Rect::from_center_size(rect.center(), sprite.min(well * 0.92));
+        checker(ui.painter(), image_rect);
         let key = format!(
             "{:?}-{}-{}",
             self.studio.state.review_palette, frame.state, index
@@ -1067,10 +1428,16 @@ impl NestApp {
         };
         ui.painter().image(
             texture.id(),
-            rect,
+            image_rect,
             Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             Color32::WHITE,
         );
+        design::status_chip(
+            ui,
+            "Provisional palette — original NES colors are not verified",
+        );
+        ui.label(&assembly.palette_note);
+        ui.label(&assembly.timing_note);
     }
 
     fn advance_goomba_preview(&mut self, ctx: &egui::Context) {
@@ -1119,20 +1486,20 @@ impl NestApp {
                         "Walk and Defeat / Stomped are animation states of this one character.",
                     );
                 }
-                if let Some(assembly) = self.assemble_goomba(session) {
-                    self.draw_assembly(ui, ctx, &assembly);
-                }
                 ui.label(
-                    "Unresolved: the original NES palette is not verified. The 8-frame interval is the graphics-handler test, not a filmed measurement.",
+                    "The 8-frame interval is the graphics-handler test, not a filmed measurement.",
                 );
                 if ui
-                    .button(approve_label(&sheet.name))
+                    .add(design::primary_widget(&approve_label(&sheet.name)))
                     .on_hover_text(
                         "Writes the assembled walk and defeat into this project. The cartridge is not stored.",
                     )
                     .clicked()
                 {
                     self.publish_selected_goomba();
+                }
+                if let Some(assembly) = self.assemble_goomba(session) {
+                    self.draw_assembly(ui, ctx, &assembly);
                 }
                 self.source_evidence(ui, session, candidate);
                 if ui.button("Return to Discover").clicked() {
@@ -1966,10 +2333,7 @@ fn checker(painter: &egui::Painter, rect: Rect) {
 }
 
 impl NestApp {
-    fn primary(&self, label: &str) -> egui::Button<'_> {
-        egui::Button::new(RichText::new(label).size(18.0).color(studio::unmaker_ink()))
-            .fill(Color32::WHITE)
-            .stroke(Stroke::new(1.5_f32, studio::unmaker_red()))
-            .min_size(Vec2::new(180.0, 40.0))
+    fn primary<'a>(&self, label: &'a str) -> egui::Button<'a> {
+        design::primary_widget(label)
     }
 }
