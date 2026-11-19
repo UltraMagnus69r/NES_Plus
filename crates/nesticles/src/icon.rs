@@ -4,7 +4,7 @@ use eframe::egui::IconData;
 
 pub const PNG: &[u8] = include_bytes!("../assets/icon.png");
 
-/// Straight (unmultiplied) RGBA. The source has no alpha, and [`IconData`] wants separate alpha.
+/// Straight (unmultiplied) RGBA with transparency, as required by [`IconData`].
 pub fn icon_data() -> IconData {
     eframe::icon_data::from_png_bytes(PNG).expect("crates/nesticles/assets/icon.png is a PNG")
 }

@@ -210,7 +210,7 @@ impl NestApp {
             }
         }
         ui.add_space(16.0);
-        if ui.button("Load synthetic fixture").clicked() {
+        if crate::design::soft_button(ui, "Load synthetic fixture").clicked() {
             let bytes = pipeline::synthetic_fixture();
             self.load_rom_bytes("synthetic-fixture.nes", bytes);
             self.status = format!(
@@ -231,7 +231,7 @@ impl NestApp {
                 "Stage: {}  candidates {}  unresolved {}",
                 job.stage_name, job.candidates, job.unresolved
             ));
-            if ui.button("Cancel job").clicked() {
+            if crate::design::soft_button(ui, "Cancel job").clicked() {
                 if let Some(job) = self.extract.job.as_mut() {
                     job_cancel(job);
                 }
@@ -273,19 +273,19 @@ impl NestApp {
                             candidate.confidence,
                             candidate.tile_ids().len()
                         ));
-                        if ui.button("Approve").clicked() {
+                        if crate::design::soft_button(ui, "Approve").clicked() {
                             act = Some((index, "approve"));
                         }
-                        if ui.button("Fail").clicked() {
+                        if crate::design::soft_button(ui, "Fail").clicked() {
                             act = Some((index, "fail"));
                         }
-                        if ui.button("Ignore").clicked() {
+                        if crate::design::soft_button(ui, "Ignore").clicked() {
                             act = Some((index, "ignore"));
                         }
-                        if ui.button("Puzzle").clicked() {
+                        if crate::design::soft_button(ui, "Puzzle").clicked() {
                             act = Some((index, "puzzle"));
                         }
-                        if ui.button("Restore").clicked() {
+                        if crate::design::soft_button(ui, "Restore").clicked() {
                             act = Some((index, "restore"));
                         }
                     });
@@ -327,7 +327,7 @@ impl NestApp {
             }
         });
         ui.add(egui::TextEdit::singleline(&mut self.extract.fail_note).hint_text("Failure note"));
-        if ui.button("Reinspect selected failed grouping").clicked() {
+        if crate::design::soft_button(ui, "Reinspect selected failed grouping").clicked() {
             if let Some(candidate) = changed
                 .candidates
                 .iter_mut()
@@ -347,7 +347,7 @@ impl NestApp {
                 ui.label(name);
             }
         }
-        if ui.button("Export approved to Maker Engine").clicked() {
+        if crate::design::soft_button(ui, "Export approved to Maker Engine").clicked() {
             if gate.needs_confirmation && !self.extract.export_hold {
                 self.extract.export_hold = true;
                 self.status = "Confirm the ignored bucket before export.".into();
@@ -355,15 +355,15 @@ impl NestApp {
                 self.finish_export(&changed);
             }
         }
-        if self.extract.export_hold && ui.button("Confirm export without ignored assets").clicked()
+        if self.extract.export_hold && crate::design::soft_button(ui, "Confirm export without ignored assets").clicked()
         {
             self.finish_export(&changed);
             self.extract.export_hold = false;
         }
-        if ui.button("Export knowledge package").clicked() {
+        if crate::design::soft_button(ui, "Export knowledge package").clicked() {
             self.export_knowledge_file();
         }
-        if ui.button("Import knowledge package").clicked() {
+        if crate::design::soft_button(ui, "Import knowledge package").clicked() {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("Knowledge", &["nknowledge", "json"])
                 .pick_file()
@@ -447,7 +447,7 @@ impl NestApp {
         }
         ui.label("No automatic visual match. Place and correct ROM tiles yourself.");
         ui.horizontal(|ui| {
-            if ui.button("Expand adjacent tiles").clicked() {
+            if crate::design::soft_button(ui, "Expand adjacent tiles").clicked() {
                 let count = self
                     .extract
                     .session
@@ -456,7 +456,7 @@ impl NestApp {
                     .unwrap_or(0) as u32;
                 puzzle_expand(&mut puzzle, count);
             }
-            if ui.button("Mirror placed").clicked() {
+            if crate::design::soft_button(ui, "Mirror placed").clicked() {
                 for spot in &mut puzzle.placed {
                     spot.flip_x = !spot.flip_x;
                 }
@@ -467,7 +467,7 @@ impl NestApp {
         let mut remove = None;
         ui.horizontal_wrapped(|ui| {
             for (index, tile) in puzzle.pool.iter().enumerate() {
-                if ui.button(format!("{tile}")).clicked() {
+                if crate::design::soft_button(ui, format!("{tile}")).clicked() {
                     add = Some(*tile);
                 }
                 if ui.small_button("wrong").clicked() {
@@ -499,10 +499,10 @@ impl NestApp {
         for signal in &puzzle.signals {
             ui.label(signal);
         }
-        if ui.button("Save local recipe").clicked() {
+        if crate::design::soft_button(ui, "Save local recipe").clicked() {
             self.save_puzzle_recipe(&puzzle);
         }
-        if ui.button("Submit correction").clicked() {
+        if crate::design::soft_button(ui, "Submit correction").clicked() {
             if let Some(session) = self.extract.session.as_mut() {
                 if let Some(candidate) = session
                     .candidates
@@ -531,7 +531,7 @@ impl NestApp {
                 .desired_width(360.0),
         );
         ui.horizontal(|ui| {
-            if ui.button("Save credentials").clicked() {
+            if crate::design::soft_button(ui, "Save credentials").clicked() {
                 match openai::store_keyring(&self.extract.openai_key) {
                     Ok(()) => self.extract.key_note = "Saved in Secret Service.".into(),
                     Err(err) => {
@@ -539,12 +539,12 @@ impl NestApp {
                     }
                 }
             }
-            if ui.button("Test connection").clicked() {
+            if crate::design::soft_button(ui, "Test connection").clicked() {
                 let status =
                     openai::test_connection(&self.extract.openai_key, &self.extract.vision_model);
                 self.extract.api_status = status.label().into();
             }
-            if ui.button("Remove credentials").clicked() {
+            if crate::design::soft_button(ui, "Remove credentials").clicked() {
                 let _ = openai::clear_keyring();
                 self.extract.openai_key.clear();
                 self.extract.key_note =
@@ -569,10 +569,10 @@ impl NestApp {
         ui.separator();
         ui.label("Generation prompt for an original or corrected character. Commercial names are still refused by the image guard.");
         ui.text_edit_multiline(&mut self.extract.prompt);
-        if ui.button("Generate image").clicked() {
+        if crate::design::soft_button(ui, "Generate image").clicked() {
             self.generate_image();
         }
-        if ui.button("Analyze reference with vision").clicked() {
+        if crate::design::soft_button(ui, "Analyze reference with vision").clicked() {
             self.analyze_reference();
         }
     }
@@ -580,7 +580,7 @@ impl NestApp {
     pub(super) fn behavior_view(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new("Behavior").font(serif(28.0)));
         ui.label("Graphs are data. Patrol and jump on a Hammer Bro derivative are labels copied from the parent. The returning projectile is the part Rust Play steps.");
-        if ui.button("New Hammer Bro graph").clicked() {
+        if crate::design::soft_button(ui, "New Hammer Bro graph").clicked() {
             let mut graph = BehaviorGraph::new(nid("behavior-"), "Hammer Bro");
             graph.derived_from = "Hammer Bro".into();
             graph.nodes = vec![
@@ -592,7 +592,7 @@ impl NestApp {
             self.project.behaviors.push(graph);
             self.dirty = true;
         }
-        if ui.button("Derive returning projectile").clicked() {
+        if crate::design::soft_button(ui, "Derive returning projectile").clicked() {
             let parent = self.project.behaviors.last().cloned().unwrap_or_else(|| {
                 let mut graph = BehaviorGraph::new(nid("behavior-"), "Hammer Bro");
                 graph.nodes = vec![
@@ -718,13 +718,13 @@ impl NestApp {
             if field.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                 start = true;
             }
-            if ui.button("Add reference URL").clicked() {
+            if crate::design::soft_button(ui, "Add reference URL").clicked() {
                 start = true;
             }
-            if ui.button("Continue without reference").clicked() {
+            if crate::design::soft_button(ui, "Continue without reference").clicked() {
                 self.continue_without_reference();
             }
-            if ui.button("Import local image").clicked() {
+            if crate::design::soft_button(ui, "Import local image").clicked() {
                 self.import_local_reference();
             }
         });
@@ -737,27 +737,27 @@ impl NestApp {
         if let Some(err) = &self.extract.ref_error.clone() {
             ui.label(RichText::new(err).strong());
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Continue without reference").clicked() {
+                if crate::design::soft_button(ui, "Continue without reference").clicked() {
                     self.continue_without_reference();
                 }
-                if ui.button("Fetch as a direct image").clicked() {
+                if crate::design::soft_button(ui, "Fetch as a direct image").clicked() {
                     self.start_direct_image_reference();
                 }
-                if ui.button("Retry").clicked() {
+                if crate::design::soft_button(ui, "Retry").clicked() {
                     self.start_reference_fetch();
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::design::soft_button(ui, "Cancel").clicked() {
                     self.cancel_reference();
                     self.extract.ref_note = "The reference fetch was cancelled.".into();
                     self.extract.ref_log
                         .push("The reference fetch was cancelled.".into());
                     self.extract.ref_error = None;
                 }
-                if ui.button("Import local image").clicked() {
+                if crate::design::soft_button(ui, "Import local image").clicked() {
                     self.import_local_reference();
                 }
             });
-        } else if self.extract.ref_rx.is_some() && ui.button("Cancel").clicked() {
+        } else if self.extract.ref_rx.is_some() && crate::design::soft_button(ui, "Cancel").clicked() {
             self.cancel_reference();
             self.extract.ref_note = "The reference fetch was cancelled.".into();
             self.extract.ref_log
@@ -867,10 +867,10 @@ impl NestApp {
             }
         }
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Open beside ROM tiles").clicked() {
+            if crate::design::soft_button(ui, "Open beside ROM tiles").clicked() {
                 self.show_reference_with_tiles();
             }
-            if ui.button("Open guided puzzle").clicked() {
+            if crate::design::soft_button(ui, "Open guided puzzle").clicked() {
                 self.begin_reference_puzzle();
             }
         });
@@ -908,7 +908,7 @@ impl NestApp {
                 session.tiles.len()
             ));
         }
-        if ui.button("Open guided puzzle").clicked() {
+        if crate::design::soft_button(ui, "Open guided puzzle").clicked() {
             self.begin_reference_puzzle();
         }
         ui.separator();
@@ -1071,16 +1071,16 @@ impl NestApp {
 
     pub(crate) fn reference_recovery_row(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Continue without reference").clicked() {
+            if crate::design::soft_button(ui, "Continue without reference").clicked() {
                 self.continue_without_reference();
             }
-            if ui.button("Import local image").clicked() {
+            if crate::design::soft_button(ui, "Import local image").clicked() {
                 self.import_local_reference();
             }
-            if ui.button("Fetch as a direct image").clicked() {
+            if crate::design::soft_button(ui, "Fetch as a direct image").clicked() {
                 self.start_direct_image_reference();
             }
-            if ui.button("Retry").clicked() {
+            if crate::design::soft_button(ui, "Retry").clicked() {
                 self.start_reference_fetch();
             }
         });
@@ -1345,13 +1345,13 @@ impl NestApp {
 
     pub(crate) fn workshop_files(&mut self, ui: &mut egui::Ui) {
         ui.label("These are the existing package and knowledge files. They do not assemble a character.");
-        if ui.button("Import alpha packages").clicked() {
+        if crate::design::soft_button(ui, "Import alpha packages").clicked() {
             self.import_library_packages();
         }
-        if ui.button("Export knowledge package").clicked() {
+        if crate::design::soft_button(ui, "Export knowledge package").clicked() {
             self.export_knowledge_file();
         }
-        if ui.button("Import knowledge package").clicked() {
+        if crate::design::soft_button(ui, "Import knowledge package").clicked() {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("Knowledge", &["nknowledge", "json"])
                 .pick_file()

@@ -16,23 +16,23 @@ pub const MIN_INNER: [f32; 2] = [960.0, 540.0];
 pub const WINDOW_APP_ID: &str = "nesticles-window";
 
 /// R2.3 visual system. One token set, two workspace surfaces.
-pub const FUTURE_UI: &str = "Design Language 2.0: sans-serif, rounded surfaces, Nesticles red actions";
+pub const FUTURE_UI: &str = "Design Language 2.1: glossy layered surfaces, playful scenery, premium rounded controls";
 
-pub const BAR_H: f32 = 64.0;
+pub const BAR_H: f32 = 84.0;
 pub const STRIP_H: f32 = 112.0;
 pub const RAIL_W: f32 = 80.0;
-pub const BOTTOM_H: f32 = 48.0;
-pub const THUMB: f32 = 64.0;
-pub const TOOL: f32 = 44.0;
-pub const INSPECTOR_W: f32 = 280.0;
+pub const BOTTOM_H: f32 = 56.0;
+pub const THUMB: f32 = 68.0;
+pub const TOOL: f32 = 46.0;
+pub const INSPECTOR_W: f32 = 360.0;
 
 /// Discover card width used to choose a column count. Cards may grow slightly
 /// to fill a row. They do not shrink below this.
-pub const GALLERY_CARD_W: f32 = 196.0;
-pub const GALLERY_GAP: f32 = 12.0;
+pub const GALLERY_CARD_W: f32 = 222.0;
+pub const GALLERY_GAP: f32 = 16.0;
 
 /// Content width at which Discover keeps a side inspector.
-pub const INSPECTOR_BREAK: f32 = 900.0;
+pub const INSPECTOR_BREAK: f32 = 1080.0;
 
 pub fn navy() -> Color32 {
     Color32::from_rgb(27, 40, 54)
@@ -100,23 +100,23 @@ pub fn unmaker_paper() -> Color32 {
 }
 
 pub fn unmaker_mist() -> Color32 {
-    Color32::from_rgb(246, 248, 255)
+    Color32::from_rgb(238, 245, 255)
 }
 
 pub fn panel() -> Color32 {
-    Color32::from_rgb(238, 242, 249)
+    Color32::from_rgb(225, 236, 252)
 }
 
 pub fn maker_paper() -> Color32 {
-    Color32::from_rgb(255, 248, 242)
+    Color32::from_rgb(255, 249, 239)
 }
 
 pub fn maker_mist() -> Color32 {
-    Color32::from_rgb(255, 241, 228)
+    Color32::from_rgb(251, 233, 215)
 }
 
 fn round_controls(visuals: &mut Visuals) {
-    let radius = eframe::egui::CornerRadius::same(10);
+    let radius = eframe::egui::CornerRadius::same(18);
     visuals.widgets.noninteractive.corner_radius = radius;
     visuals.widgets.inactive.corner_radius = radius;
     visuals.widgets.hovered.corner_radius = radius;
@@ -134,15 +134,15 @@ pub fn unmaker_visuals() -> Visuals {
     visuals.faint_bg_color = panel();
     visuals.widgets.noninteractive.bg_fill = unmaker_paper();
     visuals.widgets.noninteractive.fg_stroke.color = ink;
-    visuals.widgets.inactive.bg_fill = unmaker_paper();
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(249, 251, 255);
     visuals.widgets.inactive.fg_stroke.color = ink;
     visuals.widgets.inactive.bg_stroke.color = unmaker_line();
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(232, 242, 255);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(224, 240, 255);
     visuals.widgets.hovered.fg_stroke.color = ink;
     visuals.widgets.hovered.bg_stroke.color = apple_blue();
-    visuals.widgets.active.bg_fill = nesticles_red();
+    visuals.widgets.active.bg_fill = Color32::from_rgb(33, 138, 255);
     visuals.widgets.active.fg_stroke.color = Color32::WHITE;
-    visuals.widgets.active.bg_stroke.color = nesticles_red();
+    visuals.widgets.active.bg_stroke.color = apple_blue();
     visuals.selection.bg_fill = Color32::from_rgb(232, 242, 255);
     visuals.selection.stroke.color = apple_blue();
     visuals.hyperlink_color = apple_blue();
@@ -150,6 +150,8 @@ pub fn unmaker_visuals() -> Visuals {
     visuals.window_stroke.color = unmaker_line();
     visuals.warn_fg_color = Color32::from_rgb(140, 96, 0);
     visuals.error_fg_color = nesticles_red();
+    visuals.window_shadow = eframe::egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(42) };
+    visuals.popup_shadow = eframe::egui::epaint::Shadow { offset: [0, 5], blur: 14, spread: 0, color: Color32::from_black_alpha(36) };
     round_controls(&mut visuals);
     visuals
 }

@@ -202,7 +202,7 @@ impl NestApp {
 
     pub(crate) fn assemble_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("New sprite").clicked() {
+            if crate::design::soft_button(ui, "New sprite").clicked() {
                 self.remember_anim();
                 if let Ok(id) = create_sprite(&mut self.project, "Sprite", 16, 16) {
                     self.sprite_id = Some(id);
@@ -224,16 +224,16 @@ impl NestApp {
             {
                 self.place_selected_asset();
             }
-            if ui.button("Zoom in").clicked() {
+            if crate::design::soft_button(ui, "Zoom in").clicked() {
                 self.anim_zoom = (self.anim_zoom + 1.0).min(12.0);
             }
-            if ui.button("Zoom out").clicked() {
+            if crate::design::soft_button(ui, "Zoom out").clicked() {
                 self.anim_zoom = (self.anim_zoom - 1.0).max(2.0);
             }
-            if ui.button("Undo").clicked() {
+            if crate::design::soft_button(ui, "Undo").clicked() {
                 self.undo_anim();
             }
-            if ui.button("Redo").clicked() {
+            if crate::design::soft_button(ui, "Redo").clicked() {
                 self.redo_anim();
             }
         });
@@ -407,7 +407,7 @@ impl NestApp {
     pub(crate) fn animate_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.advance_preview(ctx);
         ui.horizontal_wrapped(|ui| {
-            if ui.button("New animation").clicked() {
+            if crate::design::soft_button(ui, "New animation").clicked() {
                 self.new_animation();
             }
             ui.add(
@@ -422,31 +422,31 @@ impl NestApp {
             {
                 self.new_clip();
             }
-            if ui.button("Play").clicked() {
+            if crate::design::soft_button(ui, "Play").clicked() {
                 self.anim_playing = true;
             }
-            if ui.button("Pause").clicked() {
+            if crate::design::soft_button(ui, "Pause").clicked() {
                 self.anim_playing = false;
             }
-            if ui.button("Restart").clicked() {
+            if crate::design::soft_button(ui, "Restart").clicked() {
                 self.preview_clock.elapsed = 0;
                 self.preview_accum = 0.0;
             }
-            if ui.button("Step back").clicked() {
+            if crate::design::soft_button(ui, "Step back").clicked() {
                 self.anim_playing = false;
                 self.preview_clock.elapsed = self.preview_clock.elapsed.saturating_sub(1);
             }
-            if ui.button("Step forward").clicked() {
+            if crate::design::soft_button(ui, "Step forward").clicked() {
                 self.anim_playing = false;
                 self.preview_clock.elapsed = self.preview_clock.elapsed.saturating_add(1);
             }
-            if ui.button("Half speed").clicked() {
+            if crate::design::soft_button(ui, "Half speed").clicked() {
                 self.anim_speed = 0.5;
             }
-            if ui.button("Normal speed").clicked() {
+            if crate::design::soft_button(ui, "Normal speed").clicked() {
                 self.anim_speed = 1.0;
             }
-            if ui.button("Double speed").clicked() {
+            if crate::design::soft_button(ui, "Double speed").clicked() {
                 self.anim_speed = 2.0;
             }
             if ui
@@ -595,19 +595,19 @@ impl NestApp {
             })
             .unwrap_or_default();
         ui.horizontal(|ui| {
-            if ui.button("Add frame").clicked() {
+            if crate::design::soft_button(ui, "Add frame").clicked() {
                 self.timeline_add();
             }
-            if ui.button("Duplicate frame").clicked() {
+            if crate::design::soft_button(ui, "Duplicate frame").clicked() {
                 self.timeline_duplicate();
             }
-            if ui.button("Delete frame").clicked() {
+            if crate::design::soft_button(ui, "Delete frame").clicked() {
                 self.timeline_delete();
             }
-            if ui.button("Move earlier").clicked() {
+            if crate::design::soft_button(ui, "Move earlier").clicked() {
                 self.timeline_move(-1);
             }
-            if ui.button("Move later").clicked() {
+            if crate::design::soft_button(ui, "Move later").clicked() {
                 self.timeline_move(1);
             }
         });
@@ -864,33 +864,33 @@ impl NestApp {
         ui.separator();
         ui.label(RichText::new("Piece").font(serif(18.0)));
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Nudge left").clicked() {
+            if crate::design::soft_button(ui, "Nudge left").clicked() {
                 self.nudge(-1, 0);
             }
-            if ui.button("Nudge right").clicked() {
+            if crate::design::soft_button(ui, "Nudge right").clicked() {
                 self.nudge(1, 0);
             }
-            if ui.button("Nudge up").clicked() {
+            if crate::design::soft_button(ui, "Nudge up").clicked() {
                 self.nudge(0, -1);
             }
-            if ui.button("Nudge down").clicked() {
+            if crate::design::soft_button(ui, "Nudge down").clicked() {
                 self.nudge(0, 1);
             }
         });
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Mirror").clicked() {
+            if crate::design::soft_button(ui, "Mirror").clicked() {
                 self.flip_piece();
             }
-            if ui.button("Duplicate piece").clicked() {
+            if crate::design::soft_button(ui, "Duplicate piece").clicked() {
                 self.copy_piece();
             }
-            if ui.button("Remove piece").clicked() {
+            if crate::design::soft_button(ui, "Remove piece").clicked() {
                 self.remove_piece();
             }
-            if ui.button("Layer forward").clicked() {
+            if crate::design::soft_button(ui, "Layer forward").clicked() {
                 self.shift_layer(1);
             }
-            if ui.button("Layer back").clicked() {
+            if crate::design::soft_button(ui, "Layer back").clicked() {
                 self.shift_layer(-1);
             }
         });
@@ -1055,10 +1055,10 @@ impl NestApp {
             {
                 self.assign_player_anim();
             }
-            if ui.button("Assign to selected blueprint").clicked() {
+            if crate::design::soft_button(ui, "Assign to selected blueprint").clicked() {
                 self.assign_cell_anim();
             }
-            if ui.button("Slice selected sheet").on_hover_text("Cut the selected picture into frames. You can still move the pieces afterward.").clicked() {
+            if crate::design::soft_button(ui, "Slice selected sheet").on_hover_text("Cut the selected picture into frames. You can still move the pieces afterward.").clicked() {
                 self.slice_selected();
             }
         }
