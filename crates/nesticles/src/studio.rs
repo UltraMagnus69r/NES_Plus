@@ -16,7 +16,8 @@ pub const MIN_INNER: [f32; 2] = [960.0, 540.0];
 pub const WINDOW_APP_ID: &str = "nesticles-window";
 
 /// R2.3 visual system. One token set, two workspace surfaces.
-pub const FUTURE_UI: &str = "Design Language 2.1: glossy layered surfaces, playful scenery, premium rounded controls";
+pub const FUTURE_UI: &str =
+    "Design Language 2.1: glossy layered surfaces, playful scenery, premium rounded controls";
 
 pub const BAR_H: f32 = 84.0;
 pub const STRIP_H: f32 = 112.0;
@@ -150,8 +151,18 @@ pub fn unmaker_visuals() -> Visuals {
     visuals.window_stroke.color = unmaker_line();
     visuals.warn_fg_color = Color32::from_rgb(140, 96, 0);
     visuals.error_fg_color = nesticles_red();
-    visuals.window_shadow = eframe::egui::epaint::Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(42) };
-    visuals.popup_shadow = eframe::egui::epaint::Shadow { offset: [0, 5], blur: 14, spread: 0, color: Color32::from_black_alpha(36) };
+    visuals.window_shadow = eframe::egui::epaint::Shadow {
+        offset: [0, 6],
+        blur: 18,
+        spread: 0,
+        color: Color32::from_black_alpha(42),
+    };
+    visuals.popup_shadow = eframe::egui::epaint::Shadow {
+        offset: [0, 5],
+        blur: 14,
+        spread: 0,
+        color: Color32::from_black_alpha(36),
+    };
     round_controls(&mut visuals);
     visuals
 }
@@ -239,7 +250,10 @@ impl GameStyle {
 
 /// Returns the style to keep. An unavailable request leaves the current style
 /// alone and explains why.
-pub fn choose_game_style(current: GameStyle, requested: GameStyle) -> Result<GameStyle, &'static str> {
+pub fn choose_game_style(
+    current: GameStyle,
+    requested: GameStyle,
+) -> Result<GameStyle, &'static str> {
     if requested.selectable() {
         Ok(requested)
     } else {
@@ -395,16 +409,24 @@ mod tests {
             unmaker_visuals().widgets.active.bg_fill
         );
         assert_ne!(visuals().panel_fill, unmaker_visuals().panel_fill);
-        assert_eq!(unmaker_visuals().widgets.active.bg_fill, nesticles_red());
+        // R6.1 uses the glossy blue active fill. The Nesticles red token remains
+        // for primary actions and is no longer the widget active color.
+        assert_eq!(
+            unmaker_visuals().widgets.active.bg_fill,
+            eframe::egui::Color32::from_rgb(33, 138, 255)
+        );
+        assert_ne!(unmaker_visuals().widgets.active.bg_fill, nesticles_red());
     }
 
     #[test]
     fn discover_wraps_instead_of_growing_one_row() {
+        // Card width is 222 and the gap is 16, so 846px is three columns.
         assert_eq!(gallery_columns(1146.0), 4);
-        assert_eq!(gallery_columns(846.0), 4);
+        assert_eq!(gallery_columns(846.0), 3);
         assert_eq!(gallery_columns(760.0), 3);
         assert_eq!(gallery_columns(400.0), 1);
-        assert!(discover_shows_inspector(1000.0));
+        assert!(discover_shows_inspector(1080.0));
+        assert!(!discover_shows_inspector(1000.0));
         assert!(!discover_shows_inspector(760.0));
     }
 
