@@ -10,8 +10,7 @@ use crate::export_game;
 use crate::keys::KeyFile;
 use crate::net::{self, AssistDone, ImageDone};
 use eframe::egui::{
-    self, Color32, FontFamily, FontId, Pos2, Rect, RichText, Sense, TextureHandle, TextureOptions,
-    Vec2,
+    self, Color32, FontId, Pos2, Rect, RichText, Sense, TextureHandle, TextureOptions, Vec2,
 };
 use nesticles_core::audio::{scan_brr, scan_dpcm, scan_gb_waves, AudioHit};
 use nesticles_core::codec::{
@@ -213,7 +212,13 @@ pub struct NestApp {
     close_when_clean: bool,
     allow_close: bool,
     startup_frames: u8,
+    /// Counts frames after the window is placed, only used when `NESTICLES_SHOT` is set.
+    shot_wait: u8,
     palette_query: String,
+    maker_group: String,
+    game_style: studio::GameStyle,
+    style_chooser_open: bool,
+    inspector_open: bool,
     rail: &'static str,
     sprite_id: Option<String>,
     frame_id: Option<String>,
@@ -395,7 +400,12 @@ impl NestApp {
             close_when_clean: false,
             allow_close: false,
             startup_frames: 0,
+            shot_wait: 0,
             palette_query: String::new(),
+            maker_group: "All".into(),
+            game_style: studio::GameStyle::Classic8Bit,
+            style_chooser_open: false,
+            inspector_open: false,
             rail: "Paint",
             sprite_id: None,
             frame_id: None,
@@ -661,6 +671,10 @@ impl eframe::App for NestApp {
         self.take_drops(ctx);
         self.refresh_dirty();
         if self.startup_frames == 0 {
+            if std::env::var("NESTICLES_STYLE_OPEN").ok().as_deref() == Some("1") {
+                self.style_chooser_open = true;
+                self.workspace = Workspace::Maker;
+            }
             if let Ok(path) = std::env::var("NESTICLES_PROJECT") {
                 match std::fs::read_to_string(&path) {
                     Ok(text) => {
@@ -701,6 +715,7 @@ impl eframe::App for NestApp {
         self.image_window(ctx);
         self.app_menu_window(ctx);
         self.exit_window(ctx);
+        self.capture_shot_if_requested(ctx);
         if self.assist_open {
             egui::Window::new("Workshop assistant")
                 .default_width(360.0)
@@ -1279,31 +1294,7 @@ impl NestApp {
                 }
             }
             if ui.button("New course").clicked() {
-                let id = nid("course-");
-                let style_id = if self.active_style.is_empty() {
-                    self.project
-                        .styles
-                        .first()
-                        .map(|style| style.id.clone())
-                        .unwrap_or_default()
-                } else {
-                    self.active_style.clone()
-                };
-                self.project.levels.push(nesticles_core::Level {
-                    id,
-                    name: "New course".into(),
-                    style_id,
-                    w: 32,
-                    h: 15,
-                    sky: "#24343c".into(),
-                    music_id: None,
-                    player: nesticles_core::project::Spawn { x: 2.0, y: 2.0 },
-                    cells: Vec::new(),
-                    enemy_ai: EnemyAiStyle::Smb1Nes,
-                    entrances: Vec::new(),
-                    player_blueprint_id: None,
-                });
-                self.level_sel = self.project.levels.len() - 1;
+                self.add_course();
             }
         });
         let level_id = self.project.levels[self.level_sel].id.clone();
@@ -1445,7 +1436,13 @@ impl NestApp {
     }
 
     fn paint_grid(&mut self, ui: &mut egui::Ui) {
-        if self.level_sel >= self.project.levels.len() {
+        if self.project.levels.is_empty() || self.level_sel >= self.project.levels.len() {
+            ui.add_space(24.0);
+            ui.label(RichText::new("This project has no course yet.").size(18.0));
+            ui.label("A sample level is not loaded. New course makes an empty grid.");
+            if ui.button("New course").clicked() {
+                self.add_course();
+            }
             return;
         }
         // 20px cells disappear on a 1080p screen. 48px keeps the course large and the hit test aligned.
@@ -1457,7 +1454,12 @@ impl NestApp {
         let painter = ui.painter_at(rect);
         let sky = parse_hex_color(&self.project.levels[self.level_sel].sky);
         painter.rect_filled(rect, 0.0, sky);
-        let grid = Color32::from_rgba_unmultiplied(255, 255, 255, 48);
+        let luma = sky.r() as u16 + sky.g() as u16 + sky.b() as u16;
+        let grid = if luma > 380 {
+            Color32::from_rgba_unmultiplied(24, 48, 72, 110)
+        } else {
+            Color32::from_rgba_unmultiplied(255, 255, 255, 90)
+        };
         for x in 0..=w {
             let px = rect.left() + x as f32 * cell;
             painter.line_segment(
@@ -1561,6 +1563,7 @@ impl NestApp {
                                 .any(|placed| placed.x == x && placed.y == y);
                             if occupied {
                                 self.placement_pick = Some((x, y));
+                                self.inspector_open = true;
                             } else {
                                 self.placement_pick = None;
                                 self.status = format!("No part at {x},{y}.");
@@ -1584,27 +1587,68 @@ impl NestApp {
                 }
             }
         }
-        if self.terrain_brush.is_some() {
-            if let Some(pos) = response.hover_pos() {
-                let local = pos - rect.min;
-                let (x, y) = pointer_cell(
-                    local.x * EDITOR_CELL_PX / cell,
-                    local.y * EDITOR_CELL_PX / cell,
+        if let Some(pos) = response.hover_pos() {
+            let local = pos - rect.min;
+            let (x, y) = pointer_cell(
+                local.x * EDITOR_CELL_PX / cell,
+                local.y * EDITOR_CELL_PX / cell,
+            );
+            if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+                let hover = Rect::from_min_size(
+                    rect.min + Vec2::new(x as f32 * cell, y as f32 * cell),
+                    Vec2::splat(cell - 1.0),
                 );
-                if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
-                    let hover = Rect::from_min_size(
-                        rect.min + Vec2::new(x as f32 * cell, y as f32 * cell),
-                        Vec2::splat(cell - 1.0),
-                    );
+                if self.terrain_brush.is_some() || self.paint_asset.is_some() {
+                    if let Some(id) = self.paint_asset.clone().filter(|_| self.terrain_brush.is_none())
+                    {
+                        if let Some(tex) = self.textures.get(&id) {
+                            painter.image(
+                                tex.id(),
+                                hover,
+                                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                Color32::from_white_alpha(170),
+                            );
+                        }
+                    }
                     painter.rect_stroke(
                         hover,
                         0.0,
-                        egui::Stroke::new(1.0_f32, paper()),
+                        egui::Stroke::new(2.0_f32, studio::accent_yellow()),
                         egui::StrokeKind::Inside,
                     );
                 }
             }
         }
+    }
+
+    fn add_course(&mut self) {
+        let id = nid("course-");
+        let style_id = if self.active_style.is_empty() {
+            self.project
+                .styles
+                .first()
+                .map(|style| style.id.clone())
+                .unwrap_or_default()
+        } else {
+            self.active_style.clone()
+        };
+        self.project.levels.push(nesticles_core::Level {
+            id,
+            name: "New course".into(),
+            style_id,
+            w: 32,
+            h: 15,
+            sky: "#8ED0F0".into(),
+            music_id: None,
+            player: nesticles_core::project::Spawn { x: 2.0, y: 2.0 },
+            cells: Vec::new(),
+            enemy_ai: EnemyAiStyle::Smb1Nes,
+            entrances: Vec::new(),
+            player_blueprint_id: None,
+        });
+        self.level_sel = self.project.levels.len() - 1;
+        self.dirty = true;
+        self.status = "Empty course added. No sample objects were placed.".into();
     }
 
     fn terrain_engaged(&self) -> bool {
@@ -3039,7 +3083,7 @@ impl NestApp {
                 center + Vec2::new(14.0, -6.0),
                 egui::Align2::LEFT_TOP,
                 &node.name,
-                FontId::new(14.0, FontFamily::Name("serif".into())),
+                FontId::proportional(14.0),
                 paper(),
             );
             if response.clicked() || response.dragged() {
@@ -3631,7 +3675,7 @@ impl NestApp {
                 center + Vec2::new(16.0, -8.0),
                 egui::Align2::LEFT_CENTER,
                 &node.name,
-                FontId::new(16.0, FontFamily::Name("serif".into())),
+                FontId::proportional(16.0),
                 paper(),
             );
             if response.clicked() {
@@ -3654,7 +3698,7 @@ impl NestApp {
                 center + Vec2::new(14.0, -6.0),
                 egui::Align2::LEFT_CENTER,
                 &node.name,
-                FontId::new(14.0, FontFamily::Name("serif".into())),
+                FontId::proportional(14.0),
                 Color32::from_rgb(140, 130, 120),
             );
         }
@@ -3863,7 +3907,7 @@ impl NestApp {
             rect.min + Vec2::new(8.0, 6.0),
             egui::Align2::LEFT_TOP,
             &level_name,
-            FontId::new(16.0, FontFamily::Name("serif".into())),
+            FontId::proportional(16.0),
             paper(),
         );
     }
@@ -5195,67 +5239,50 @@ impl NestApp {
     }
 
     fn shell_bar(&mut self, ctx: &egui::Context) {
-        if self.workspace == Workspace::Unmaker {
-            self.unmaker_top_bar(ctx);
+        self.unmaker_top_bar(ctx);
+    }
+
+    /// Writes one framebuffer PNG when `NESTICLES_SHOT` is set, then closes.
+    /// This is rendering evidence. It does not click controls.
+    fn capture_shot_if_requested(&mut self, ctx: &egui::Context) {
+        let Ok(path) = std::env::var("NESTICLES_SHOT") else {
+            return;
+        };
+        if let Some(image) = ctx.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        }) {
+            match save_rgba_png(&path, image.size, &image.pixels) {
+                Ok(()) => eprintln!("wrote {path}"),
+                Err(err) => eprintln!("could not write {path}: {err}"),
+            }
+            self.allow_close = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
-        egui::TopBottomPanel::top("shell")
-            .exact_height(studio::BAR_H)
-            .frame(navy_frame())
-            .show(ctx, |ui| {
-                let full = ui.max_rect();
-                ui.horizontal(|ui| {
-                    let flip = egui::Button::new(
-                        RichText::new(self.workspace.other_label())
-                            .color(studio::unmaker_ink())
-                            .size(18.0),
-                    )
-                    .fill(studio::unmaker_paper())
-                    .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
-                    .min_size(Vec2::new(168.0, 40.0));
-                    if ui.add(flip).on_hover_text("Flip workspace (F6)").clicked() {
-                        self.flip_workspace();
+        if self.startup_frames < 8 {
+            return;
+        }
+        self.shot_wait = self.shot_wait.saturating_add(1);
+        if self.shot_wait == 1 && std::env::var("NESTICLES_MAX").ok().as_deref() == Some("1") {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
+        if self.shot_wait == 1 {
+            if let Ok(spec) = std::env::var("NESTICLES_INNER") {
+                if let Some((w, h)) = spec.split_once('x') {
+                    if let (Ok(w), Ok(h)) = (w.parse::<f32>(), h.parse::<f32>()) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(w, h)));
                     }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let exit = egui::Button::new(
-                            RichText::new("Exit").color(Color32::WHITE).size(18.0),
-                        )
-                        .fill(studio::unmaker_red())
-                        .min_size(Vec2::new(84.0, 40.0));
-                        if ui.add(exit).on_hover_text("Exit to Desktop").clicked() {
-                            self.request_exit(ctx);
-                        }
-                        let menu = egui::Button::new(
-                            RichText::new("Menu").color(studio::unmaker_ink()).size(18.0),
-                        )
-                        .fill(studio::unmaker_paper())
-                        .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
-                        .min_size(Vec2::new(88.0, 40.0));
-                        if ui.add(menu).clicked() {
-                            self.app_menu = !self.app_menu;
-                        }
-                        let save_label = if self.dirty { "Save ●" } else { "Save" };
-                        let save = egui::Button::new(
-                            RichText::new(save_label)
-                                .color(studio::unmaker_ink())
-                                .size(18.0),
-                        )
-                        .fill(studio::unmaker_paper())
-                        .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
-                        .min_size(Vec2::new(110.0, 40.0));
-                        if ui.add(save).on_hover_text("Save (Ctrl+S)").clicked() {
-                            self.save_project_quick();
-                        }
-                    });
-                });
-                ui.painter().text(
-                    full.center(),
-                    egui::Align2::CENTER_CENTER,
-                    self.workspace.title(),
-                    serif(22.0),
-                    studio::unmaker_ink(),
-                );
-            });
+                }
+            }
+        }
+        if self.shot_wait == 4 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                egui::UserData::default(),
+            ));
+        }
     }
 
     fn maker_shell(&mut self, ctx: &egui::Context) {
@@ -5265,23 +5292,15 @@ impl NestApp {
             .show(ctx, |ui| self.maker_dock(ui));
         if self.drawer_open {
             egui::TopBottomPanel::bottom("drawer")
-                .exact_height(300.0)
+                .exact_height(280.0)
                 .resizable(true)
                 .frame(paper_frame())
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| self.courses(ui));
                 });
         }
-        egui::TopBottomPanel::top("palette")
-            .exact_height(studio::STRIP_H)
-            .frame(paper_frame())
-            .show(ctx, |ui| self.maker_palette(ui));
-        egui::SidePanel::left("rail")
-            .exact_width(studio::RAIL_W)
-            .resizable(false)
-            .frame(paper_frame())
-            .show(ctx, |ui| self.maker_rail(ui));
-        if self.placement_pick.is_some() {
+        let wide = ctx.screen_rect().width() >= 1100.0;
+        if wide && self.inspector_open && self.placement_pick.is_some() {
             egui::SidePanel::right("inspect")
                 .exact_width(studio::INSPECTOR_W)
                 .resizable(false)
@@ -5297,6 +5316,159 @@ impl NestApp {
                         self.paint_grid(ui);
                     });
             });
+        self.maker_overlays(ctx, wide);
+    }
+
+    fn maker_overlays(&mut self, ctx: &egui::Context, wide: bool) {
+        let tray_w = (ctx.screen_rect().width() * 0.62).clamp(360.0, 760.0);
+        egui::Area::new(egui::Id::new("maker-parts"))
+            .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, studio::BAR_H + 8.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.set_max_width(tray_w);
+                crate::design::floating_frame(studio::maker_paper()).show(ui, |ui| {
+                    ui.set_min_width(tray_w - 28.0);
+                    ui.label(RichText::new("Parts").size(14.0).strong());
+                    ui.horizontal_wrapped(|ui| {
+                        for group in studio::PART_GROUPS {
+                            let on = self.maker_group == group;
+                            if ui
+                                .selectable_label(on, group)
+                                .on_hover_text(format!("Show {group} parts"))
+                                .clicked()
+                            {
+                                self.maker_group = group.to_string();
+                            }
+                        }
+                    });
+                    self.maker_palette(ui);
+                });
+            });
+        egui::Area::new(egui::Id::new("maker-tools"))
+            .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-12.0, studio::BAR_H + 8.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                crate::design::floating_frame(studio::maker_paper()).show(ui, |ui| {
+                    ui.label(RichText::new("Tools").size(14.0).strong());
+                    let height = (ctx.screen_rect().height() - studio::BAR_H - studio::BOTTOM_H - 36.0)
+                        .clamp(180.0, 520.0);
+                    egui::ScrollArea::vertical()
+                        .id_salt("maker-tools-scroll")
+                        .max_height(height)
+                        .show(ui, |ui| self.maker_tool_column(ui));
+                });
+            });
+        egui::Area::new(egui::Id::new("maker-style"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, Vec2::new(-12.0, -studio::BOTTOM_H - 8.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                crate::design::floating_frame(studio::maker_paper()).show(ui, |ui| {
+                    self.game_style_chooser(ui);
+                });
+            });
+        if !wide && self.inspector_open && self.placement_pick.is_some() {
+            egui::Window::new("Selected part")
+                .id(egui::Id::new("maker-inspect-window"))
+                .collapsible(true)
+                .default_width(260.0)
+                .anchor(egui::Align2::LEFT_BOTTOM, Vec2::new(12.0, -studio::BOTTOM_H - 8.0))
+                .show(ctx, |ui| self.maker_inspector(ui));
+        }
+    }
+
+    fn maker_tool_column(&mut self, ui: &mut egui::Ui) {
+        for (name, label) in [
+            ("Select", "Select"),
+            ("Paint", "Place"),
+            ("Erase", "Erase"),
+            ("Line", "Line"),
+            ("Vertical", "Vertical"),
+            ("Rectangle", "Fill"),
+            ("Inspect", "Inspect"),
+        ] {
+            if self.rail_button(ui, name, label, true, label) {
+                self.apply_rail(name);
+            }
+        }
+        ui.add_space(4.0);
+        if self.rail_button(ui, "Undo", "Undo", true, "Undo the last terrain stroke") {
+            self.undo_terrain();
+        }
+        if self.rail_button(ui, "Redo", "Redo", true, "Redo the terrain stroke") {
+            self.redo_terrain();
+        }
+        let _ = self.rail_button(
+            ui,
+            "Move",
+            "Move",
+            false,
+            "Moving a placed part is not implemented. Erase it and place it again.",
+        );
+        let _ = self.rail_button(
+            ui,
+            "Zoom",
+            "Zoom",
+            false,
+            "Course zoom is not implemented. Cells stay on the placement grid.",
+        );
+        let _ = self.rail_button(
+            ui,
+            "Pan",
+            "Pan",
+            false,
+            "Drag-pan is not a separate tool. Scroll the course area.",
+        );
+        let _ = self.rail_button(
+            ui,
+            "Snap",
+            "Snap",
+            false,
+            "Placement already uses cell boundaries. A snap toggle is not implemented.",
+        );
+        let _ = self.rail_button(
+            ui,
+            "Grid",
+            "Grid on",
+            false,
+            "Grid lines follow the course cells. Hiding them is not implemented.",
+        );
+    }
+
+    fn game_style_chooser(&mut self, ui: &mut egui::Ui) {
+        let current = self.game_style.label();
+        if ui
+            .selectable_label(self.style_chooser_open, format!("Game Style · {current}"))
+            .on_hover_text("Classic 8-bit is the only style this build draws.")
+            .clicked()
+        {
+            self.style_chooser_open = !self.style_chooser_open;
+        }
+        if !self.style_chooser_open {
+            return;
+        }
+        ui.label("Future styles stay unavailable. Nothing is converted.");
+        for style in studio::GameStyle::all() {
+            let on = self.game_style == style;
+            let label = if on {
+                format!("{} — Current", style.label())
+            } else {
+                style.label().to_string()
+            };
+            let response = ui
+                .add_enabled(style.selectable(), egui::Button::new(label))
+                .on_hover_text(style.detail())
+                .on_disabled_hover_text(style.detail());
+            if response.clicked() {
+                match studio::choose_game_style(self.game_style, style) {
+                    Ok(next) => {
+                        self.game_style = next;
+                        self.status =
+                            "Classic 8-bit stays the current style. Nothing was converted.".into();
+                    }
+                    Err(message) => self.status = message.into(),
+                }
+            }
+        }
     }
 
     fn play_shell(&mut self, ctx: &egui::Context) {
@@ -5392,12 +5564,14 @@ impl NestApp {
                 (brush.id.clone(), brush.name.clone(), art)
             })
             .collect();
+        let group = self.maker_group.clone();
         let parts: Vec<(String, String, AssetKind)> = self
             .project
             .assets
             .iter()
             .filter(|asset| {
                 !matches!(asset.kind, AssetKind::Sfx | AssetKind::Music)
+                    && studio::show_asset_kind(&group, asset.kind.label())
                     && (query.is_empty() || asset.name.to_lowercase().contains(&query))
             })
             .map(|asset| (asset.id.clone(), asset.name.clone(), asset.kind))
@@ -5412,6 +5586,14 @@ impl NestApp {
                             .desired_width(160.0)
                             .min_size(Vec2::new(160.0, 40.0)),
                     );
+                    let brushes = if studio::show_terrain_brush(&group) {
+                        brushes
+                    } else {
+                        Vec::new()
+                    };
+                    if brushes.is_empty() && parts.is_empty() {
+                        ui.label("No parts in this group. Nothing was invented.");
+                    }
                     for (id, name, art) in brushes {
                         let on = self.terrain_brush.as_deref() == Some(id.as_str());
                         let label = if name.is_empty() {
@@ -5480,37 +5662,55 @@ impl NestApp {
     }
 
     fn maker_rail(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.vertical(|ui| {
-                for name in studio::RAIL_TOOLS {
-                    if self.rail_button(ui, name) {
-                        self.apply_rail(name);
-                    }
-                }
-                ui.add_space(8.0);
-                if self.rail_button(ui, "Undo") {
-                    self.undo_terrain();
-                }
-                if self.rail_button(ui, "Redo") {
-                    self.redo_terrain();
-                }
-            });
-        });
+        self.maker_tool_column(ui);
     }
 
-    fn rail_button(&self, ui: &mut egui::Ui, name: &str) -> bool {
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(studio::TOOL), Sense::click());
-        let on = self.rail == name;
-        let fill = if on {
-            Color32::from_rgb(255, 236, 236)
+    fn rail_button(
+        &self,
+        ui: &mut egui::Ui,
+        name: &str,
+        label: &str,
+        enabled: bool,
+        tip: &str,
+    ) -> bool {
+        let width = 132.0_f32;
+        let sense = if enabled { Sense::click() } else { Sense::hover() };
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, studio::TOOL), sense);
+        let on = enabled && self.rail == name;
+        let fill = if !enabled {
+            studio::panel()
+        } else if on {
+            Color32::from_rgb(255, 236, 214)
         } else if response.hovered() {
-            studio::unmaker_mist()
+            studio::maker_mist()
         } else {
-            studio::unmaker_paper()
+            studio::maker_paper()
         };
-        ui.painter().rect_filled(rect, 8.0, fill);
-        draw_tool_icon(ui.painter(), rect, name);
-        response.on_hover_text(format!("{name}")).clicked()
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(10), fill);
+        if on {
+            ui.painter().rect_stroke(
+                rect,
+                egui::CornerRadius::same(10),
+                egui::Stroke::new(2.0, studio::nesticles_red()),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = if enabled {
+            studio::unmaker_ink()
+        } else {
+            studio::caption()
+        };
+        ui.painter().text(
+            rect.left_center() + Vec2::new(10.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(14.0),
+            color,
+        );
+        let response = response.on_hover_text(tip);
+        enabled && response.clicked()
     }
 
     fn apply_rail(&mut self, name: &'static str) {
@@ -5639,7 +5839,10 @@ impl NestApp {
         if ui.button("Blueprint and terrain settings").clicked() {
             self.drawer_open = true;
         }
-        if ui.button("Close").clicked() {
+        if ui.button("Hide inspector").clicked() {
+            self.inspector_open = false;
+        }
+        if ui.button("Clear selection").clicked() {
             self.placement_pick = None;
         }
     }
@@ -5905,6 +6108,16 @@ impl NestApp {
     }
 }
 
+fn save_rgba_png(path: &str, size: [usize; 2], pixels: &[Color32]) -> Result<(), String> {
+    let mut bytes = Vec::with_capacity(pixels.len() * 4);
+    for pixel in pixels {
+        bytes.extend_from_slice(&pixel.to_array());
+    }
+    let image = image::RgbaImage::from_raw(size[0] as u32, size[1] as u32, bytes)
+        .ok_or_else(|| "screenshot size did not match its pixels".to_string())?;
+    image.save(path).map_err(|err| err.to_string())
+}
+
 fn navy_frame() -> egui::Frame {
     egui::Frame::NONE
         .fill(studio::unmaker_mist())
@@ -5990,31 +6203,15 @@ fn draw_tool_icon(painter: &egui::Painter, rect: Rect, name: &str) {
 
 fn install_theme(ctx: &egui::Context) {
     ctx.set_visuals(studio::visuals());
-    let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "liberation".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/LiberationSerif-Regular.ttf"
-        ))),
-    );
-    fonts.font_data.insert(
-        "liberation_bold".to_owned(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
-            "../assets/LiberationSerif-Bold.ttf"
-        ))),
-    );
-    fonts.families.insert(
-        FontFamily::Name("serif".into()),
-        vec!["liberation_bold".into(), "liberation".into()],
-    );
-    if let Some(prop) = fonts.families.get_mut(&FontFamily::Proportional) {
-        prop.insert(0, "liberation".into());
-    }
-    ctx.set_fonts(fonts);
+    // egui's built-in proportional face is a sans. Do not put the bundled serif
+    // in front of it. Design Language 2.0 asks for a modern sans, and the
+    // bundled files are a serif we do not have a license path to replace with
+    // a proprietary family.
+    ctx.set_fonts(egui::FontDefinitions::default());
 }
 
 fn serif(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("serif".into()))
+    FontId::proportional(size)
 }
 fn ember() -> Color32 {
     Color32::from_rgb(224, 122, 61)

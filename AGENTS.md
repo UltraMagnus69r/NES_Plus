@@ -8,7 +8,7 @@ The root [README.md](README.md) describes the original workshop. Later behavior 
 
 Historical Phase 9.1 is **not accepted**. Its published build is a test candidate. Do not drop a Phase 9.1 acceptance item to make that phase look finished. Do not renumber Phases 0–9.1. Do not start historical Phase 10. Phases 10–20 stay suspended.
 
-The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is accepted. R1 is the UnMaker studio shell. R2 is the Goomba reconstruction and is not accepted. Do not start R3. Maker Engine feature work stays frozen until the UnMaker-to-Maker gate. Existing Maker behavior stays. The white studio theme applies to UnMaker Lab only.
+The owner has approved an UnMaker-first rebaseline. The active sequence is R0–R7 in [docs/roadmaps/UNMAKER_FIRST_ROADMAP.md](docs/roadmaps/UNMAKER_FIRST_ROADMAP.md). R0 is accepted. R1 is the UnMaker studio shell. R2 is the Goomba reconstruction and is not accepted. R2.3 is the Design Language 2.0 visual pass for UnMaker Lab and Maker Engine. It is not accepted. Do not start R3. Do not add reconstruction, style conversion, or new gameplay in the visual pass. Existing Maker behavior stays. The shared tokens are in `studio` and `design`.
 
 Nesticles is a standard native desktop application. It launches in a decorated, resizable window and supports native minimize, maximize, restore and close behavior. UnMaker Lab and Maker Engine share the same window. Fullscreen, if available, is optional and user-initiated.
 
@@ -77,7 +77,7 @@ Godot export is an experimental preview. It does not play Phase 9 clips.
 
 OpenAI in UnMaker Lab is a real HTTPS client when the user turns the feature on and consents. The older workshop assistant and image maker still use `keys.json` (mode `0600`) as described in the root README. New credential work must not add another plaintext store. See [packaging/phase91/API.md](packaging/phase91/API.md), [ROM.md](packaging/phase91/ROM.md), and [KNOWLEDGE.md](packaging/phase91/KNOWLEDGE.md).
 
-The next visual pass is a white, clinical layout. Do not restyle shipped screens just to chase it.
+R2.3 applies Design Language 2.0 to both workspaces. Do not start another visual direction while that pass is open.
 
 ## Code
 

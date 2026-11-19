@@ -2256,6 +2256,7 @@ dependencies = [
  "base64 0.22.1",
  "directories",
  "eframe",
+ "image",
  "nesticles-core",
  "reqwest",
  "rfd",

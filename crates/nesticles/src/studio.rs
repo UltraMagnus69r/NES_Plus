@@ -15,17 +15,24 @@ pub const MIN_INNER: [f32; 2] = [960.0, 540.0];
 /// Window geometry file. This is not the alpha library directory.
 pub const WINDOW_APP_ID: &str = "nesticles-window";
 
-/// Next visual pass: white field, light grey, dark text, a little red, large controls.
-/// Phase 9.1 does not restyle the screens that already shipped.
-pub const FUTURE_UI: &str = "clinical white, light grey, dark text, restrained red";
+/// R2.3 visual system. One token set, two workspace surfaces.
+pub const FUTURE_UI: &str = "Design Language 2.0: sans-serif, rounded surfaces, Nesticles red actions";
 
-pub const BAR_H: f32 = 56.0;
+pub const BAR_H: f32 = 64.0;
 pub const STRIP_H: f32 = 112.0;
 pub const RAIL_W: f32 = 80.0;
-pub const BOTTOM_H: f32 = 72.0;
-pub const THUMB: f32 = 72.0;
-pub const TOOL: f32 = 56.0;
-pub const INSPECTOR_W: f32 = 320.0;
+pub const BOTTOM_H: f32 = 48.0;
+pub const THUMB: f32 = 64.0;
+pub const TOOL: f32 = 44.0;
+pub const INSPECTOR_W: f32 = 280.0;
+
+/// Discover card width used to choose a column count. Cards may grow slightly
+/// to fill a row. They do not shrink below this.
+pub const GALLERY_CARD_W: f32 = 196.0;
+pub const GALLERY_GAP: f32 = 12.0;
+
+/// Content width at which Discover keeps a side inspector.
+pub const INSPECTOR_BREAK: f32 = 900.0;
 
 pub fn navy() -> Color32 {
     Color32::from_rgb(27, 40, 54)
@@ -52,16 +59,40 @@ pub fn cream() -> Color32 {
     Color32::from_rgb(244, 239, 230)
 }
 
+pub fn nesticles_red() -> Color32 {
+    Color32::from_rgb(229, 57, 53)
+}
+
 pub fn unmaker_red() -> Color32 {
-    Color32::from_rgb(176, 42, 42)
+    nesticles_red()
+}
+
+pub fn apple_blue() -> Color32 {
+    Color32::from_rgb(10, 132, 255)
+}
+
+pub fn game_green() -> Color32 {
+    Color32::from_rgb(52, 199, 89)
+}
+
+pub fn accent_yellow() -> Color32 {
+    Color32::from_rgb(255, 204, 0)
+}
+
+pub fn accent_purple() -> Color32 {
+    Color32::from_rgb(175, 82, 222)
 }
 
 pub fn unmaker_ink() -> Color32 {
-    Color32::from_rgb(28, 28, 28)
+    Color32::from_rgb(28, 28, 30)
+}
+
+pub fn caption() -> Color32 {
+    Color32::from_rgb(70, 78, 92)
 }
 
 pub fn unmaker_line() -> Color32 {
-    Color32::from_rgb(220, 220, 220)
+    Color32::from_rgb(214, 227, 240)
 }
 
 pub fn unmaker_paper() -> Color32 {
@@ -69,44 +100,167 @@ pub fn unmaker_paper() -> Color32 {
 }
 
 pub fn unmaker_mist() -> Color32 {
-    Color32::from_rgb(244, 244, 244)
+    Color32::from_rgb(246, 248, 255)
 }
 
-/// Shared widget theme. Maker Engine and UnMaker Lab both use it.
+pub fn panel() -> Color32 {
+    Color32::from_rgb(238, 242, 249)
+}
+
+pub fn maker_paper() -> Color32 {
+    Color32::from_rgb(255, 248, 242)
+}
+
+pub fn maker_mist() -> Color32 {
+    Color32::from_rgb(255, 241, 228)
+}
+
+fn round_controls(visuals: &mut Visuals) {
+    let radius = eframe::egui::CornerRadius::same(10);
+    visuals.widgets.noninteractive.corner_radius = radius;
+    visuals.widgets.inactive.corner_radius = radius;
+    visuals.widgets.hovered.corner_radius = radius;
+    visuals.widgets.active.corner_radius = radius;
+    visuals.widgets.open.corner_radius = radius;
+}
+
+/// Shared control colors. UnMaker uses the cool surface. Maker uses the warm one.
 pub fn unmaker_visuals() -> Visuals {
     let mut visuals = Visuals::light();
     let ink = unmaker_ink();
-    visuals.panel_fill = unmaker_paper();
+    visuals.panel_fill = unmaker_mist();
     visuals.window_fill = unmaker_paper();
-    visuals.extreme_bg_color = unmaker_mist();
-    visuals.faint_bg_color = Color32::from_rgb(236, 236, 236);
+    visuals.extreme_bg_color = panel();
+    visuals.faint_bg_color = panel();
     visuals.widgets.noninteractive.bg_fill = unmaker_paper();
     visuals.widgets.noninteractive.fg_stroke.color = ink;
     visuals.widgets.inactive.bg_fill = unmaker_paper();
     visuals.widgets.inactive.fg_stroke.color = ink;
     visuals.widgets.inactive.bg_stroke.color = unmaker_line();
-    visuals.widgets.hovered.bg_fill = Color32::from_rgb(255, 236, 236);
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(232, 242, 255);
     visuals.widgets.hovered.fg_stroke.color = ink;
-    visuals.widgets.active.bg_fill = unmaker_red();
+    visuals.widgets.hovered.bg_stroke.color = apple_blue();
+    visuals.widgets.active.bg_fill = nesticles_red();
     visuals.widgets.active.fg_stroke.color = Color32::WHITE;
-    visuals.selection.bg_fill = Color32::from_rgb(255, 228, 228);
-    visuals.selection.stroke.color = unmaker_red();
-    visuals.hyperlink_color = unmaker_red();
+    visuals.widgets.active.bg_stroke.color = nesticles_red();
+    visuals.selection.bg_fill = Color32::from_rgb(232, 242, 255);
+    visuals.selection.stroke.color = apple_blue();
+    visuals.hyperlink_color = apple_blue();
     visuals.override_text_color = Some(ink);
     visuals.window_stroke.color = unmaker_line();
-    visuals.warn_fg_color = unmaker_red();
-    visuals.error_fg_color = unmaker_red();
+    visuals.warn_fg_color = Color32::from_rgb(140, 96, 0);
+    visuals.error_fg_color = nesticles_red();
+    round_controls(&mut visuals);
     visuals
 }
 
-/// Maker Engine uses the same surfaces as UnMaker Lab.
+/// Maker Engine keeps the same actions and uses a warmer panel.
 pub fn visuals() -> Visuals {
-    unmaker_visuals()
+    let mut visuals = unmaker_visuals();
+    visuals.panel_fill = maker_paper();
+    visuals.window_fill = maker_paper();
+    visuals.widgets.noninteractive.bg_fill = maker_paper();
+    visuals.widgets.inactive.bg_fill = maker_paper();
+    visuals.faint_bg_color = maker_mist();
+    visuals
 }
 
-/// Course canvas. Light enough to sit in the shared theme, distinct from the panels.
+/// Course canvas behind an empty area. Placed cells still use the course sky.
 pub fn canvas() -> Color32 {
-    Color32::from_rgb(198, 220, 228)
+    Color32::from_rgb(186, 222, 236)
+}
+
+/// How many Discover cards fit. Capped at four so a wide monitor does not
+/// stretch one row into a filmstrip.
+pub fn gallery_columns(width: f32) -> usize {
+    if width < GALLERY_CARD_W {
+        return 1;
+    }
+    let span = GALLERY_CARD_W + GALLERY_GAP;
+    let cols = ((width + GALLERY_GAP) / span).floor() as usize;
+    cols.clamp(1, 4)
+}
+
+pub fn gallery_card_width(width: f32) -> f32 {
+    let cols = gallery_columns(width) as f32;
+    let gaps = GALLERY_GAP * (cols - 1.0).max(0.0);
+    ((width - gaps) / cols).clamp(GALLERY_CARD_W, 260.0)
+}
+
+pub fn discover_shows_inspector(content_width: f32) -> bool {
+    content_width >= INSPECTOR_BREAK
+}
+
+/// Graphical presentation of a course. Only Classic is implemented.
+/// Choosing another value must not rewrite assets.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum GameStyle {
+    #[default]
+    Classic8Bit,
+    SixteenBit,
+    ModernPixel,
+    RetroPalette,
+}
+
+impl GameStyle {
+    pub fn all() -> [Self; 4] {
+        [
+            Self::Classic8Bit,
+            Self::SixteenBit,
+            Self::ModernPixel,
+            Self::RetroPalette,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Classic8Bit => "Classic 8-bit",
+            Self::SixteenBit => "16-bit",
+            Self::ModernPixel => "Modern Pixel",
+            Self::RetroPalette => "Retro Palette",
+        }
+    }
+
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Classic8Bit => "The style this build actually draws.",
+            Self::SixteenBit => "Planned. This build cannot draw a 16-bit style.",
+            Self::ModernPixel => "Planned. This build cannot draw a modern pixel style.",
+            Self::RetroPalette => "Planned. This build cannot recolor the course.",
+        }
+    }
+
+    pub fn selectable(self) -> bool {
+        matches!(self, Self::Classic8Bit)
+    }
+}
+
+/// Returns the style to keep. An unavailable request leaves the current style
+/// alone and explains why.
+pub fn choose_game_style(current: GameStyle, requested: GameStyle) -> Result<GameStyle, &'static str> {
+    if requested.selectable() {
+        Ok(requested)
+    } else {
+        let _ = current;
+        Err("That style is planned. The course was not changed.")
+    }
+}
+
+pub const PART_GROUPS: [&str; 6] = ["All", "Terrain", "Players", "Enemies", "Items", "Other"];
+
+pub fn show_terrain_brush(group: &str) -> bool {
+    group == "All" || group == "Terrain"
+}
+
+pub fn show_asset_kind(group: &str, kind_label: &str) -> bool {
+    match group {
+        "Terrain" => false,
+        "Players" => kind_label == "Player",
+        "Enemies" => kind_label == "Enemy",
+        "Items" => kind_label == "Item",
+        "Other" => !matches!(kind_label, "Player" | "Enemy" | "Item"),
+        _ => true,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -233,9 +387,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maker_uses_the_same_paper_as_unmaker() {
-        assert_eq!(visuals().panel_fill, unmaker_visuals().panel_fill);
-        assert_ne!(visuals().panel_fill, parchment());
+    fn maker_uses_the_same_actions_and_a_warmer_surface() {
+        assert_eq!(
+            visuals().widgets.active.bg_fill,
+            unmaker_visuals().widgets.active.bg_fill
+        );
+        assert_ne!(visuals().panel_fill, unmaker_visuals().panel_fill);
+        assert_eq!(unmaker_visuals().widgets.active.bg_fill, nesticles_red());
+    }
+
+    #[test]
+    fn discover_wraps_instead_of_growing_one_row() {
+        assert_eq!(gallery_columns(1146.0), 4);
+        assert_eq!(gallery_columns(846.0), 4);
+        assert_eq!(gallery_columns(760.0), 3);
+        assert_eq!(gallery_columns(400.0), 1);
+        assert!(discover_shows_inspector(1000.0));
+        assert!(!discover_shows_inspector(760.0));
+    }
+
+    #[test]
+    fn only_classic_style_can_be_selected() {
+        assert!(GameStyle::Classic8Bit.selectable());
+        assert!(!GameStyle::SixteenBit.selectable());
+        assert_eq!(
+            choose_game_style(GameStyle::Classic8Bit, GameStyle::Classic8Bit),
+            Ok(GameStyle::Classic8Bit)
+        );
+        assert!(choose_game_style(GameStyle::Classic8Bit, GameStyle::ModernPixel).is_err());
+        assert!(choose_game_style(GameStyle::Classic8Bit, GameStyle::SixteenBit).is_err());
+        assert!(choose_game_style(GameStyle::Classic8Bit, GameStyle::RetroPalette).is_err());
+    }
+
+    #[test]
+    fn the_part_tray_filters_without_inventing_parts() {
+        assert!(show_terrain_brush("All"));
+        assert!(show_terrain_brush("Terrain"));
+        assert!(!show_terrain_brush("Enemies"));
+        assert!(show_asset_kind("Enemies", "Enemy"));
+        assert!(!show_asset_kind("Enemies", "Player"));
+        assert!(!show_asset_kind("Terrain", "Item"));
+        assert!(show_asset_kind("Other", "Hazard"));
     }
 
     #[test]
@@ -303,15 +495,14 @@ mod tests {
     }
 
     #[test]
-    fn the_1080p_rails_leave_a_large_course() {
-        let course_w = 1920.0 - RAIL_W;
-        let course_h = 1080.0 - BAR_H - STRIP_H - BOTTOM_H;
-        assert!(course_w > 1700.0);
-        assert!(course_h > 800.0);
-        assert!(THUMB >= 64.0);
-        assert!(TOOL >= 48.0);
+    fn the_course_stays_the_large_surface() {
+        let client_w = 1366.0;
+        let client_h = 694.0;
+        let course_h = client_h - BAR_H - BOTTOM_H;
+        assert!(course_h / client_h > 0.75);
+        assert!(client_w > INSPECTOR_W * 3.0);
+        assert!(THUMB >= 56.0);
+        assert!(TOOL >= 40.0);
         assert!(RAIL_TOOLS.len() >= 7);
-        let visible_tools = (course_h / TOOL).floor();
-        assert!(visible_tools >= RAIL_TOOLS.len() as f32);
     }
 }

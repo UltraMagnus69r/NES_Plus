@@ -232,6 +232,8 @@ impl StudioTool {
 pub struct StudioState {
     pub stage: Stage,
     pub filter: Option<Group>,
+    /// Name filter for Discover. Empty shows every card in the selected group.
+    pub gallery_query: String,
     pub selected: Option<String>,
     pub issue_index: usize,
     pub notice: String,
@@ -257,6 +259,7 @@ impl Default for StudioState {
         Self {
             stage: Stage::Home,
             filter: None,
+            gallery_query: String::new(),
             selected: None,
             issue_index: 0,
             notice: String::new(),
