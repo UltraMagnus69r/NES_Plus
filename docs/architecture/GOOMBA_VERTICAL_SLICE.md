@@ -4,13 +4,13 @@ R2 implements the walk and defeat described below for the verified SMB1 payload.
 
 The walk is not four separate tiles. `place` builds one 16×24 metasprite from `70 71 72 73`, leaving the top row empty because those slots are `FC`. The second walk pose is a horizontal mirror of that picture. This payload contains `A5 09 29 08 D0 06 A5 03 49 03`, which is the graphics handler test that mirrors the sprite for 8 frames. Defeat is `EF` on the left and `EF` flipped on the right, and the clip plays once.
 
-The baked colors are the review palette. CHR does not contain the PPU palette, so those colors are labeled "Review colors only — original palette not yet verified." The R0 note that said to use a gray ramp is superseded by that labeled review palette. Approval writes the sprite into the project. It does not store the ROM. Discover shows a compact card. Review is the one place that plays Walk and Defeat / Stomped and offers Approve & Save. Those two states belong to one default form. A future shell or a Mario power-up form would be another state or form on that same sheet once the graphics are actually verified. They are not generated now. The owner accepted R2 on November 18, 2026. The ROM proof below stays NOT VERIFIED wherever `/home/g/Desktop/Roms/smb1.nes` is absent. Acceptance does not add that result.
+The baked colors are the review palette. CHR does not contain the PPU palette, so those colors are labeled "Review colors only — original palette not yet verified." The R0 note that said to use a gray ramp is superseded by that labeled review palette. Approval writes the sprite into the project. It does not store the ROM. Discover shows a compact card. Review is the one place that plays Walk and Defeat / Stomped and offers Approve & Save. Those two states belong to one default form. A future shell or a Mario power-up form would be another state or form on that same sheet once the graphics are actually verified. They are not generated now. The owner accepted R2 on November 18, 2026. The ROM proof reads the first of the two owner paths that exists. Acceptance does not add a result from a machine where both paths are missing.
 
 R0 plan:
 
 ## Proof
 
-Owner ROM `/home/g/Desktop/Roms/smb1.nes`, headerless payload `fcb6a0ef3a20c19b356005fbb21dc8009563b1cb5a9aaebc8e9386b4a8c5912e`, becomes an animated Goomba in the project file. Save, close, reopen. The animation still plays. The ROM is not read on reopen. No API key.
+Owner ROM, tried first at `/home/g/Desktop/Roms/smb1.nes` and then at `/home/UltraMagnus69r/Desktop/Nesticle/ROMS/Super Mario Bros. (World)/Super Mario Bros. (World).nes`. Headerless payload `fcb6a0ef3a20c19b356005fbb21dc8009563b1cb5a9aaebc8e9386b4a8c5912e` becomes an animated Goomba in the project file. Save, close, reopen. The animation still plays. The ROM is not read on reopen. No API key.
 
 If that file or hash is absent, the slice is BLOCKED. The synthetic fixture is not a substitute.
 

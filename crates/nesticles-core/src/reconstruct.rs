@@ -20,6 +20,29 @@ use crate::pipeline::{Candidate, FrameDraft, TileSpot, SMB1_PAYLOAD_SHA256};
 use crate::pngutil::b64_encode;
 use crate::project::{nid, Asset, AssetKind, Project};
 
+/// Owner ROM locations. The first is the other machine. The second is this one.
+/// A missing path is skipped. The file itself is never stored in the repository.
+pub const OWNER_SMB1_PATHS: &[&str] = &[
+    "/home/g/Desktop/Roms/smb1.nes",
+    "/home/UltraMagnus69r/Desktop/Nesticle/ROMS/Super Mario Bros. (World)/Super Mario Bros. (World).nes",
+];
+
+/// Read the owner SMB1 dump from the first path that exists.
+pub fn read_owner_smb1() -> Result<Vec<u8>, String> {
+    let mut errors = Vec::new();
+    for path in OWNER_SMB1_PATHS {
+        match std::fs::read(path) {
+            Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
+            Ok(_) => errors.push(format!("{path}: file is empty")),
+            Err(err) => errors.push(format!("{path}: {err}")),
+        }
+    }
+    Err(format!(
+        "owner ROM was not found. Tried {}",
+        errors.join("; ")
+    ))
+}
+
 pub const TAG: &str = "r2-goomba";
 pub const PALETTE_NOTE: &str = "Review colors only — original palette not yet verified.";
 pub const WALK_TICKS: u32 = 8;
@@ -653,8 +676,16 @@ mod tests {
     }
 
     #[test]
+    fn owner_rom_paths_include_both_machines() {
+        assert_eq!(OWNER_SMB1_PATHS.len(), 2);
+        assert!(OWNER_SMB1_PATHS[0].ends_with("smb1.nes"));
+        assert!(OWNER_SMB1_PATHS[1].ends_with("Super Mario Bros. (World).nes"));
+        assert_ne!(OWNER_SMB1_PATHS[0], OWNER_SMB1_PATHS[1]);
+    }
+
+    #[test]
     fn verified_smb1_goomba_survives_project_and_package_round_trip() {
-        let bytes = std::fs::read("/home/g/Desktop/Roms/smb1.nes").expect("owner ROM");
+        let bytes = read_owner_smb1().expect("owner ROM");
         assert_eq!(bytes.len(), 40_976);
         assert_eq!(
             crate::pipeline::sha256(&bytes),

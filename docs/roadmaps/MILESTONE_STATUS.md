@@ -19,7 +19,7 @@ R4, R5, R6, and R6.1 on the launch scripts and UI notes are visual build labels 
 
 ## What acceptance does not verify
 
-- The Goomba unit test that reads `/home/g/Desktop/Roms/smb1.nes` stays failed or blocked on a machine without that file. A local ROM used for a screenshot is not that test.
+- The Goomba unit tests try `/home/g/Desktop/Roms/smb1.nes` and then `/home/UltraMagnus69r/Desktop/Nesticle/ROMS/Super Mario Bros. (World)/Super Mario Bros. (World).nes`. They fail only when neither file can be read. A screenshot is still not that test.
 - Framebuffer captures and `NESTICLES_*` tour variables are not a mouse pass.
 - Drag-to-resize, save/reopen of a resized course, and Bazzite launch were reported by the visual handoff. This acceptance session does not repeat those as new passes unless a command in the session report says so.
 - Review colors remain a review palette.

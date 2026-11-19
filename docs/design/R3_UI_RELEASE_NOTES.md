@@ -22,7 +22,7 @@ This is a direct modification of the native Rust/egui application, based on the 
 
 This package was statically inspected and its image files validated. It was **not compiled or GUI-tested** in the assistant runtime because Rust/Cargo and network package installation were unavailable there. It is a **build-from-source test release**, not an experimentally verified native executable. Build results on Bazzite must be checked before deployment.
 
-The earlier SMB1 test includes a machine-specific `/home/g/Desktop/Roms/smb1.nes` path. The launcher performs `cargo build --release --locked -p nesticles` but does not run that environment-specific test.
+The SMB1 tests try `/home/g/Desktop/Roms/smb1.nes` and then the ROM under `~/Desktop/Nesticle/ROMS/Super Mario Bros. (World)/`. The launcher performs `cargo build --release --locked -p nesticles` but does not run that test.
 
 ## Runtime asset folder
 

@@ -20,7 +20,7 @@ Functionally tested means a Rust test or a driven UI action. Visually tested mea
 | Game Style chooser | Implemented. Functionally tested. | `choose_game_style` rejects 16-bit, Modern Pixel, and Retro Palette |
 | Test Play | Implemented. | Same `toggle_play` as before |
 | Responsive collapse | Implemented in code. | Inspector side panel only when screen width >= 1100. Narrow path uses a window |
-| Mouse tour of SMB1 Goomba | Blocked on this machine. | `investigation_exposes_the_goomba_to_discover_without_a_launch_hook` panics: `/home/g/Desktop/Roms/smb1.nes` is not here. No ROM was substituted |
+| SMB1 Goomba unit proof | The tests try both owner paths before failing. | `read_owner_smb1` in `reconstruct.rs`. A mouse tour of the GUI is still separate |
 | Owner visual acceptance | Accepted by the owner on November 18, 2026. | Acceptance is the owner's decision. It does not convert framebuffer screenshots or env tours into a mouse pass. The accepted chrome is the later R6.1 visual label |
 | 16-bit, Modern Pixel, Retro Palette rendering | Future milestone. | Shown disabled. Not R2.3 |
 | Mario, Luigi, Koopa reconstruction | Future milestone. | Cards stay unresolved. Not R2.3 |
