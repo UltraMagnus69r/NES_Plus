@@ -11,5 +11,6 @@ Detail: [AGENTS.md](../../AGENTS.md) section "Security and privacy". Credential 
 - Reference URLs are HTTPS port 443. Refuse loopback and private targets. Do not follow a redirect off HTTPS.
 - The UnMaker OpenAI key is session-only, `NESTICLES_OPENAI_API_KEY`, or Secret Service. No new plaintext key file. The legacy assistant key file stays `keys.json` mode `0600` and must not be logged or copied into packages.
 - Do not ask the user to paste a key into chat. Redact secrets. Do not put keys in commits, projects, packages, knowledge files, screenshots, releases, or handoffs.
-- Authoring works offline. Do not upload ROMs, art, projects, or recipes. AI sends only an approved slice after consent. Never send a whole ROM automatically.
+- Authoring works offline. Do not upload ROMs, extracted commercial art, user projects, or recipes that embed that art. Original UI art may be committed. AI sends only an approved slice after consent. Never send a whole ROM automatically.
+- Classify assets before commit. UNKNOWN and LOCAL_PROTECTED stay off GitHub. See [docs/policies/INTELLECTUAL_PROPERTY.md](../../docs/policies/INTELLECTUAL_PROPERTY.md).
 - Ignored candidates are not deleted. A new alpha library starts empty and must not erase the previous alpha, user projects, or the API key.

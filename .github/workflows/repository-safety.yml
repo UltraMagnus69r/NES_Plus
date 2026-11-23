@@ -1,0 +1,17 @@
+name: repository-safety
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  content:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tracked tree
+        run: python3 scripts/repository_safety.py --worktree
+      - name: History paths and known archives
+        run: python3 scripts/repository_safety.py --history

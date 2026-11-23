@@ -27,10 +27,10 @@ pub const OWNER_SMB1_PATHS: &[&str] = &[
     "/home/UltraMagnus69r/Desktop/Nesticle/ROMS/Super Mario Bros. (World)/Super Mario Bros. (World).nes",
 ];
 
-/// Read the owner SMB1 dump from the first path that exists.
-pub fn read_owner_smb1() -> Result<Vec<u8>, String> {
+/// Read the first non-empty file. A missing path is an error string, not a download.
+pub(crate) fn read_first_nonempty(paths: &[&str]) -> Result<Vec<u8>, String> {
     let mut errors = Vec::new();
-    for path in OWNER_SMB1_PATHS {
+    for path in paths {
         match std::fs::read(path) {
             Ok(bytes) if !bytes.is_empty() => return Ok(bytes),
             Ok(_) => errors.push(format!("{path}: file is empty")),
@@ -41,6 +41,18 @@ pub fn read_owner_smb1() -> Result<Vec<u8>, String> {
         "owner ROM was not found. Tried {}",
         errors.join("; ")
     ))
+}
+
+/// Read the owner SMB1 dump. `NESTICLES_ROM` is tried first, then the two
+/// machine paths. Nothing is downloaded.
+pub fn read_owner_smb1() -> Result<Vec<u8>, String> {
+    let env = std::env::var("NESTICLES_ROM").unwrap_or_default();
+    let mut paths: Vec<&str> = Vec::new();
+    if !env.is_empty() {
+        paths.push(env.as_str());
+    }
+    paths.extend(OWNER_SMB1_PATHS.iter().copied());
+    read_first_nonempty(&paths)
 }
 
 pub const TAG: &str = "r2-goomba";
@@ -684,8 +696,21 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_rom_path_is_reported_and_not_downloaded() {
+        let err = read_first_nonempty(&["/nesticles-no-such-rom.nes"]).unwrap_err();
+        assert!(err.contains("not found"));
+        assert!(err.contains("/nesticles-no-such-rom.nes"));
+        assert!(!err.to_ascii_lowercase().contains("http"));
+    }
+
+    #[test]
     fn verified_smb1_goomba_survives_project_and_package_round_trip() {
-        let bytes = read_owner_smb1().expect("owner ROM");
+        let Ok(bytes) = read_owner_smb1() else {
+            eprintln!(
+                "ROM-dependent test skipped: owner ROM was not found. No ROM was downloaded."
+            );
+            return;
+        };
         assert_eq!(bytes.len(), 40_976);
         assert_eq!(
             crate::pipeline::sha256(&bytes),

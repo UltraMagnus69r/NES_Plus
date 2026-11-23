@@ -1,0 +1,13 @@
+---
+description: Local-only development, GitHub as source of truth, and IP limits
+alwaysApply: true
+---
+
+# Repository continuity
+
+Detail: [AGENTS.md](../../AGENTS.md) sections "Where development happens" and "Session routine". IP rules: [docs/policies/INTELLECTUAL_PROPERTY.md](../../docs/policies/INTELLECTUAL_PROPERTY.md).
+
+- Develop on the Fedora laptop or the Bazzite desktop. Stop if the checkout is `/agent/repos/NES_Plus` or the user is `ubuntu` in a cloud agent path.
+- The canonical remote is https://github.com/UltraMagnus69r/NES_Plus. Start with `./scripts/session-start.sh`. Finish a substantial session with a push whose remote SHA matches HEAD.
+- Do not commit ROMs, extracted commercial art, commercial audio, secrets, or UNKNOWN assets. Run `./scripts/check-repository-safety.sh --staged`.
+- Do not force-push. Do not merge to `main` unless the owner asks. Do not hard-reset as the way to sync.
