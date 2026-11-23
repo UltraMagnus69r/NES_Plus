@@ -106,18 +106,25 @@ A clean run is not a copyright opinion.
 
 ## Audit note, 2026-11-23
 
-A byte scan of reachable git blobs found no iNES, NSF, UNIF, or FDS header and no secret pattern that the checker recognizes. It did find one file outside the reviewed large-file list:
+A byte scan of reachable git blobs found no iNES, NSF, UNIF, or FDS header and no secret pattern that the checker recognizes. One file was outside the reviewed large-file list:
 
 - `crates/nesticles/assets/ui/backgrounds/maker-tools.png`
 - blob `ed8d3c7a161665a5fe1ba981b1a74893f472f43a`
-- commit `cef7367742849d4397f7cc78db67d7407edf498b`
+- added in commit `cef7367742849d4397f7cc78db67d7407edf498b`
 - 2,013,115 bytes, PNG, 684×2048
+- SHA256 `8ccac212fc855f0f5870a7ba448a1ed33f11585c91548aba03c7360b55103c56`
 
-The picture is editor decoration in a glossy platform-game style. This repository has no provenance record that establishes redistribution rights for it. Classification: UNKNOWN. It was already on GitHub before this policy. This session does not delete it and does not rewrite history.
+The picture shows pipes, question-mark blocks, coins, and a plant in a glossy commercial-platform style. The source comment named a local override `Glossy Super Platformer Landscape(4).png`. No creator, license, or redistribution record is in the repository. Classification: UNKNOWN. It is not on the allowlist.
 
-The design reference images added in `12d7ce8981b27f7e53c7cc6cdf6a4ce9b2cb4f7a` also have no license record. `docs/design/references/UNMAKER_LAB_V2_MOCKUP.jpg` names Mario, Luigi, and Koopa and shows a character labeled Goomba. Classification: UNKNOWN. The owner reviews the rights. A later commit can remove or document the files. Removing the blobs from GitHub, if the owner wants that, is a separate history rewrite on every machine.
+Three design references added in `12d7ce8981b27f7e53c7cc6cdf6a4ce9b2cb4f7a` also had no license record. They show figures labeled Mario, Luigi, Goomba, and other commercial-game objects. Classification: UNKNOWN.
 
-The checker does not decide copyright by looking at a picture. GitHub Actions runs the worktree scan, so this existing file keeps that check red until it is classified or removed.
+| File | SHA256 |
+| --- | --- |
+| `docs/design/references/UNMAKER_LAB_V2_MOCKUP.jpg` | `e2a8f65b7478d3524d8561615e8e296a16819b33d6952661626aad976610c1be` |
+| `docs/design/references/MAKER_AND_UNMAKER_COMPOSITE.jpg` | `35a0d544930a8d3512b2183ae1210072c38cfbe7e7310e7097dc7971b9c24f06` |
+| `docs/design/references/DESIGN_LANGUAGE_BOARD.jpg` | `5557084c171293b410ee01457e678f7fd3d5cc3c8a4bf9e2ed3455c4b82a8644` |
+
+Later on 2026-11-23 those four files were removed from the tracked tree. The Maker tools panel keeps its solid fill and its buttons. The written design contract stays. No lookalike artwork was added. The blobs remain in earlier commits. This note is not a claim that Git history is clean. A history rewrite was not performed. The checker does not decide copyright by looking at a picture.
 
 ## If a protected file is committed
 

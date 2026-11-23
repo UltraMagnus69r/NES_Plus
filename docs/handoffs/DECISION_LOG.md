@@ -89,3 +89,13 @@
 - Rationale: The owner asked to preserve the Rust desktop architecture. Godot remains an experimental preview and does not play Phase 9 clips.
 - Consequences: UI work uses egui. No new UI framework for the policy or for later visual work unless the owner opens that decision.
 - Status: Accepted by the owner. In force.
+
+## D-010 — Remove the four UNKNOWN images from the tree
+
+- Date: 2026-11-23
+- Problem: Four tracked images had no provenance record. One is the Maker tools backdrop. Three are design references. They show recognizable commercial-game characters and objects.
+- Alternatives: Leave them tracked. Add them to the safety allowlist. Replace the backdrop with a lookalike. Rewrite Git history.
+- Decision: Remove the four files from the current branch. Do not allowlist them. Do not draw a replacement that copies a commercial game. The tools panel already has a solid fill, so the controls stay. Keep `docs/design/NESTICLES_DESIGN_LANGUAGE_V2_0.md`. Do not rewrite history.
+- Rationale: The repository rule forbids uploading protected third-party material without verified redistribution rights. These files do not have that record. Absence from the current tree is not absence from old commits.
+- Consequences: GitHub Actions history scan can still report `maker-tools.png` from commit `cef7367`. That finding stays visible. Other UI images were not reclassified by this decision.
+- Status: In force. History rewrite is not authorized.

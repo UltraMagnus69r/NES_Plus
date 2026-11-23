@@ -7,7 +7,8 @@ Updated 2026-11-23 on the Fedora laptop (`hostname` `laptop`, user `g`).
 - Repository: https://github.com/UltraMagnus69r/NES_Plus
 - Published development tip before this policy commit: `d7c39ace11670696d4536e50e0bb3ed1693fc294` on `cursor/r3-issue-decisions`
 - Policy branch: `cursor/canonical-github-policy-9ff8`, based on that tip
-- The policy commit SHA is whatever `git rev-parse HEAD` prints after the push matches `origin/cursor/canonical-github-policy-9ff8`. This file is inside that commit, so it does not invent the SHA.
+- Policy commit: `2956a07584b9f141886cb3d9afddeb4b52e8dfbd` on `cursor/canonical-github-policy-9ff8`. Pull request https://github.com/UltraMagnus69r/NES_Plus/pull/25 is open and not merged.
+- The cleanup commit that follows it removes the four UNKNOWN images from the tree. Its SHA is the tip after `origin/cursor/canonical-github-policy-9ff8` matches HEAD. This file is inside that commit, so it does not invent the SHA.
 - `main` is not the working branch.
 - R2.2 pull request https://github.com/UltraMagnus69r/NES_Plus/pull/23 is based on `cursor/r2-goomba-reconstruction-9ff8` and was not merged by this session.
 - Published R2.2 test candidate: tag `r22-character-presentation`, file `Nesticles-R2.2-CharacterPresentation-linux-x86_64.tar.gz`, SHA256 `6649d34bd58d441952e2407d871371c0f028ca9ca4652d14b8cd856bb6c69cc1`
@@ -33,9 +34,21 @@ Mouse operation of the R6.1 chrome was not exercised in this session. Launch hoo
 
 A local git stash from an earlier unfinished R2.3 edit remains on this laptop only (`WIP R2.3 design language, unfinished, excluded from the IP-policy commit`). GitHub already has a later R2.3 commit, `12d7ce8`. Do not pop that stash onto this branch.
 
+## Image cleanup
+
+Removed from the tracked tree, not from Git history:
+
+- `crates/nesticles/assets/ui/backgrounds/maker-tools.png`
+- `docs/design/references/UNMAKER_LAB_V2_MOCKUP.jpg`
+- `docs/design/references/MAKER_AND_UNMAKER_COMPOSITE.jpg`
+- `docs/design/references/DESIGN_LANGUAGE_BOARD.jpg`
+
+No redistribution record existed. The Maker tools sidebar keeps its fill and buttons. No replacement picture was added. Other UI images were not reclassified.
+
 ## Known issues
 
 - Mario and Luigi are unresolved.
+- `maker-tools.png` remains reachable in commit `cef7367742849d4397f7cc78db67d7407edf498b`. The history scan still reports it. That is expected until a separate history rewrite, which this cleanup does not do.
 - R3 is authorized and not complete.
 - Godot preview does not play Phase 9 clips. The Godot parity tests fail on this laptop when Godot 4.7.2 is absent. That failure is the existing fail-closed behavior. This session did not install Godot.
 - A package's older readers still see the first frame when they ignore `pictures`.
@@ -54,7 +67,7 @@ On Bazzite, use the clone under `/home/UltraMagnus69r` and the same cargo comman
 
 ## Next priority
 
-Continue R3 from `cursor/canonical-github-policy-9ff8` after the remote SHA matches HEAD. Do not start roadmap R4. Do not roll back the R6.1 presentation. Read `docs/handoffs/daily/2026-11-23.md` before editing.
+Continue R3 from `cursor/canonical-github-policy-9ff8` after the remote SHA matches HEAD. Do not start roadmap R4. Do not rewrite history to hide the removed images. Do not pop the local R2.3 stash. Read `docs/handoffs/daily/2026-11-23.md` before editing.
 
 ## Acceptance
 
