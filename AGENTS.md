@@ -8,7 +8,9 @@ Read this file before changing application code.
 
 ## Where development happens
 
-Nesticles is written on the owner's local Linux machines. The Fedora laptop checkout is `/home/g/Desktop/CURSOR/nes_plus`. The Bazzite desktop home is `/home/UltraMagnus69r`. Both use https://github.com/UltraMagnus69r/NES_Plus.
+Nesticles is written only through Cursor running on the owner's local Linux machines. The sole Fedora laptop checkout is `/home/g/Desktop/NES_Plus` (user `g`). The previous path `/home/g/Desktop/CURSOR/nes_plus` is obsolete. Do not create redundant Nesticles clones or sibling project folders on that laptop.
+
+The Bazzite desktop home is `/home/UltraMagnus69r`. Keep one established Nesticles checkout under that home. Do not assume its exact subdirectory until it has been verified on Bazzite. Both machines use https://github.com/UltraMagnus69r/NES_Plus. Do not copy the source tree by hand between machines.
 
 A Cursor cloud agent is not a development machine. If the user is `ubuntu` or the checkout is `/agent/repos/NES_Plus`, stop. Do not build, edit, or commit there.
 
@@ -16,15 +18,38 @@ GitHub holds the source, architecture, original graphics, permissive assets with
 
 A fresh clone must build and run the ROM-independent tests. ROM-dependent tests read `NESTICLES_ROM` or the local dump paths in `read_owner_smb1`. They skip, with a printed line, when no file is present. They do not download a ROM.
 
+Godot preview and parity tests are pinned to Godot 4.7.2 standard (not .NET). On the Fedora laptop the managed binary is `~/.local/share/nesticles/godot/4.7.2/Godot_v4.7.2-stable_linux.x86_64`, with `godot` / `godot4` on `PATH` when linked. Do not commit the Godot executable.
+
 ## Session routine
 
-Start: run `./scripts/session-start.sh`, then read [docs/handoffs/CURRENT_PROJECT_STATE.md](docs/handoffs/CURRENT_PROJECT_STATE.md), the latest file in [docs/handoffs/daily/](docs/handoffs/daily/), and [docs/handoffs/DECISION_LOG.md](docs/handoffs/DECISION_LOG.md) when the task touches workflow or architecture. The procedure is [docs/handoffs/MULTI_MACHINE_WORKFLOW.md](docs/handoffs/MULTI_MACHINE_WORKFLOW.md).
+Start of every session:
 
-`git fetch` does not update the working tree. If local and origin have diverged, stop. Do not hard-reset as the normal sync. `main` is not the working branch.
+1. Verify local execution (Fedora or Bazzite seat; stop on a cloud path).
+2. Run `./scripts/session-start.sh` from the sole checkout.
+3. Inspect local changes (`git status`).
+4. Fetch has already run inside session-start; note ahead/behind.
+5. Identify the authoritative development branch from [docs/handoffs/CURRENT_PROJECT_STATE.md](docs/handoffs/CURRENT_PROJECT_STATE.md). `main` is not the working branch.
+6. If the branch is behind origin and the worktree is clean, review incoming commits, then `git pull --ff-only` in this exact directory. Never hard-reset as the normal sync. Never create a sibling clone to “get the update.”
+7. Confirm local HEAD and `origin/<branch>` when claiming sync.
+8. Read [docs/handoffs/CURRENT_PROJECT_STATE.md](docs/handoffs/CURRENT_PROJECT_STATE.md), the latest file in [docs/handoffs/daily/](docs/handoffs/daily/), and [docs/handoffs/DECISION_LOG.md](docs/handoffs/DECISION_LOG.md) when the task touches workflow or architecture. The procedure is [docs/handoffs/MULTI_MACHINE_WORKFLOW.md](docs/handoffs/MULTI_MACHINE_WORKFLOW.md).
+9. Begin only authorized work.
 
-Finish a substantial session by updating the current state, the daily log, and any new decision, then commit and push the development branch. The session is synchronized only when `git rev-parse HEAD` and `git rev-parse origin/<branch>` print the same SHA. No force-push. No merge to `main` unless the owner asks.
+`git fetch` does not update the working tree. If local and origin have diverged, stop. Do not discard local work merely to match GitHub.
 
-Before every commit, run `./scripts/check-repository-safety.sh --staged`. The hook from session-start runs the same check. Do not use `--no-verify`.
+Finish every substantial development session:
+
+1. Review changes.
+2. Run applicable tests.
+3. Update the dated development log under `docs/handoffs/daily/`.
+4. Update current project state.
+5. Record architectural decisions when rules or structure changed.
+6. Check for protected IP and secrets (`./scripts/check-repository-safety.sh --staged`).
+7. Commit with a descriptive message.
+8. Push the active development branch.
+9. Verify `git rev-parse HEAD` equals `git rev-parse origin/<branch>`.
+10. Return a comprehensive handoff.
+
+No force-push. No merge to `main` unless the owner asks. The session is synchronized only when those SHAs match. The hook from session-start runs the staged safety check. Do not use `--no-verify`.
 
 ## Current milestone
 

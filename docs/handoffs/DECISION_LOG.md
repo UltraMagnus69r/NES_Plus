@@ -99,3 +99,23 @@
 - Rationale: The repository rule forbids uploading protected third-party material without verified redistribution rights. These files do not have that record. Absence from the current tree is not absence from old commits.
 - Consequences: GitHub Actions history scan can still report `maker-tools.png` from commit `cef7367`. That finding stays visible. Other UI images were not reclassified by this decision.
 - Status: In force. History rewrite is not authorized.
+
+## D-011 — Sole Fedora checkout after reinstall
+
+- Date: 2026-11-24
+- Problem: After the Fedora reinstall, Nesticles lived at `/home/g/Desktop/NES_Plus`, while docs still named `/home/g/Desktop/CURSOR/nes_plus`. Empty sibling clones under `Desktop/Cursor Repos/` risked confusion.
+- Alternatives: Keep both paths. Recreate `CURSOR/nes_plus`. Allow multiple Desktop clones.
+- Decision: The sole Fedora Nesticles checkout is `/home/g/Desktop/NES_Plus`. The `CURSOR/nes_plus` path is obsolete. Do not create redundant Nesticles project folders. When GitHub is ahead, update that directory in place with a fast-forward pull. Empty redundant clones were removed.
+- Rationale: The owner required one clean project root and GitHub-driven multi-machine sync without hand-copied trees.
+- Consequences: Agents and docs must use `/home/g/Desktop/NES_Plus`. Bazzite keeps one checkout under `/home/UltraMagnus69r` without assuming the subdirectory until verified there.
+- Status: Accepted by the owner. In force.
+
+## D-012 — Godot 4.7.2 is the verified local editor pin
+
+- Date: 2026-11-24
+- Problem: Nesticles Godot proofs require a pinned standard editor. After reinstall, Godot was missing; 4.4.1 was briefly installed and is the wrong pin.
+- Alternatives: Commit Godot into the repo. Accept 4.4.1. Leave proofs failing forever.
+- Decision: Keep Godot 4.7.2 standard (not .NET) as a user-local tool at `~/.local/share/nesticles/godot/4.7.2/Godot_v4.7.2-stable_linux.x86_64`, reachable as `godot` / `godot4` on `PATH` when linked. Do not commit the executable. Verified version string: `4.7.2.stable.official.ed1daf0bf`.
+- Rationale: Matches `nesticles_core::godot::toolchain` and keeps the binary out of GitHub.
+- Consequences: Machines without 4.7.2 still fail the three Godot proofs closed. Bazzite must install its own matching editor when those proofs are required there.
+- Status: Accepted by the owner. In force.
