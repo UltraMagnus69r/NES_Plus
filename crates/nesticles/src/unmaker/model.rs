@@ -777,13 +777,15 @@ fn shown_from(name: &str, category: &str, candidate: Option<&Candidate>) -> Show
         })
         .unwrap_or_else(|| "No candidate. Not a verified finding.".into());
     ShownIssue {
-        issue: nesticles_core::issues::suggest_unresolved(
-            &nesticles_core::issues::stable_issue_id(&asset_id),
-            &asset_id,
+        issue: nesticles_core::issues::suggest_issue(nesticles_core::issues::SuggestContext {
+            id: &nesticles_core::issues::stable_issue_id(&asset_id),
+            asset_id: &asset_id,
             name,
-            &tiles,
-            &evidence,
-        ),
+            tiles: &tiles,
+            evidence_ids: &evidence,
+            character_id,
+            category,
+        }),
         category: category.to_string(),
         confidence,
     }
@@ -793,21 +795,37 @@ pub fn issue_queue(candidates: &[Candidate], coverage: &[CoverageRow]) -> Vec<Is
     let mut cards = Vec::new();
     for item in gallery_items(candidates, coverage) {
         let candidate = candidates.iter().find(|candidate| candidate.id == item.id);
+        let character_id = candidate
+            .map(|candidate| candidate.character_id.as_str())
+            .unwrap_or("");
+        let asset_id = asset_key(&item.name, character_id);
+        let category = candidate
+            .map(|candidate| candidate.category.as_str())
+            .unwrap_or("");
+        let mut evidence_ids = vec![format!("coverage:{}", item.name)];
+        if let Some(candidate) = candidate {
+            let note = candidate.evidence.as_str();
+            let path_like = note.contains('/')
+                || note.contains('\\')
+                || note.to_ascii_lowercase().contains(".nes");
+            if !note.is_empty() && !path_like {
+                evidence_ids.push(format!("note:{note}"));
+            }
+        }
+        let built = nesticles_core::issues::suggest_issue(nesticles_core::issues::SuggestContext {
+            id: &nesticles_core::issues::stable_issue_id(&asset_id),
+            asset_id: &asset_id,
+            name: &item.name,
+            tiles: &item.tile_ids,
+            evidence_ids: &evidence_ids,
+            character_id,
+            category,
+        });
         let unresolved = item.tile_ids.is_empty();
         cards.push(IssueCard {
             candidate_id: candidate.map(|candidate| candidate.id.clone()),
             name: item.name.clone(),
-            uncertainty: if unresolved {
-                format!(
-                    "{} has no documented tile mapping in this profile.",
-                    item.name
-                )
-            } else {
-                format!(
-                    "{} has proposed tile indexes only. Those indexes are not an assembled sprite.",
-                    item.name
-                )
-            },
+            uncertainty: built.suggestion.uncertainty.clone(),
             evidence: if item.tile_ids.is_empty() {
                 "No source tiles are attached. The name comes from the coverage list.".into()
             } else {
@@ -841,13 +859,13 @@ pub fn issue_queue(candidates: &[Candidate], coverage: &[CoverageRow]) -> Vec<Is
                 })
                 .unwrap_or_else(|| "No extraction candidate was created.".into()),
             next_action: if unresolved {
-                "There is no artwork to fix. Skip this, or leave it unresolved.".into()
+                built.suggestion.action.clone()
             } else if candidate.is_some_and(|candidate| candidate.character_id == "goomba") {
                 "Approve and save writes the assembled Goomba when this is the verified SMB1 payload. A review flag by itself does not save it.".into()
             } else {
-                "You can mark the candidate reviewed or place tiles by hand. Neither one publishes an animation.".into()
+                built.suggestion.action.clone()
             },
-            suggestion: None,
+            suggestion: Some(built.suggestion.card_line()),
         });
     }
     cards.sort_by_key(|card| !card.evidence.starts_with("No source"));
@@ -974,8 +992,43 @@ mod tests {
         assert!(items[0].tile_ids.is_empty());
         assert!(items[0].needs_user);
         let issues = issue_queue(&[], &items_to_coverage(&items));
-        assert!(issues[0].suggestion.is_none());
-        assert!(issues[0].uncertainty.contains("no documented tile mapping"));
+        let suggestion = issues[0]
+            .suggestion
+            .as_ref()
+            .expect("slice 3 fills suggestion");
+        assert!(suggestion.contains("Leave Mario unresolved"));
+        assert!(issues[0]
+            .uncertainty
+            .contains("Without a documented tile mapping"));
+    }
+
+    #[test]
+    fn issue_cards_carry_evidence_backed_suggestions() {
+        let candidate = goomba();
+        let coverage = vec![CoverageRow {
+            name: "Goomba".into(),
+            category: "enemy".into(),
+            raw: "identified".into(),
+            assembly: "proposed".into(),
+            animation: "proposed".into(),
+            palette: "unverified".into(),
+            review: "awaiting".into(),
+        }];
+        let issues = issue_queue(&[candidate.clone()], &coverage);
+        let suggestion = issues[0]
+            .suggestion
+            .as_ref()
+            .expect("goomba card has suggestion");
+        assert!(suggestion.contains("Goomba"));
+        assert!(suggestion.contains("0x70") || suggestion.contains("proposed"));
+        let shown = open_investigation_issue(&[candidate], &coverage, &[], &[]).unwrap();
+        assert!(!shown.issue.suggestion.action.is_empty());
+        assert!(!shown.issue.suggestion.why.is_empty());
+        assert!(shown
+            .issue
+            .suggestion
+            .accept_effect
+            .contains("does not write"));
     }
 
     #[test]
