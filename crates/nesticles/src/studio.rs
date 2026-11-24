@@ -9,8 +9,8 @@ pub const STARTS_FULLSCREEN: bool = false;
 /// Inner size for a 1366×768 desktop. The title bar and panel stay outside this.
 pub const INITIAL_INNER: [f32; 2] = [1200.0, 640.0];
 
-/// Smallest inner size. The layout scrolls rather than covering the title bar.
-pub const MIN_INNER: [f32; 2] = [960.0, 540.0];
+/// Smallest inner size. Compact mode starts below 800 points; keep a usable floor.
+pub const MIN_INNER: [f32; 2] = [800.0, 500.0];
 
 /// Window geometry file. This is not the alpha library directory.
 pub const WINDOW_APP_ID: &str = "nesticles-window";
@@ -28,12 +28,13 @@ pub const TOOL: f32 = 46.0;
 pub const INSPECTOR_W: f32 = 360.0;
 
 /// Discover card width used to choose a column count. Cards may grow slightly
-/// to fill a row. They do not shrink below this.
-pub const GALLERY_CARD_W: f32 = 222.0;
-pub const GALLERY_GAP: f32 = 16.0;
+/// to fill a row. They do not shrink below this on Standard+ layouts.
+pub const GALLERY_CARD_W: f32 = 200.0;
+pub const GALLERY_GAP: f32 = 12.0;
 
-/// Content width at which Discover keeps a side inspector.
-pub const INSPECTOR_BREAK: f32 = 1080.0;
+/// Content width at which Discover keeps a side inspector (Standard mode floor).
+/// Prefer [`crate::responsive::ResponsiveLayout::show_discover_inspector`].
+pub const INSPECTOR_BREAK: f32 = 1200.0;
 
 pub fn navy() -> Color32 {
     Color32::from_rgb(27, 40, 54)
@@ -183,25 +184,31 @@ pub fn canvas() -> Color32 {
     Color32::from_rgb(186, 222, 236)
 }
 
-/// How many Discover cards fit. Capped at four so a wide monitor does not
-/// stretch one row into a filmstrip.
+/// How many Discover cards fit. Uses the R3.1 responsive column caps.
 pub fn gallery_columns(width: f32) -> usize {
-    if width < GALLERY_CARD_W {
-        return 1;
-    }
-    let span = GALLERY_CARD_W + GALLERY_GAP;
-    let cols = ((width + GALLERY_GAP) / span).floor() as usize;
-    cols.clamp(1, 4)
+    crate::responsive::ResponsiveLayout::from_points(width, 700.0, 1.0).gallery_columns(width)
 }
 
 pub fn gallery_card_width(width: f32) -> f32 {
-    let cols = gallery_columns(width) as f32;
-    let gaps = GALLERY_GAP * (cols - 1.0).max(0.0);
-    ((width - gaps) / cols).clamp(GALLERY_CARD_W, 260.0)
+    crate::responsive::ResponsiveLayout::from_points(width, 700.0, 1.0).gallery_card_width(width)
 }
 
 pub fn discover_shows_inspector(content_width: f32) -> bool {
-    content_width >= INSPECTOR_BREAK
+    crate::responsive::ResponsiveLayout::from_points(content_width, 700.0, 1.0)
+        .show_discover_inspector(content_width)
+}
+
+/// Clamp a restored inner size so a 4K-saved geometry remains usable on a laptop.
+pub fn clamped_inner_size(desired: [f32; 2], monitor: [f32; 2]) -> [f32; 2] {
+    let mw = monitor[0].max(1.0);
+    let mh = monitor[1].max(1.0);
+    // Leave room for window decorations and a KDE panel (~74px historically).
+    let max_w = (mw - 16.0).max(MIN_INNER[0]);
+    let max_h = (mh - 80.0).max(MIN_INNER[1]);
+    [
+        desired[0].clamp(MIN_INNER[0], max_w),
+        desired[1].clamp(MIN_INNER[1], max_h),
+    ]
 }
 
 /// Graphical presentation of a course. Only Classic is implemented.
@@ -420,14 +427,24 @@ mod tests {
 
     #[test]
     fn discover_wraps_instead_of_growing_one_row() {
-        // Card width is 222 and the gap is 16, so 846px is three columns.
-        assert_eq!(gallery_columns(1146.0), 4);
+        // R3.1: Medium caps at 3; Standard at 4; Expanded at 5.
+        assert_eq!(gallery_columns(1600.0), 4);
+        assert_eq!(gallery_columns(1800.0), 5);
         assert_eq!(gallery_columns(846.0), 3);
-        assert_eq!(gallery_columns(760.0), 3);
+        assert!(gallery_columns(760.0) <= 2);
         assert_eq!(gallery_columns(400.0), 1);
-        assert!(discover_shows_inspector(1080.0));
-        assert!(!discover_shows_inspector(1000.0));
+        assert!(discover_shows_inspector(1300.0));
+        assert!(!discover_shows_inspector(780.0));
         assert!(!discover_shows_inspector(760.0));
+    }
+
+    #[test]
+    fn restored_inner_size_clamps_to_laptop() {
+        let sized = clamped_inner_size([2400.0, 1400.0], [1366.0, 768.0]);
+        assert!(sized[0] <= 1366.0);
+        assert!(sized[1] <= 768.0);
+        assert!(sized[0] >= MIN_INNER[0]);
+        assert!(sized[1] >= MIN_INNER[1]);
     }
 
     #[test]

@@ -3803,8 +3803,10 @@ impl NestApp {
         let Some(level) = self.project.level(&play.level_id) else {
             return;
         };
-        let surface_w = ui.available_width().clamp(320.0, 1920.0);
-        let surface_h = (ui.clip_rect().height() - 150.0).clamp(180.0, 1080.0);
+        // Fit the play surface to the live client area (no hard 1920×1080 cap).
+        let surface_w = ui.available_width().max(320.0);
+        let surface_h = (ui.clip_rect().height() - 150.0)
+            .clamp(180.0, ui.available_height().max(180.0));
         let scale = play_surface_scale(surface_w, surface_h, sim.level_w, sim.level_h);
         let view = Vec2::new(surface_w, surface_h);
         let sky = level.sky.clone();
@@ -5147,10 +5149,19 @@ impl NestApp {
             return;
         };
         self.startup_frames = 8;
+        let monitor_size = [monitor.x, monitor.y];
+        let outer_size = [outer.width(), outer.height()];
+        let clamped = studio::clamped_inner_size(outer_size, monitor_size);
+        if (clamped[0] - outer_size[0]).abs() > 1.0 || (clamped[1] - outer_size[1]).abs() > 1.0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                clamped[0],
+                clamped[1],
+            )));
+        }
         if let Some([x, y]) = studio::restored_origin(
             [outer.min.x, outer.min.y],
-            [outer.width(), outer.height()],
-            [monitor.x, monitor.y],
+            [clamped[0], clamped[1]],
+            monitor_size,
         ) {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
         }
@@ -5380,6 +5391,7 @@ impl NestApp {
     /// independent overlays could overlap the canvas and one another whenever
     /// the viewport or font scale changed. Fixed panels participate in layout.
     fn maker_shell(&mut self, ctx: &egui::Context) {
+        let layout = crate::responsive::ResponsiveLayout::from_context(ctx);
         egui::TopBottomPanel::bottom("dock")
             .exact_height(studio::BOTTOM_H)
             .frame(navy_frame())
@@ -5387,7 +5399,14 @@ impl NestApp {
 
         if self.drawer_open {
             egui::TopBottomPanel::bottom("drawer")
-                .exact_height(280.0)
+                .exact_height(if matches!(
+                    layout.mode,
+                    crate::responsive::LayoutMode::Compact
+                ) {
+                    200.0
+                } else {
+                    280.0
+                })
                 .resizable(true)
                 .frame(paper_frame())
                 .show(ctx, |ui| {
@@ -5398,8 +5417,12 @@ impl NestApp {
         // Compact, single-purpose parts strip. No oversized floating card:
         // the browser grows to the width of the viewport and never obscures
         // the tile canvas below it.
+        let parts_h = match layout.mode {
+            crate::responsive::LayoutMode::Compact => 96.0,
+            _ => 112.0,
+        };
         egui::TopBottomPanel::top("maker-parts-strip")
-            .exact_height(112.0)
+            .exact_height(parts_h)
             .frame(
                 egui::Frame::NONE
                     .fill(Color32::from_rgb(232, 243, 255))
@@ -5408,9 +5431,9 @@ impl NestApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal_top(|ui| {
-                    if ui.available_width() >= 1030.0 {
+                    if layout.width >= 1030.0 {
                         ui.allocate_ui_with_layout(
-                            Vec2::new(238.0, 93.0),
+                            Vec2::new(238.0, parts_h - 16.0),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 if self.project.levels.is_empty() {
@@ -5464,7 +5487,7 @@ impl NestApp {
         // Tool buttons always remain in the same column and never float over
         // an editor viewport. The game-style picker belongs to this sidebar.
         egui::SidePanel::right("maker-tools")
-            .exact_width(212.0)
+            .exact_width(layout.maker_tools_width())
             .resizable(false)
             .frame(
                 egui::Frame::NONE
@@ -5481,10 +5504,19 @@ impl NestApp {
                     ui.painter().rect_filled(backdrop, 0.0, Color32::from_white_alpha(98));
                 }
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("⚒  Tools")
-                        .size(21.0).strong().color(studio::unmaker_ink()));
+                    let compact = matches!(
+                        layout.mode,
+                        crate::responsive::LayoutMode::Compact
+                    );
+                    ui.label(
+                        RichText::new(if compact { "Tools" } else { "⚒  Tools" })
+                            .size(if compact { 17.0 } else { 21.0 })
+                            .strong()
+                            .color(studio::unmaker_ink()),
+                    );
                     ui.separator();
-                    let controls_height = (ui.available_height() - 110.0).max(170.0);
+                    let style_reserve = if compact { 86.0 } else { 110.0 };
+                    let controls_height = (ui.available_height() - style_reserve).max(140.0);
                     egui::ScrollArea::vertical()
                         .id_salt("maker-tools-fixed")
                         .auto_shrink([false, false])
