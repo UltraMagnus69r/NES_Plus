@@ -8,7 +8,7 @@ Recorded November 18, 2026, from the owner's acceptance of R2 and R2.3.
 | R1 — UnMaker studio foundation | Unchanged by this decision. The studio shell is in the product. This record does not add a new R1 acceptance mark. |
 | R2 — Goomba reconstruction | Accepted by the owner on November 18, 2026. |
 | R2.3 — Design Language 2.0 | Accepted by the owner on November 18, 2026. |
-| R3 — Intelligent issue resolution and local learning | Authorized and in progress. Decisions persist on `Project.issue_decisions`, and Investigate can record one issue. The milestone is not complete. |
+| R3 — Intelligent issue resolution and local learning | Authorized and in progress. Decisions persist on `Project.issue_decisions`. Slice 3 adds deterministic evidence-backed suggestions on Investigate and IssueCard. The milestone is not complete and is not owner-accepted. |
 | R4 and later functional milestones | Not accepted. Not started as roadmap work. |
 | Historical Phase 9.1 | Not accepted. |
 | Historical Phases 10–20 | Suspended. |

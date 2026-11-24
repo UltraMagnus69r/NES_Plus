@@ -706,38 +706,66 @@ impl NestApp {
             ui.label("No open issue. An unchanged rejected grouping stays hidden. Nothing was invented.");
             return;
         };
+        let suggestion = &shown.issue.suggestion;
+        ui.label(RichText::new("Issue").size(13.0).color(studio::caption()));
         ui.label(RichText::new(&shown.issue.question).size(16.0).strong().color(studio::unmaker_ink()));
         ui.label(RichText::new(format!("Category: {}", shown.category)).size(13.0).color(studio::caption()));
-        ui.label(RichText::new(format!("Evidence: {}", shown.issue.evidence_ids.join(", "))).size(13.0).color(studio::caption()));
+        ui.add_space(8.0);
+        ui.label(RichText::new("Suggested action").size(13.0).color(studio::caption()));
+        ui.label(RichText::new(&suggestion.action).size(15.0).strong().color(studio::unmaker_ink()));
+        ui.add_space(6.0);
+        ui.label(RichText::new("Why").size(13.0).color(studio::caption()));
+        ui.label(RichText::new(&suggestion.why).size(14.0).color(studio::unmaker_ink()));
+        ui.add_space(6.0);
+        ui.label(RichText::new("Uncertainty").size(13.0).color(studio::caption()));
+        ui.label(RichText::new(&suggestion.uncertainty).size(14.0).color(studio::caption()));
         ui.add_space(4.0);
-        ui.label(RichText::new(&shown.issue.suggestion.summary).size(14.0).color(studio::unmaker_ink()));
+        ui.label(RichText::new(&suggestion.accept_effect).size(13.0).color(studio::caption()));
+        egui::CollapsingHeader::new("Technical evidence")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.label(format!("Evidence refs: {}", shown.issue.evidence_ids.join(", ")));
+                ui.label(format!(
+                    "Fingerprint: {}",
+                    nesticles_core::issues::candidate_fingerprint(
+                        &shown.issue.asset_id,
+                        &suggestion.grouping,
+                    )
+                ));
+                ui.label(&suggestion.summary);
+            });
         let state = match latest_kind(&self.project.issue_decisions, &shown.issue) {
             Some(DecisionKind::Accept) => "Accepted — not a verified reconstruction",
             Some(DecisionKind::Skip) => "Skipped — still unresolved",
             Some(DecisionKind::Reject) => "Rejected",
             None => "No decision yet",
         };
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             design::status_chip(ui, state);
             design::status_chip(ui, &format!("Confidence: {}", shown.confidence));
+            design::status_chip(ui, "Not a verified finding");
         });
-        ui.label(RichText::new("This suggestion is not a verified finding.").size(13.0).color(studio::caption()));
         ui.add_space(8.0);
+        ui.label(RichText::new("Decision").size(13.0).color(studio::caption()));
         let issue = shown.issue.clone();
         let mut chosen = None;
         ui.horizontal_wrapped(|ui| {
             if design::capsule_button(ui, "Accept", None, 120.0, 44.0, design::CapsuleTone::Green)
-                .on_hover_text("Record this suggestion. It does not write a sprite.").clicked()
+                .on_hover_text(&issue.suggestion.accept_effect)
+                .clicked()
             {
                 chosen = Some(DecisionKind::Accept);
             }
             if design::capsule_button(ui, "Skip", None, 110.0, 44.0, design::CapsuleTone::White)
-                .on_hover_text("Leave the evidence unresolved and come back later.").clicked()
+                .on_hover_text("Leave the evidence unresolved. The same grouping stays eligible.")
+                .clicked()
             {
                 chosen = Some(DecisionKind::Skip);
             }
             if design::capsule_button(ui, "Reject", None, 120.0, 44.0, design::CapsuleTone::Red)
-                .on_hover_text("Hide this exact grouping. A different grouping can still appear.").clicked()
+                .on_hover_text("Hide this exact grouping. A different grouping can still appear.")
+                .clicked()
             {
                 chosen = Some(DecisionKind::Reject);
             }
@@ -748,9 +776,13 @@ impl NestApp {
                 self.dirty = true;
             }
             self.studio.state.notice = match kind {
-                DecisionKind::Accept => "Accepted. This did not write a sprite or change gameplay.".into(),
-                DecisionKind::Skip => "Skipped. The evidence is still unresolved.".into(),
-                DecisionKind::Reject => "Rejected. That exact grouping will not be offered again.".into(),
+                DecisionKind::Accept => format!("Accepted. {}", issue.suggestion.accept_effect),
+                DecisionKind::Skip => {
+                    "Skipped. The evidence is still unresolved and stays eligible.".into()
+                }
+                DecisionKind::Reject => {
+                    "Rejected. That exact grouping will not be offered again.".into()
+                }
             };
         }
     }
@@ -1147,7 +1179,14 @@ impl NestApp {
         ui.label(&issue.evidence);
         ui.label(&issue.attempted);
         ui.label(&issue.next_action);
-        ui.label("Suggested fix: none. No automatic correction engine is running.");
+        if let Some(suggestion) = &issue.suggestion {
+            ui.label(RichText::new(format!("Suggested action: {suggestion}")).size(14.0));
+            ui.label(
+                "Accept / Skip / Reject for this proposal are recorded on Investigate. Review here does not invent a second decision store.",
+            );
+        } else {
+            ui.label("Suggested fix: none. No automatic correction engine is running.");
+        }
         ui.label(
             "Ignored candidates stay in the session. The Ignored filter on Discover lists them.",
         );

@@ -2,6 +2,7 @@
 //!
 //! A suggestion is a hypothesis. It is not a verified finding and it does not
 //! write a sprite. Saved decisions live on `Project::issue_decisions`.
+//! Suggestions are regenerated from evidence; they are not stored on the project.
 
 use serde::{Deserialize, Serialize};
 
@@ -14,17 +15,32 @@ pub struct Issue {
     pub suggestion: Suggestion,
 }
 
+/// Deterministic, evidence-backed recommendation. Regenerated; not persisted.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
+    /// Short label for lists and chips.
     pub summary: String,
     /// Tile indexes in the order they were proposed. Empty means no grouping.
     pub grouping: Vec<u32>,
+    /// What Nesticles recommends doing next.
+    pub action: String,
+    /// Concise evidence-based explanation.
+    pub why: String,
+    /// What remains unverified.
+    pub uncertainty: String,
+    /// What Accept records — never invents sprites here.
+    pub accept_effect: String,
 }
 
 impl Suggestion {
     /// Suggestions from this module are never verified findings.
     pub fn is_verified_finding(&self) -> bool {
         false
+    }
+
+    /// Card text for UnMaker lists. Deterministic for identical fields.
+    pub fn card_line(&self) -> String {
+        format!("{} — {}", self.action, self.summary)
     }
 }
 
@@ -132,6 +148,20 @@ impl DecisionLog {
     }
 }
 
+/// Inputs for deterministic suggestion generation. No network. No invented tiles.
+#[derive(Clone, Copy, Debug)]
+pub struct SuggestContext<'a> {
+    pub id: &'a str,
+    pub asset_id: &'a str,
+    pub name: &'a str,
+    pub tiles: &'a [u32],
+    pub evidence_ids: &'a [String],
+    /// Pipeline character id when known (for example `goomba`). Empty if unknown.
+    pub character_id: &'a str,
+    /// Coverage/category label when known (for example `enemy`). Empty if unknown.
+    pub category: &'a str,
+}
+
 /// One unresolved asset becomes one issue. No tile indexes are invented.
 pub fn suggest_unresolved(
     id: &str,
@@ -140,31 +170,108 @@ pub fn suggest_unresolved(
     tiles: &[u32],
     evidence_ids: &[String],
 ) -> Issue {
-    let (question, summary, grouping) = if tiles.is_empty() {
-        (
-            format!("{name} has no documented tile mapping in this profile."),
-            format!(
-                "Suggestion, not a verified finding: leave {name} unresolved. No tiles were invented."
-            ),
-            Vec::new(),
-        )
-    } else {
-        (
-            format!(
-                "{name} has proposed tile indexes only. Those indexes are not an assembled sprite."
-            ),
-            format!(
-                "Suggestion, not a verified finding: review the proposed grouping for {name} before any save."
-            ),
-            tiles.to_vec(),
-        )
+    suggest_issue(SuggestContext {
+        id,
+        asset_id,
+        name,
+        tiles,
+        evidence_ids,
+        character_id: "",
+        category: "",
+    })
+}
+
+/// Build an issue with evidence-backed action, why, uncertainty, and accept effect.
+pub fn suggest_issue(ctx: SuggestContext<'_>) -> Issue {
+    let hex_tiles = |tiles: &[u32]| -> String {
+        tiles
+            .iter()
+            .map(|tile| format!("0x{tile:02X}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     };
+
+    let (question, suggestion) = if ctx.tiles.is_empty() {
+        let question = format!(
+            "{} has no documented tile mapping in this profile.",
+            ctx.name
+        );
+        let suggestion = Suggestion {
+            summary: format!(
+                "Suggestion, not a verified finding: leave {} unresolved. No tiles were invented.",
+                ctx.name
+            ),
+            grouping: Vec::new(),
+            action: format!("Leave {} unresolved", ctx.name),
+            why: format!(
+                "Observed: coverage names {}. No candidate attached source tiles. Derived: Nesticles must not invent indexes.",
+                ctx.name
+            ),
+            uncertainty: "Without a documented tile mapping, no grouping or animation can be confirmed.".into(),
+            accept_effect: "Accept records that you leave this name unresolved. It does not invent tiles, write a sprite, or change gameplay.".into(),
+        };
+        (question, suggestion)
+    } else if ctx.character_id == "goomba" {
+        let tiles = hex_tiles(ctx.tiles);
+        let question = format!(
+            "{} has proposed tile indexes only. Those indexes are not an assembled sprite.",
+            ctx.name
+        );
+        let suggestion = Suggestion {
+            summary: format!(
+                "Suggestion, not a verified finding: confirm the proposed Goomba grouping ({tiles}) before Approve & Save."
+            ),
+            grouping: ctx.tiles.to_vec(),
+            action: format!("Confirm proposed Goomba grouping ({tiles})"),
+            why: format!(
+                "Observed: candidate `goomba` proposes tiles [{tiles}] in that order. Evidence refs: {}. Derived: this is a reviewable proposal, not a published sprite.",
+                ctx.evidence_ids.join(", ")
+            ),
+            uncertainty: "Palette remains the review palette. Accept here does not prove original NES colors or write the sprite; Approve & Save on Review still owns publishing.".into(),
+            accept_effect: "Accept records confirmation of this exact tile order. It does not write SpriteDef or AnimSet. Use Approve & Save on Review to publish the verified Goomba when the payload matches.".into(),
+        };
+        (question, suggestion)
+    } else {
+        let tiles = hex_tiles(ctx.tiles);
+        let category = if ctx.category.is_empty() {
+            "unspecified".into()
+        } else {
+            ctx.category.to_string()
+        };
+        let question = format!(
+            "{} has proposed tile indexes only. Those indexes are not an assembled sprite.",
+            ctx.name
+        );
+        let suggestion = Suggestion {
+            summary: format!(
+                "Suggestion, not a verified finding: review the proposed grouping for {} ({tiles}) before any save.",
+                ctx.name
+            ),
+            grouping: ctx.tiles.to_vec(),
+            action: format!("Review proposed {} grouping ({tiles})", ctx.name),
+            why: format!(
+                "Observed: category `{category}` proposes tiles [{tiles}] in that order. Evidence refs: {}. Derived: indexes are a proposal only.",
+                if ctx.evidence_ids.is_empty() {
+                    "none".into()
+                } else {
+                    ctx.evidence_ids.join(", ")
+                }
+            ),
+            uncertainty: format!(
+                "Nesticles has not assembled {}. Accept does not reconstruct frames or invent missing animation states.",
+                ctx.name
+            ),
+            accept_effect: "Accept records that you reviewed this exact tile order. It does not write a sprite, animation, blueprint, or gameplay rule.".into(),
+        };
+        (question, suggestion)
+    };
+
     Issue {
-        id: id.to_string(),
-        asset_id: asset_id.to_string(),
+        id: ctx.id.to_string(),
+        asset_id: ctx.asset_id.to_string(),
         question,
-        evidence_ids: evidence_ids.to_vec(),
-        suggestion: Suggestion { summary, grouping },
+        evidence_ids: ctx.evidence_ids.to_vec(),
+        suggestion,
     }
 }
 
@@ -200,6 +307,11 @@ mod tests {
         assert!(issue.suggestion.summary.contains("not a verified finding"));
         assert!(issue.question.contains("no documented tile mapping"));
         assert_eq!(issue.evidence_ids, vec!["coverage:mario".to_string()]);
+        assert!(issue.suggestion.action.contains("unresolved"));
+        assert!(issue
+            .suggestion
+            .accept_effect
+            .contains("does not invent tiles"));
     }
 
     #[test]
@@ -208,6 +320,55 @@ mod tests {
         assert_eq!(issue.suggestion.grouping, vec![0x70, 0x71]);
         assert!(!issue.suggestion.is_verified_finding());
         assert!(issue.question.contains("not an assembled sprite"));
+        assert!(issue.suggestion.action.contains("0x70"));
+        assert!(issue.suggestion.why.contains("0x70"));
+        assert!(issue.suggestion.uncertainty.contains("not assembled"));
+    }
+
+    #[test]
+    fn goomba_suggestion_points_at_review_publish_path() {
+        let issue = suggest_issue(SuggestContext {
+            id: "issue:goomba",
+            asset_id: "goomba",
+            name: "Goomba",
+            tiles: &[0x70, 0x71, 0x72, 0x73],
+            evidence_ids: &["coverage:Goomba".into(), "note:table".into()],
+            character_id: "goomba",
+            category: "enemy",
+        });
+        assert_eq!(issue.suggestion.grouping, vec![0x70, 0x71, 0x72, 0x73]);
+        assert!(issue.suggestion.action.contains("Goomba"));
+        assert!(issue.suggestion.accept_effect.contains("Approve & Save"));
+        assert!(!issue
+            .suggestion
+            .accept_effect
+            .contains("writes SpriteDef immediately"));
+        assert!(issue.suggestion.why.contains("goomba"));
+    }
+
+    #[test]
+    fn identical_evidence_yields_identical_suggestions() {
+        let evidence = vec!["coverage:Koopa".into(), "note:table".into()];
+        let first = suggest_issue(SuggestContext {
+            id: "issue:koopa",
+            asset_id: "koopa",
+            name: "Koopa",
+            tiles: &[0x10, 0x11],
+            evidence_ids: &evidence,
+            character_id: "koopa",
+            category: "enemy",
+        });
+        let second = suggest_issue(SuggestContext {
+            id: "issue:koopa",
+            asset_id: "koopa",
+            name: "Koopa",
+            tiles: &[0x10, 0x11],
+            evidence_ids: &evidence,
+            character_id: "koopa",
+            category: "enemy",
+        });
+        assert_eq!(first, second);
+        assert_eq!(first.suggestion.card_line(), second.suggestion.card_line());
     }
 
     #[test]
