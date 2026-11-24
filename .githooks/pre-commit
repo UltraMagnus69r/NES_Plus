@@ -1,0 +1,6 @@
+#!/bin/sh
+# Block a commit whose staged bytes look like a ROM, a secret, or an unknown archive.
+# session-start.sh copies this file to .git/hooks/pre-commit.
+set -eu
+ROOT=$(git rev-parse --show-toplevel)
+exec "$ROOT/scripts/check-repository-safety.sh" --staged

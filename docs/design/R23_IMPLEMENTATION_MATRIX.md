@@ -28,4 +28,4 @@ Functionally tested means a Rust test or a driven UI action. Visually tested mea
 | R3 issue decisions | Implemented for one Investigate issue. Decisions save on the project. R3 is not complete | `Project.issue_decisions`. `docs/roadmaps/R3_FIRST_SLICE.md` |
 | Historical Phase 10 | Not started. | Stays suspended |
 
-Visual screenshot files, when captured from this build, are listed in the session handoff. Concept images in `docs/design/references/` are not test evidence.
+Visual screenshot files, when captured from this build, are listed in the session handoff. The concept images formerly in `docs/design/references/` were not test evidence. They were removed from the tracked tree on 2026-11-23 because redistribution rights were not established. The written contract remains `NESTICLES_DESIGN_LANGUAGE_V2_0.md`.

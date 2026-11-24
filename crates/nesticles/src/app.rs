@@ -5474,6 +5474,9 @@ impl NestApp {
             )
             .show(ctx, |ui| {
                 let backdrop = ui.max_rect();
+                // The compiled-in tools picture was removed. It had no
+                // redistribution record. The panel fill below is the control
+                // surface. paint_cover returns false when that key is absent.
                 if self.ui_assets.paint_cover(ui.painter(), "backgrounds/maker-tools", backdrop, 0.5, 0.4) {
                     ui.painter().rect_filled(backdrop, 0.0, Color32::from_white_alpha(98));
                 }

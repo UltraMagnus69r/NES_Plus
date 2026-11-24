@@ -1120,7 +1120,12 @@ mod tests {
 
     #[test]
     fn investigation_exposes_the_goomba_to_discover_without_a_launch_hook() {
-        let bytes = nesticles_core::reconstruct::read_owner_smb1().expect("owner ROM");
+        let Ok(bytes) = nesticles_core::reconstruct::read_owner_smb1() else {
+            eprintln!(
+                "ROM-dependent test skipped: owner ROM was not found. No ROM was downloaded."
+            );
+            return;
+        };
         let session = nesticles_core::pipeline::propose_session(&bytes, "cartridge.nes", &[], &[])
             .expect("the normal investigation session");
         let palette = ReviewPalette::SpriteA.colors();

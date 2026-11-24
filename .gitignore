@@ -5,3 +5,43 @@
 node_modules
 dist
 .vite
+
+# Secrets. keys.json is the legacy assistant store and stays on the machine.
+keys.json
+.env
+.env.*
+*.pem
+*.key
+
+# Disposable build and editor output.
+*.log
+*.tmp
+*.swp
+
+# Local-only cartridges, dumps, and extraction output.
+# Extensions are not the only control. scripts/repository_safety.py also reads bytes.
+*.nes
+*.nez
+*.unf
+*.unif
+*.fds
+*.nsf
+*.nsfe
+*.sfc
+*.smc
+*.gb
+*.gbc
+*.gba
+*.nds
+*.n64
+*.z64
+*.v64
+*.sms
+*.gg
+*.32x
+*.rom
+*.nasset
+local/
+local-roms/
+local-assets/
+extracted/

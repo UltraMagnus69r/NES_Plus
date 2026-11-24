@@ -4,6 +4,53 @@ This file is the canonical development policy for Nesticles. Cursor rules in [`.
 
 The root [README.md](README.md) describes the original workshop. Later behavior is in [packaging/phase9/](packaging/phase9/) and [packaging/phase91/](packaging/phase91/). Those release notes describe what shipped. This file describes how to change the project. Do not treat a release note as proof that a later phase is accepted.
 
+Read this file before changing application code.
+
+## Where development happens
+
+Nesticles is written only through Cursor running on the owner's local Linux machines. The sole Fedora laptop checkout is `/home/g/Desktop/NES_Plus` (user `g`). The previous path `/home/g/Desktop/CURSOR/nes_plus` is obsolete. Do not create redundant Nesticles clones or sibling project folders on that laptop.
+
+The Bazzite desktop home is `/home/UltraMagnus69r`. Keep one established Nesticles checkout under that home. Do not assume its exact subdirectory until it has been verified on Bazzite. Both machines use https://github.com/UltraMagnus69r/NES_Plus. Do not copy the source tree by hand between machines.
+
+A Cursor cloud agent is not a development machine. If the user is `ubuntu` or the checkout is `/agent/repos/NES_Plus`, stop. Do not build, edit, or commit there.
+
+GitHub holds the source, architecture, original graphics, permissive assets with a license record, scripts, tests, and documents. It does not hold commercial ROMs, extracted commercial art, commercial audio, secrets, or user projects. The full rule is [docs/policies/INTELLECTUAL_PROPERTY.md](docs/policies/INTELLECTUAL_PROPERTY.md).
+
+A fresh clone must build and run the ROM-independent tests. ROM-dependent tests read `NESTICLES_ROM` or the local dump paths in `read_owner_smb1`. They skip, with a printed line, when no file is present. They do not download a ROM.
+
+Godot preview and parity tests are pinned to Godot 4.7.2 standard (not .NET). On the Fedora laptop the managed binary is `~/.local/share/nesticles/godot/4.7.2/Godot_v4.7.2-stable_linux.x86_64`, with `godot` / `godot4` on `PATH` when linked. Do not commit the Godot executable.
+
+## Session routine
+
+Start of every session:
+
+1. Verify local execution (Fedora or Bazzite seat; stop on a cloud path).
+2. Run `./scripts/session-start.sh` from the sole checkout.
+3. Inspect local changes (`git status`).
+4. Fetch has already run inside session-start; note ahead/behind.
+5. Identify the authoritative development branch from [docs/handoffs/CURRENT_PROJECT_STATE.md](docs/handoffs/CURRENT_PROJECT_STATE.md). `main` is not the working branch.
+6. If the branch is behind origin and the worktree is clean, review incoming commits, then `git pull --ff-only` in this exact directory. Never hard-reset as the normal sync. Never create a sibling clone to “get the update.”
+7. Confirm local HEAD and `origin/<branch>` when claiming sync.
+8. Read [docs/handoffs/CURRENT_PROJECT_STATE.md](docs/handoffs/CURRENT_PROJECT_STATE.md), the latest file in [docs/handoffs/daily/](docs/handoffs/daily/), and [docs/handoffs/DECISION_LOG.md](docs/handoffs/DECISION_LOG.md) when the task touches workflow or architecture. The procedure is [docs/handoffs/MULTI_MACHINE_WORKFLOW.md](docs/handoffs/MULTI_MACHINE_WORKFLOW.md).
+9. Begin only authorized work.
+
+`git fetch` does not update the working tree. If local and origin have diverged, stop. Do not discard local work merely to match GitHub.
+
+Finish every substantial development session:
+
+1. Review changes.
+2. Run applicable tests.
+3. Update the dated development log under `docs/handoffs/daily/`.
+4. Update current project state.
+5. Record architectural decisions when rules or structure changed.
+6. Check for protected IP and secrets (`./scripts/check-repository-safety.sh --staged`).
+7. Commit with a descriptive message.
+8. Push the active development branch.
+9. Verify `git rev-parse HEAD` equals `git rev-parse origin/<branch>`.
+10. Return a comprehensive handoff.
+
+No force-push. No merge to `main` unless the owner asks. The session is synchronized only when those SHAs match. The hook from session-start runs the staged safety check. Do not use `--no-verify`.
+
 ## Current milestone
 
 Historical Phase 9.1 is **not accepted**. Its published build is a test candidate. Do not drop a Phase 9.1 acceptance item to make that phase look finished. Do not renumber Phases 0–9.1. Do not start historical Phase 10. Phases 10–20 stay suspended.
@@ -100,7 +147,7 @@ Reference fetches are HTTPS on port 443 only. Refuse loopback, private, and link
 
 The UnMaker OpenAI key may live in session memory, in `NESTICLES_OPENAI_API_KEY`, or in the Secret Service (`secret-tool`, service `nesticles`, account `openai`). If Secret Service is missing, say so and keep the key in the session. Do not write it to the project, a package, a knowledge file, a log, a screenshot, a release, or a handoff. Do not ask the user to paste a key into chat. Redact secrets in errors.
 
-Authoring works offline. Do not upload ROMs, extracted art, projects, recipes, or custom creations. An AI call sends only the approved slice, after the user turns the feature on and confirms. Never send a whole ROM automatically. Knowledge leaves the machine only when the user exports a file.
+Authoring works offline. Do not upload ROMs, extracted commercial art, user projects, recipes that embed that art, or custom creations. Original Nesticles UI art and permissive assets with a license record do belong in git. An AI call sends only the approved slice, after the user turns the feature on and confirms. Never send a whole ROM automatically. Knowledge leaves the machine only when the user exports a file.
 
 Saves must not destroy a project on a failed migration. Keep unknown data when that is safer than dropping it. Ignored extraction candidates are not deleted. Check library use before deleting an asset.
 
@@ -176,3 +223,4 @@ A release is a GitHub release on https://github.com/UltraMagnus69r/NES_Plus with
 | [30-testing-and-verification.mdc](.cursor/rules/30-testing-and-verification.mdc) | yes | Testing and reporting |
 | [40-troubleshooting-and-escalation.mdc](.cursor/rules/40-troubleshooting-and-escalation.mdc) | yes | Failure escalation |
 | [50-release-and-phase-gates.mdc](.cursor/rules/50-release-and-phase-gates.mdc) | yes | Phases and releases |
+| [60-repository-continuity.mdc](.cursor/rules/60-repository-continuity.mdc) | yes | Local machines, GitHub sync, IP limits |

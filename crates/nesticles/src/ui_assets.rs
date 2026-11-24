@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use eframe::egui::{self, Color32, Pos2, Rect, TextureHandle, TextureOptions, Vec2};
 
 static EMBEDDED: &[(&str, &str, &[u8])] = &[
-    ("backgrounds/maker-tools", "backgrounds/maker-tools.png", include_bytes!("../assets/ui/backgrounds/maker-tools.png")),
     ("backgrounds/stage-hero", "backgrounds/stage-hero.png", include_bytes!("../assets/ui/backgrounds/stage-hero.png")),
     ("backgrounds/discover-banner", "backgrounds/discover-banner.png", include_bytes!("../assets/ui/backgrounds/discover-banner.png")),
     ("backgrounds/maker-sidebar", "backgrounds/maker-sidebar.png", include_bytes!("../assets/ui/backgrounds/maker-sidebar.png")),
@@ -84,7 +83,6 @@ impl UiAssets {
         for &(key, rel, embedded) in EMBEDDED {
             let personal = assets_dir.as_ref().and_then(|root| {
                 let custom_filename = match key {
-                    "backgrounds/maker-tools" => Some("Glossy Super Platformer Landscape(4).png"),
                     "backgrounds/stage-hero" => Some("ChatGPT Image Nov 18, 2026, 08_53_11 PM(3).png"),
                     _ => None,
                 };
