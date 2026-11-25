@@ -8,7 +8,7 @@ Repository: https://github.com/UltraMagnus69r/NES_Plus
 
 | Role | Branch | Tip SHA (verified 2026-11-25) | PR |
 | --- | --- | --- | --- |
-| **Active tip (start here)** | `cursor/r31-responsive-ui-9ff8` | `4619ab6f1a029bbc18426c12fcdc682dbc1ca54d` | [#27](https://github.com/UltraMagnus69r/NES_Plus/pull/27) |
+| **Active tip (start here)** | `cursor/r31-responsive-ui-9ff8` | R3.1 product `4619ab6…`; handoff docs on top — **always `git fetch` and use `origin` tip** | [#27](https://github.com/UltraMagnus69r/NES_Plus/pull/27) |
 | R3 Slice 3 (owner-accepted) | `cursor/r3-slice3-issue-suggestions-9ff8` | `c64f118ea5f1c14ed9faad5f6f289b1c52405684` | [#26](https://github.com/UltraMagnus69r/NES_Plus/pull/26) |
 | Policy / continuity base | `cursor/canonical-github-policy-9ff8` | `4a2bb3cc7afb5a63b612ffff8482ca954703f400` | [#25](https://github.com/UltraMagnus69r/NES_Plus/pull/25) |
 
@@ -29,8 +29,10 @@ cd ~/Desktop
 git clone https://github.com/UltraMagnus69r/NES_Plus.git NES_Plus
 cd NES_Plus
 git checkout cursor/r31-responsive-ui-9ff8
+git fetch origin
 git rev-parse HEAD
-# Expect: 4619ab6f1a029bbc18426c12fcdc682dbc1ca54d  (or newer tip after a later push)
+git rev-parse origin/cursor/r31-responsive-ui-9ff8
+# Those two SHAs must match. Product baseline under the tip includes 4619ab6 (R3.1 UI).
 ```
 
 Auth: use `gh auth login` as **UltraMagnus69r**, then `gh auth setup-git` so HTTPS uses that token (avoids password/ksshaskpass prompts).

@@ -6,7 +6,7 @@ Updated **2026-11-25** (America/Chicago) on the Fedora laptop (`hostname` `fedor
 
 - Repository: https://github.com/UltraMagnus69r/NES_Plus
 - Sole Fedora checkout: `/home/g/Desktop/NES_Plus`
-- Working / active tip: `cursor/r31-responsive-ui-9ff8` @ `4619ab6f1a029bbc18426c12fcdc682dbc1ca54d` (ahead 0 / behind 0 vs origin; worktree clean as of 2026-11-25 audit)
+- Working / active tip: `cursor/r31-responsive-ui-9ff8` (R3.1 UI product commit `4619ab6f1a029bbc18426c12fcdc682dbc1ca54d`; 2026-11-25 handoff docs committed on top — confirm live tip with `git rev-parse` / session-start)
 - Parent R3 Slice 3: `cursor/r3-slice3-issue-suggestions-9ff8` @ `c64f118ea5f1c14ed9faad5f6f289b1c52405684` — PR [#26](https://github.com/UltraMagnus69r/NES_Plus/pull/26)
 - R3.1 PR: [#27](https://github.com/UltraMagnus69r/NES_Plus/pull/27) stacked on #26
 - Continuity / policy PR: [#25](https://github.com/UltraMagnus69r/NES_Plus/pull/25) @ `4a2bb3c` remains open
@@ -48,9 +48,8 @@ Preserved:
 
 ## Sync status (2026-11-25)
 
-- Local HEAD and `origin/cursor/r31-responsive-ui-9ff8` both `4619ab6f1a029bbc18426c12fcdc682dbc1ca54d`
-- Stack tips on origin match local: policy `4a2bb3c`, R3 `c64f118`, R3.1 `4619ab6`
-- No uncommitted product or policy changes before this handoff doc commit
+- After 2026-11-25 handoff push(es): local tip matches `origin/cursor/r31-responsive-ui-9ff8` (ahead 0 / behind 0); confirm with session-start
+- Stack bases on origin unchanged: policy `4a2bb3c`, R3 `c64f118`; R3.1 product commit `4619ab6` remains in history under the tip
 - No stash entries
 
 ## Next priority
