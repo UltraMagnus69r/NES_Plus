@@ -1,14 +1,16 @@
 # Current project state
 
-Updated **2026-11-24** (America/Chicago) on the Fedora laptop (`hostname` `fedora`, user `g`) after R3 owner acceptance and R3.1 responsive UI implementation.
+Updated **2026-11-25** (America/Chicago) on the Fedora laptop (`hostname` `fedora`, user `g`) after a GitHub sync audit and new-laptop handoff write-up. Product tip unchanged since R3.1 implementation (2026-11-24).
 
 ## Branch and commit
 
 - Repository: https://github.com/UltraMagnus69r/NES_Plus
 - Sole Fedora checkout: `/home/g/Desktop/NES_Plus`
-- Working branch for R3.1: `cursor/r31-responsive-ui-9ff8` (parent tip: R3 Slice 3 `c64f118ea5f1c14ed9faad5f6f289b1c52405684` on `cursor/r3-slice3-issue-suggestions-9ff8`)
-- Prior R3 PR: https://github.com/UltraMagnus69r/NES_Plus/pull/26 (preserved; not force-pushed)
-- Continuity / policy PR ancestry: https://github.com/UltraMagnus69r/NES_Plus/pull/25 remains open
+- Working / active tip: `cursor/r31-responsive-ui-9ff8` @ `4619ab6f1a029bbc18426c12fcdc682dbc1ca54d` (ahead 0 / behind 0 vs origin; worktree clean as of 2026-11-25 audit)
+- Parent R3 Slice 3: `cursor/r3-slice3-issue-suggestions-9ff8` @ `c64f118ea5f1c14ed9faad5f6f289b1c52405684` — PR [#26](https://github.com/UltraMagnus69r/NES_Plus/pull/26)
+- R3.1 PR: [#27](https://github.com/UltraMagnus69r/NES_Plus/pull/27) stacked on #26
+- Continuity / policy PR: [#25](https://github.com/UltraMagnus69r/NES_Plus/pull/25) @ `4a2bb3c` remains open
+- New Fedora laptop load steps: [NEW_FEDORA_LAPTOP.md](NEW_FEDORA_LAPTOP.md)
 - `main` is not the working branch
 
 ## Milestones
@@ -44,9 +46,16 @@ Preserved:
 - Godot `4.7.2.stable.official.ed1daf0bf`
 - Owner ROM `/home/g/Desktop/Roms/smb1.nes` still absent
 
+## Sync status (2026-11-25)
+
+- Local HEAD and `origin/cursor/r31-responsive-ui-9ff8` both `4619ab6f1a029bbc18426c12fcdc682dbc1ca54d`
+- Stack tips on origin match local: policy `4a2bb3c`, R3 `c64f118`, R3.1 `4619ab6`
+- No uncommitted product or policy changes before this handoff doc commit
+- No stash entries
+
 ## Next priority
 
-Owner conducts **actual GUI acceptance** of R3.1 on the 1366×768 laptop (and preferably one larger display). Do not mark R3.1 accepted from automation alone. Do not start R4.
+Owner conducts **actual GUI acceptance** of R3.1 on the 1366×768 laptop (and preferably one larger display). Do not mark R3.1 accepted from automation alone. Do not start R4. On a new Fedora laptop, follow [NEW_FEDORA_LAPTOP.md](NEW_FEDORA_LAPTOP.md).
 
 ## Acceptance
 
