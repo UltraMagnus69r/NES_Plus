@@ -185,16 +185,18 @@ pub fn canvas() -> Color32 {
 }
 
 /// How many Discover cards fit. Uses the R3.1 responsive column caps.
+/// Height is tall enough that short-client densification does not alter
+/// width-only callers (live UI uses [`ResponsiveLayout::from_context`]).
 pub fn gallery_columns(width: f32) -> usize {
-    crate::responsive::ResponsiveLayout::from_points(width, 700.0, 1.0).gallery_columns(width)
+    crate::responsive::ResponsiveLayout::from_points(width, 900.0, 1.0).gallery_columns(width)
 }
 
 pub fn gallery_card_width(width: f32) -> f32 {
-    crate::responsive::ResponsiveLayout::from_points(width, 700.0, 1.0).gallery_card_width(width)
+    crate::responsive::ResponsiveLayout::from_points(width, 900.0, 1.0).gallery_card_width(width)
 }
 
 pub fn discover_shows_inspector(content_width: f32) -> bool {
-    crate::responsive::ResponsiveLayout::from_points(content_width, 700.0, 1.0)
+    crate::responsive::ResponsiveLayout::from_points(content_width, 900.0, 1.0)
         .show_discover_inspector(content_width)
 }
 
@@ -427,15 +429,23 @@ mod tests {
 
     #[test]
     fn discover_wraps_instead_of_growing_one_row() {
-        // R3.1: Medium caps at 3; Standard at 4; Expanded at 5.
+        // R3.1.1: Medium/Standard cap at 4; Expanded at 5.
+        // Card fit never overflows the measured gallery width.
         assert_eq!(gallery_columns(1600.0), 4);
         assert_eq!(gallery_columns(1800.0), 5);
-        assert_eq!(gallery_columns(846.0), 3);
-        assert!(gallery_columns(760.0) <= 2);
-        assert_eq!(gallery_columns(400.0), 1);
-        assert!(discover_shows_inspector(1300.0));
+        assert!(gallery_columns(846.0) <= 4);
+        assert!(gallery_columns(760.0) <= 4);
+        assert!(gallery_columns(400.0) <= 2);
+        assert!(discover_shows_inspector(1400.0));
+        assert!(!discover_shows_inspector(980.0));
         assert!(!discover_shows_inspector(780.0));
         assert!(!discover_shows_inspector(760.0));
+        for width in [400.0_f32, 762.0, 1100.0, 1600.0] {
+            let cols = gallery_columns(width) as f32;
+            let card = gallery_card_width(width);
+            let gaps = GALLERY_GAP * (cols - 1.0).max(0.0);
+            assert!(cols * card + gaps <= width + 1.0);
+        }
     }
 
     #[test]

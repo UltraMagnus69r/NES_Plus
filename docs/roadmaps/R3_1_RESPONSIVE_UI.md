@@ -1,124 +1,125 @@
-# R3.1 — Responsive UI and resolution independence
+# R3.1 / R3.1.1 — Responsive UI and resolution independence
 
-Status: **implemented on branch `cursor/r31-responsive-ui-9ff8`**. Not owner-accepted.
+Status: **R3.1 implemented; R3.1.1 correction implemented** on branch `cursor/r31-responsive-ui-9ff8`. **Not owner-accepted.**
 
-R3 (intelligent issue resolution) was owner-accepted on **2026-11-24** in the session that authorized this milestone. R3.1 is a supplemental usability milestone between R3 and R4. R4 remains unauthorized.
+R3 (intelligent issue resolution) was owner-accepted on **2026-11-24**. R3.1 is a supplemental usability milestone between R3 and R4. Owner visual acceptance of R3.1 failed (clipping, overflow, weak reflow). **R3.1.1** is the corrective implementation. R4 remains unauthorized.
 
 ## Rationale
 
-Nesticles looked polished near 1920×1080 but did not adapt cleanly to the Fedora laptop’s **1366×768** display (usable maximized client area historically ≈1366×694 after KDE chrome). Fixed nav widths, Discover inspector breakpoints, Maker tool strip width, and play-surface caps assumed a large desktop. The correction is **adaptive density and layout**, not a global `window_width / 1920` shrink.
+Nesticles looked polished near 1920×1080 but did not adapt cleanly to a short laptop client (historically ≈1366×694 after KDE chrome). Fixed nav widths, Discover inspector breakpoints, Maker tool strip width, and play-surface caps assumed a large desktop. The correction is **adaptive density and layout**, not a global `window_width / 1920` shrink.
 
-## Existing layout defects (inventory)
+## R3.1.1 root causes (production path)
 
-| Area | Defect |
-| --- | --- |
-| `studio::MIN_INNER` | 960×540 blocked restored compact windows |
-| UnMaker nav | Fixed 236 pt rail on every width |
-| Discover | Inspector break at 1080; gallery capped without mode awareness |
-| Stage hero | Fixed 122 pt height stole vertical space on laptops |
-| Investigate | Large checklist/stats stacked above R3 Accept/Skip/Reject |
-| Maker tools | Fixed 212 pt sidebar |
-| Play surface | Hard clamp to 1920×1080 |
-| Window restore | Origin clamped; oversized 4K inner size not clamped to monitor |
+Diagnosed on the Fedora laptop against the R3.1 tip before correction:
 
-## Responsive architecture
+1. **Density ignored height.** Layout helpers keyed off width-only `mode`. A 1366×694 maximized client stayed **Standard** desktop chrome (wide nav, tall hero, side inspector thresholds) and starved Discover/Maker of usable content.
+2. **Gallery card width clamped above the fit.** `gallery_card_width` used a fixed minimum (200pt) that could exceed the row budget when columns were computed independently — cards overflowed or clipped.
+3. **Inspector split did not prove gallery + inspector ≤ content.** Side inspector could reserve width that forced the gallery offscreen.
+4. **Category filters used a single horizontal `ScrollArea` without wrap.** Filters beyond the right edge looked “missing” rather than wrapped or obviously scrollable.
+5. **Shell chrome fixed at desktop sizes.** Brand + workspace chips + actions overflowed restored ~800×500 windows (Maker chip truncated).
+6. **Maker tool capsules used a fixed 161pt width** that overflowed Compact/Medium tool rails.
+7. **Screenshot wait was too short for KDE/Wayland** to apply `InnerSize` / maximize before capture (historical evidence claimed 1366 while WM ignored the first resize).
 
-Central policy: `crates/nesticles/src/responsive.rs` → `ResponsiveLayout` / `LayoutMode`.
+## R3.1.1 corrections
 
-Derived each frame from the egui viewport (`inner_rect` when available):
+Central policy remains `crates/nesticles/src/responsive.rs` → `ResponsiveLayout` / `LayoutMode`.
 
-- width / height in **logical points**
-- `pixels_per_point` (recorded; layout modes do **not** key off raw pixels)
-- helpers: nav width, hero height, gallery columns, inspector visibility, Maker tools width, page margins, content-after-panels
+New / tightened helpers:
 
-Call sites consume one layout snapshot instead of scattering ad-hoc width checks:
+- `density()` — short clients (`height < 740`) densify one step (`Expanded→Standard→Medium→Compact`) so chrome matches usable height.
+- `gallery_fit(width)` — columns + card width that never overflow the measured gallery width; Medium/Standard column cap 4; Expanded 5.
+- `discover_split_widths(content)` — returns `Some((gallery, inspector))` only when both fit; otherwise drawer/collapse.
+- Shell helpers: `shell_brand_width`, `shell_workspace_chip_width`, `shell_action_button_width`, `shell_shows_project_chip`.
+- `filter_chip_height`, `gallery_card_height`, `discover_chrome_budget`, `maker_tool_button_width`.
 
-- UnMaker: `unmaker/view.rs` (`unmaker_studio`, Discover, Investigate, stage hero/buttons)
-- Maker: `app.rs` (`maker_shell`, play surface fit)
-- Shared tokens: `studio.rs` (`gallery_columns`, `discover_shows_inspector`, `clamped_inner_size`, lowered `MIN_INNER`)
+Production call sites:
+
+- UnMaker shell / nav / hero / Discover / Investigate: `unmaker/view.rs` (wrap filters, `gallery_fit`, split/drawer inspector, density-based chrome).
+- Maker tools / parts / drawer: `app.rs` (density heights; tool buttons use `available_width`).
+- Shared gallery helpers + clamp: `studio.rs`.
+- Shot harness: longer wait + re-assert `InnerSize` so captures match requested geometry under Wayland.
 
 ## Breakpoint policy (logical points)
 
 | Available UI width | Mode |
 | --- | --- |
-| &lt; 800 | Compact — icon rail, drawer inspector, collapsed Investigate meta |
-| 800–1199 | Medium — narrower nav, limited gallery columns |
-| 1200–1699 | Standard — full workspace when space permits |
-| ≥ 1700 | Expanded — more gallery columns, comfortable panels |
+| &lt; 800 | Compact |
+| 800–1199 | Medium |
+| 1200–1699 | Standard |
+| ≥ 1700 | Expanded |
 
-Height is considered separately (e.g. Investigate collapses tall meta when height &lt; 720).
+Height densifies chrome independently of width. Modes still use **logical egui points**, not raw monitor pixels.
 
-## Screen-by-screen changes
+## Screen-by-screen (R3.1.1)
 
 ### UnMaker
 
-- **Home / Import / Create / Save**: adaptive stage hero + page margins; vertical scroll retained.
-- **Discover**: column count from available gallery width and mode; side inspector only when `show_discover_inspector`; otherwise selected-asset drawer with scroll.
-- **Review**: remains inside the stage scroll area (Approve & Save reachable by scroll). Nearest-neighbor sprite policy unchanged.
-- **Investigate**: Stages checklist becomes a collapsing header on compact/short viewports; candidate stats compress to chips; **R3 suggestion fields and Accept/Skip/Reject semantics unchanged**.
+- **Shell:** Compact titles/chip widths on short Medium clients; Project chip only when width ≥ 1180 and density is not Compact.
+- **Discover:** Wrapping category filters (horizontal scroll fallback on extremely narrow UIs); gallery columns from `gallery_fit`; side inspector only via `discover_split_widths`; otherwise selected-asset drawer.
+- **Investigate:** Meta collapses on Compact/Medium density or height &lt; 720 so Accept/Skip/Reject remain reachable. Semantics unchanged.
+- **Review:** Still inside stage scroll; nearest-neighbor policy unchanged.
 
 ### Maker
 
-- Parts strip height shortens in Compact; course summary hides below ~1030 width.
-- Tools sidebar width from `maker_tools_width()`; tools remain in a vertical scroll; Game Style stays under the scroll.
+- Tools sidebar width from `maker_tools_width()`; capsules fit the rail.
+- Parts strip shortens under Compact/Medium density.
 - Course canvas still uses `EDITOR_CELL_PX` / `pointer_cell` — **window resize does not rescale game coordinates**.
-- Test Play remains on the Maker dock (unchanged control surface).
+- Test Play remains on the Maker dock / shell.
 
-## DPI handling
+## DPI and window geometry
 
-Three separate concepts:
+1. Display DPI — egui `pixels_per_point` / KDE scaling.
+2. UI density — breakpoints, wrapping, collapsing, scrolling.
+3. Game-world zoom — Maker canvas / sprite preview.
 
-1. **Display DPI** — egui `pixels_per_point` / KDE scaling.
-2. **UI density** — breakpoints, wrapping, collapsing, scrolling.
-3. **Game-world zoom** — Maker canvas and sprite preview systems.
+`MIN_INNER` = 800×500. `clamped_inner_size` still prevents a 4K-saved size from overflowing a laptop monitor. Decorations, maximize/restore, and `persist_window` remain. Fullscreen is not forced.
 
-Modes are selected in points, so 100% / 125% / 150% scaling with the same logical size share a mode. Tile picking ignores desktop DPI.
+## Automated tests
 
-## Window geometry
+`responsive::tests` (among others):
 
-- `MIN_INNER` = 800×500.
-- `clamped_inner_size` + startup path in `place_window_if_needed` prevent a 4K-saved size from overflowing a laptop monitor.
-- Decorations, maximize/restore, and `persist_window` remain.
-
-## Test coverage
-
-`responsive::tests` (binary crate):
-
-- Breakpoint boundaries
-- Usable width after panels
-- Gallery wrapping / inspector collapse
-- Maker tool fit on laptop client
-- Vertical reachability budget for Investigate
+- Breakpoint boundaries; usable width after panels
+- Laptop densifies Standard→Medium; short Medium→Compact shell
+- Gallery never overflows row; Discover split stays inside content
+- Inspector collapse; nav allocation; shell chrome budget
+- Maker tools fit laptop; Investigate vertical budget
 - Canvas cell mapping independent of window size
-- DPI-equivalent logical layouts
-- Compact↔expanded policy identity
+- DPI-equivalent logical layouts; viewport transition recomputes
 
-`studio::tests` updated for new gallery/inspector helpers and clamp.
+`studio::tests` updated for Medium/Standard column caps and no-overflow card fit.
 
-R3 issue decision tests in `nesticles-core::issues` remain the regression gate for suggestion/Accept/Skip/Reject persistence.
+R3 `nesticles-core::issues` remains the suggestion/Accept/Skip/Reject persistence gate.
 
-## Visual acceptance matrix
+## Visual evidence (R3.1.1)
 
-| Target | How verified in this session |
-| --- | --- |
-| 1366×768 | Primary policy target in unit tests; GUI launch optional |
-| 1920×1080 / 2560×1440 / 3840×2160 | Layout math via Expanded/Standard helpers |
-| 980×600 / 800×600 | Compact/Medium unit coverage |
-| Physical laptop GUI | Maximized-client framebuffer at 1366×694 captured; mouse pass pending owner |
+Framebuffer `NESTICLES_SHOT` captures under `docs/handoffs/evidence/r311-responsive/` (rendering evidence, not a mouse pass):
 
-Framebuffer `NESTICLES_SHOT` captures are **rendering evidence**, not a mouse pass.
-Available capture: `docs/handoffs/evidence/r31-responsive/maximized-laptop-client-1366x694.png`
-(`NESTICLES_INNER` did not change capture size under WM timing in this session — do not invent multi-resolution shot claims.)
+| File | Measured size | Notes |
+| --- | --- | --- |
+| `restored-discover-1366x694.png` | 1366×694 | 4-column gallery; filters reachable; inspector collapsed |
+| `restored-discover-800x500.png` | 800×500 | Compact shell + icon nav; filters wrap |
+| `restored-discover-980x600.png` | 980×600 | Restored medium window |
+| `restored-maker-1366x694.png` | 1366×694 | Tools rail + Test Play |
+| `restored-maker-980x600.png` | 980×600 | Maker restored |
+| `restored-home-1366x694.png` | 1366×694 | UnMaker Home |
+| `restored-investigate-1366x694.png` | 1366×694 | Investigate chrome |
+| `restored-review-1366x694.png` | 1366×694 | Review issue panel |
+| `maximized-discover.png` / `maximized-maker.png` / `maximized-home.png` | 1920×1006 | Current Fedora panel maximized client (1920×1080 panel @ scale 1) |
+
+1920×1080 / 2560×1440 / 3840×2160 layout math covered by Expanded/Standard helpers. Physical 4K GUI **UNVERIFIED** on this machine (no 4K panel). SMB1 authentic gallery art **BLOCKED** (owner ROM absent); Discover evidence used the synthetic fixture ROM for layout only.
 
 ## Known limitations
 
 - Compact nav uses icon-only capsules; labels move to hover text.
-- Discover inspector as a bottom drawer on compact is scrollable but not a separate workspace.
+- Discover inspector as a drawer on compact/laptop density is scrollable, not a second workspace.
 - No pixel-perfect screenshot golden tests (intentionally).
 - Owner mouse acceptance on the laptop display is still required.
+- Maker Fill / Inspect / Undo / Redo may sit below the tools scroll fold on short clients (reachable by scroll).
 - R4 not started.
 
 ## Acceptance distinction
 
-- **R3**: owner-accepted (functionality). Mouse-driven Investigate actions were **not** independently re-verified solely because of that acceptance.
-- **R3.1**: implemented + automated tests; **owner acceptance pending**.
+- **R3**: owner-accepted (functionality).
+- **R3.1**: implemented; visual acceptance failed.
+- **R3.1.1**: correction implemented + automated tests + framebuffer GUI evidence; **owner acceptance pending**.
+- **R4**: not authorized.

@@ -1,7 +1,7 @@
 # Milestone status
 
 Recorded November 18, 2026, from the owner's acceptance of R2 and R2.3.
-Updated **2026-11-24** (America/Chicago) after the owner accepted R3 and authorized R3.1.
+Updated **2026-11-27** (America/Chicago) after R3.1.1 responsive correction implementation (owner acceptance still pending).
 
 | Milestone | Status |
 | --- | --- |
@@ -10,7 +10,8 @@ Updated **2026-11-24** (America/Chicago) after the owner accepted R3 and authori
 | R2 — Goomba reconstruction | Accepted by the owner on November 18, 2026. |
 | R2.3 — Design Language 2.0 | Accepted by the owner on November 18, 2026. |
 | R3 — Intelligent issue resolution and local learning | **Owner-accepted on 2026-11-24** (session date of the acceptance instruction). Covers completed R3 functionality including evidence-backed Investigate suggestions (Slice 3) and decision persistence. Acceptance does **not** claim that previously unverified mouse-driven actions were independently re-tested in that acceptance moment. |
-| R3.1 — Responsive UI and resolution independence | **Active.** Implemented on `cursor/r31-responsive-ui-9ff8`. Adaptive UnMaker/Maker layouts for laptop through 4K. **Not owner-accepted.** See `docs/roadmaps/R3_1_RESPONSIVE_UI.md`. |
+| R3.1 — Responsive UI and resolution independence | **Implemented**; owner visual acceptance failed. See R3.1.1. |
+| R3.1.1 — Responsive UI correction | **Correction implemented** on `cursor/r31-responsive-ui-9ff8` (density densification, gallery fit, filter wrap, shell/Maker rail fixes, framebuffer evidence). **Not owner-accepted.** See `docs/roadmaps/R3_1_RESPONSIVE_UI.md`. |
 | R4 and later functional milestones | Not accepted. Not started as roadmap work. |
 | Historical Phase 9.1 | Not accepted. |
 | Historical Phases 10–20 | Suspended. |
