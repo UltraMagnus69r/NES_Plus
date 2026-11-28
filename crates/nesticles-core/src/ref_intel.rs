@@ -546,8 +546,81 @@ pub fn zoom_clamped(zoom: f32) -> f32 {
     zoom.clamp(1.0, 24.0)
 }
 
+/// Visible compare size in screen pixels: `native × zoom`.
+///
+/// Zoom is magnification (1 = one screen pixel per image pixel). Default UI
+/// zoom is 8 for NES-scale inspection. Unlike panel fit helpers, this does
+/// **not** re-clamp the result into a max box — callers scroll when the size
+/// exceeds the pane so raising zoom always changes the rendered size.
+pub fn compare_display_size(native_w: u32, native_h: u32, zoom: f32) -> (f32, f32) {
+    let z = zoom_clamped(zoom);
+    ((native_w as f32) * z, (native_h as f32) * z)
+}
+
+/// True when the zoomed image should sit in a scroll region instead of being
+/// silently shrunk to the pane.
+pub fn compare_needs_scroll(display_w: f32, display_h: f32, pane_w: f32, pane_h: f32) -> bool {
+    display_w > pane_w.max(1.0) + 0.5 || display_h > pane_h.max(1.0) + 0.5
+}
+
 pub fn layout_side_by_side(available_width: f32) -> bool {
     available_width >= 720.0
+}
+
+/// Move every association from one asset id onto another (for example ephemeral
+/// Discover candidate id → durable project sprite id after Approve & Save).
+/// Does not duplicate rows. Returns how many rows were rewired.
+pub fn rewire_asset_id(list: &mut [AssetReference], from_id: &str, to_id: &str) -> usize {
+    if from_id.is_empty() || to_id.is_empty() || from_id == to_id {
+        return 0;
+    }
+    let mut n = 0;
+    for item in list.iter_mut() {
+        if item.asset_id == from_id {
+            item.asset_id = to_id.to_string();
+            n += 1;
+        }
+    }
+    n
+}
+
+/// After reopen, ephemeral candidate ids no longer exist. Rewire orphaned
+/// associations onto `fallback_id` when that id is known and the old id is not.
+pub fn recover_orphan_asset_ids(
+    list: &mut [AssetReference],
+    known_ids: &[String],
+    fallback_id: Option<&str>,
+) -> usize {
+    let Some(fallback) = fallback_id.filter(|id| !id.is_empty()) else {
+        return 0;
+    };
+    if !known_ids.iter().any(|id| id == fallback) {
+        return 0;
+    }
+    let mut n = 0;
+    for item in list.iter_mut() {
+        if item.asset_id == fallback {
+            continue;
+        }
+        if known_ids.iter().any(|id| id == &item.asset_id) {
+            continue;
+        }
+        item.asset_id = fallback.to_string();
+        n += 1;
+    }
+    n
+}
+
+/// Prefer a durable sprite id when associating from a Discover candidate that
+/// already has a published reconstruction in the project.
+pub fn stable_association_asset_id(
+    selected_id: &str,
+    published_sprite_id: Option<&str>,
+) -> String {
+    published_sprite_id
+        .filter(|id| !id.is_empty())
+        .unwrap_or(selected_id)
+        .to_string()
 }
 
 /// Bridge an ephemeral RefImage into attribution text without claiming ROM origin.
@@ -714,6 +787,75 @@ mod tests {
         assert_eq!(zoom_clamped(99.0), 24.0);
         assert!(layout_side_by_side(800.0));
         assert!(!layout_side_by_side(600.0));
+    }
+
+    #[test]
+    fn reference_zoom_changes_display_size_without_panel_fit() {
+        // A 64×64 reference used to appear stuck once preview_fit filled the pane.
+        let (w8, h8) = compare_display_size(64, 64, 8.0);
+        let (w16, h16) = compare_display_size(64, 64, 16.0);
+        let (w24, h24) = compare_display_size(64, 64, 24.0);
+        assert_eq!((w8, h8), (512.0, 512.0));
+        assert_eq!((w16, h16), (1024.0, 1024.0));
+        assert_eq!((w24, h24), (1536.0, 1536.0));
+        assert!(w16 > w8 && w24 > w16);
+        assert!(compare_needs_scroll(w8, h8, 360.0, 280.0));
+        // Tiny reconstruction still scales with zoom and stays independent.
+        let (r8, _) = compare_display_size(16, 16, 8.0);
+        let (r16, _) = compare_display_size(16, 16, 16.0);
+        assert_eq!(r8, 128.0);
+        assert_eq!(r16, 256.0);
+        assert_ne!(r16, w16);
+    }
+
+    #[test]
+    fn rewire_and_orphan_recovery_preserve_bytes() {
+        let png = tiny_png();
+        let mut a = reference_from_local("candidate-ephemeral", "A", "a.png", &png, true).unwrap();
+        let b = reference_from_local("sprite-goomba", "B", "b.png", &png, true).unwrap();
+        a.active = true;
+        let mut list = vec![a.clone(), b.clone()];
+        assert_eq!(rewire_asset_id(&mut list, "candidate-ephemeral", "sprite-goomba"), 1);
+        assert_eq!(list[0].asset_id, "sprite-goomba");
+        assert!(!list[0].png_base64.is_empty());
+        // Second save must not invent a duplicate when ids already match.
+        assert_eq!(rewire_asset_id(&mut list, "sprite-goomba", "sprite-goomba"), 0);
+        assert_eq!(list.len(), 2);
+
+        let mut orphan = reference_from_local("candidate-gone", "Orphan", "o.png", &png, true).unwrap();
+        orphan.active = true;
+        let mut orphans = vec![orphan, b.clone()];
+        let known = vec!["sprite-goomba".into()];
+        assert_eq!(
+            recover_orphan_asset_ids(&mut orphans, &known, Some("sprite-goomba")),
+            1
+        );
+        assert_eq!(orphans[0].asset_id, "sprite-goomba");
+        assert_eq!(stable_association_asset_id("candidate-x", Some("sprite-goomba")), "sprite-goomba");
+        assert_eq!(stable_association_asset_id("candidate-x", None), "candidate-x");
+    }
+
+    #[test]
+    fn save_reopen_keeps_embedded_reference_and_active_flag() {
+        let png = tiny_png();
+        let mut project = Project::blank("R4.1");
+        let mut item =
+            reference_from_local("sprite-goomba", "Ref", "ref.png", &png, true).unwrap();
+        item.notes = "owner note".into();
+        item.active = true;
+        project.asset_references.push(item.clone());
+        let text = serde_json::to_string_pretty(&project).unwrap();
+        let loaded: Project = serde_json::from_str(&text).unwrap();
+        assert_eq!(loaded.asset_references.len(), 1);
+        let restored = active_for(&loaded.asset_references, "sprite-goomba").unwrap();
+        assert_eq!(restored.notes, "owner note");
+        assert_eq!(restored.png_base64, item.png_base64);
+        let (w, h, rgba) = load_reference_rgba(restored).unwrap();
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(rgba.len(), 16);
+        // Re-serializing must not duplicate the association.
+        let again: Project = serde_json::from_str(&serde_json::to_string(&loaded).unwrap()).unwrap();
+        assert_eq!(again.asset_references.len(), 1);
     }
 
     #[test]

@@ -10,9 +10,13 @@ Roadmap milestone R4 from [UNMAKER_FIRST_ROADMAP.md](UNMAKER_FIRST_ROADMAP.md).
 | --- | --- |
 | Implementation | Implemented on `cursor/r4-reference-intelligence` |
 | Automated tests | Passing (core + desktop) |
-| GUI framebuffer evidence | Captured under `docs/handoffs/evidence/r4-reference/` |
+| GUI framebuffer evidence | R4 under `docs/handoffs/evidence/r4-reference/`; R4.1 under `docs/handoffs/evidence/r41-zoom-restore/` |
 | Live paid AI call | Not required for automated tests; offline/mock path covered |
-| Owner acceptance | Pending |
+| Owner acceptance | **Failed on first pass** — reference zoom + Save→Open restore. **R4.1 correction implemented;** owner re-acceptance pending |
+
+**R4:** IMPLEMENTED, OWNER ACCEPTANCE FAILED — REFERENCE ZOOM AND SAVE/RESTORE  
+**R4.1:** CORRECTION IMPLEMENTED (not yet owner-accepted)  
+**R5:** NOT AUTHORIZED
 
 R3.1.1 was **owner-approved for progression** into R4. That approval does not invent mouse-driven or physical 4K GUI evidence that was never recorded for R3.1.1.
 
@@ -40,8 +44,10 @@ R3.1.1 was **owner-approved for progression** into R4. That approval does not in
 
 - Open from Discover (**Open reference**) or Review (**Open reference workspace**) for the selected card.
 - Import local image (native picker) or direct image URL (async fetch; page fetch remains available).
-- Side-by-side Reference / Reconstruction with zoom (1–24), nearest-neighbor textures, aspect-preserving fit.
+- Side-by-side Reference / Reconstruction with **independent** zoom sliders (1–24), nearest-neighbor textures.
+- Display size is `native × zoom` (R4.1). Zoomed panes scroll when larger than the panel; they are **not** re-clamped by `preview_fit` (that hid reference zoom for larger images).
 - Compact / short clients use a denser chrome so the pair stays reachable; below ~720 pt width the compare uses two compact columns.
+- Associations prefer durable sprite ids. Approve & Save rewires ephemeral Discover candidate ids onto the published sprite. Home → Open a Saved Creation restores UnMaker selection and opens Reference compare when embedded references exist; orphan session ids are recovered onto the saved sprite.
 - Deterministic intelligence notes: Observed / Derived / Uncertain (dimensions, scale mismatch, opacity, sampled mismatch). No invented NES frames.
 
 ### AI security model
@@ -58,18 +64,18 @@ R3.1.1 was **owner-approved for progression** into R4. That approval does not in
 
 | Gate | Result |
 | --- | --- |
-| `cargo test -p nesticles-core --lib` | PASS — 187 (was 177; +10 `ref_intel`) |
-| `cargo test -p nesticles` | PASS — 68 (was 65; +3 AI/tool tests), 1 ignored |
+| `cargo test -p nesticles-core --lib` | PASS — 190 after R4.1 (was 187; +3 zoom/rewire/restore) |
+| `cargo test -p nesticles` | PASS — 68, 1 ignored |
 | `cargo build -p nesticles --release` | PASS |
 | `python3 scripts/repository_safety.py --self-test` | PASS |
 | `python3 scripts/repository_safety.py --worktree` | PASS — no findings |
 | Godot headless (via core godot tests) | PASS in core suite |
 | Live OpenAI | NOT TESTED / OFFLINE ONLY unless owner configures a key and sends |
-| Owner mouse acceptance | UNVERIFIED (framebuffer tour harness) |
+| Owner mouse acceptance | UNVERIFIED (framebuffer / env-zoom harness is not mouse-driven Save→Open) |
 
 ## Evidence
 
-`docs/handoffs/evidence/r4-reference/`:
+`docs/handoffs/evidence/r4-reference/` (original R4):
 
 - `laptop-1366x768-reference-beside.png` — reference beside Goomba reconstruction
 - `restored-980x640-reference-stacked.png` — restored window compare
@@ -78,11 +84,22 @@ R3.1.1 was **owner-approved for progression** into R4. That approval does not in
 - `providers-ai-optional.png` — AI providers, ask-before-send, no automatic call
 - `original-brown-square.png` — original synthetic fixture (not commercial art)
 
+`docs/handoffs/evidence/r41-zoom-restore/` (R4.1 correction):
+
+- `original-synthetic-ref-64.png` — original 64×64 synthetic reference (not commercial art)
+- `restored-reference-zoom8.png` / `restored-reference-zoom16.png` — saved creation reopen + reference zoom change
+- `independent-zooms-ref24-recon4.png` — independent pane zooms
+- `compact-800x500-reference-zoom12.png` — compact layout
+- `orphan-rewire-restored.png` — ephemeral candidate id recovered onto saved sprite
+- `laptop-1366x768-recon-zoom16.png` — wide layout, reconstruction zoom independent
+
 ## Acceptance checklist (owner)
 
 - [ ] Open UnMaker, select a reconstructed asset, open Reference compare
 - [ ] Import a local reference; see it beside the reconstruction
-- [ ] Save / reopen; association intact
+- [ ] Drag **Reference zoom** and confirm the reference image changes size (scroll when large)
+- [ ] Drag **Reconstruction zoom** independently
+- [ ] Save the project; quit; Home → **Open a Saved Creation**; confirm both images return
 - [ ] Confirm AI stays idle without credential / without Send
 - [ ] Optional: configure a local credential and Send once; review suggestion only
 

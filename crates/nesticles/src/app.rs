@@ -4518,9 +4518,11 @@ impl NestApp {
                     .map(|style| style.id.clone())
                     .unwrap_or_default();
                 self.tab = Tab::Courses;
-                self.workspace = Workspace::Maker;
+                // Home → Open a Saved Creation opens a Nesticles project JSON
+                // (same format Save writes). Restore UnMaker selection / reference
+                // UI here — do not leave the owner on an empty Maker course view.
                 self.status = format!("Opened {label}");
-                self.present_saved_goomba();
+                self.restore_saved_creation();
             }
             Err(err) => {
                 self.status = format!(

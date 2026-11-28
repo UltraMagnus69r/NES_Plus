@@ -681,7 +681,7 @@ impl NestApp {
             .home_card(
                 ui,
                 "Open a Saved Creation",
-                "Open a project you saved. Older alpha libraries are not imported.",
+                "Open a Nesticles project JSON you saved (Save or Approve & Save). Restores sprites and embedded references. Older alpha libraries are not imported.",
             )
             .clicked()
         {
@@ -1995,22 +1995,22 @@ impl NestApp {
 
     fn save_stage(&mut self, ui: &mut egui::Ui) {
         ui.label(
-            "Save writes the project file. It does not store the extraction session, the ROM, or a published Goomba animation.",
+            "Save writes the Nesticles project JSON (sprites, animation, embedded reference images, notes). It does not store the extraction session or the ROM.",
         );
         ui.label(
-            "Package export still paints only the first frame and is not offered here as a finished asset.",
+            "Home → Open a Saved Creation opens that same project file. Package export still paints only the first frame and is not offered here as a finished asset.",
         );
         if crate::design::soft_button(ui, "Save project").clicked() {
             self.save_project_quick();
             self.studio.state.notice = if self.dirty {
                 "The project save did not finish.".into()
             } else {
-                "Project file saved. No extracted character was published.".into()
+                "Project file saved. Embedded references reopen with Open a Saved Creation.".into()
             };
         }
         ui.add_space(8.0);
         ui.label("Still true after this save:");
-        ui.label("• Approving the reconstructed Goomba writes its sprite. Other approvals only change a review flag.");
+        ui.label("• Approving the reconstructed Goomba writes its sprite and rewires reference associations onto that sprite id.");
         ui.label("• A new package keeps every frame in pictures. An older reader still sees the first frame.");
         ui.label("• Mario and Luigi have no reconstruction.");
         ui.label("• Reference pages are not matched to ROM tiles.");
@@ -2619,6 +2619,14 @@ impl NestApp {
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
+                // Ephemeral Discover candidate ids are not durable across reopen.
+                // Rewire any reference associations onto the published sprite id
+                // before the project file is written.
+                let rewired = nesticles_core::ref_intel::rewire_asset_id(
+                    &mut self.project.asset_references,
+                    &candidate.id,
+                    &published.sprite_id,
+                );
                 self.write_project(&path);
                 let wrote = self.project_path.as_ref() == Some(&path) && !self.dirty;
                 if wrote {
@@ -2631,8 +2639,15 @@ impl NestApp {
                             item.status = nesticles_core::pipeline::ReviewStatus::Approved;
                         }
                     }
-                    self.studio.state.notice =
+                    self.studio.state.selected = Some(published.sprite_id.clone());
+                    let mut notice =
                         format!("{} Saved to {}.", published.message, path.display());
+                    if rewired > 0 {
+                        notice.push_str(&format!(
+                            " Rewired {rewired} reference association(s) onto the saved sprite."
+                        ));
+                    }
+                    self.studio.state.notice = notice;
                 } else {
                     self.studio.state.notice = format!(
                         "{} The project file was not written, so reopen will not find it yet.",
@@ -2663,6 +2678,107 @@ impl NestApp {
             .unwrap_or_else(|| std::path::PathBuf::from("goomba.json"))
     }
 
+    /// After Home → Open a Saved Creation (or NESTICLES_PROJECT), recover UnMaker
+    /// selection and show embedded references when present.
+    pub(crate) fn restore_saved_creation(&mut self) {
+        self.extract.ref_assoc_tex = None;
+        self.extract.ref_assoc_tex_id = None;
+        self.extract.recon_compare_tex = None;
+        self.extract.recon_compare_tex_id = None;
+
+        let goomba = self
+            .project
+            .sprites
+            .iter()
+            .find(|sprite| {
+                sprite
+                    .tags
+                    .iter()
+                    .any(|tag| tag == nesticles_core::reconstruct::TAG)
+            })
+            .map(|sprite| sprite.id.clone());
+        let known: Vec<String> = self
+            .project
+            .sprites
+            .iter()
+            .map(|sprite| sprite.id.clone())
+            .chain(self.project.assets.iter().map(|asset| asset.id.clone()))
+            .collect();
+        let recovered = nesticles_core::ref_intel::recover_orphan_asset_ids(
+            &mut self.project.asset_references,
+            &known,
+            goomba.as_deref(),
+        );
+        if recovered > 0 {
+            // Persist the durable sprite id on the next Save.
+            self.dirty = true;
+        }
+
+        let focus = self
+            .project
+            .asset_references
+            .first()
+            .map(|item| item.asset_id.clone())
+            .or_else(|| goomba.clone())
+            .or_else(|| self.project.sprites.first().map(|sprite| sprite.id.clone()));
+
+        self.workspace = studio::Workspace::Unmaker;
+
+        let Some(focus) = focus else {
+            self.studio.state.stage = Stage::Home;
+            self.studio.state.tool = None;
+            self.status = "Opened the project. No sprites or references were found to restore.".into();
+            return;
+        };
+
+        self.studio.state.selected = Some(focus.clone());
+        if let Some(sprite) = self.project.sprites.iter().find(|sprite| sprite.id == focus) {
+            self.sprite_id = Some(sprite.id.clone());
+            if let Some(set) = self
+                .project
+                .anim_sets
+                .iter()
+                .find(|set| set.sprite_id == focus)
+            {
+                self.set_id = Some(set.id.clone());
+                self.clip_id = set
+                    .clips
+                    .iter()
+                    .find(|clip| clip.name == "walk")
+                    .or_else(|| set.clips.first())
+                    .map(|clip| clip.id.clone());
+            }
+        }
+
+        let has_refs = !nesticles_core::ref_intel::refs_for(&self.project.asset_references, &focus)
+            .is_empty();
+        if has_refs {
+            if let Some(active) =
+                nesticles_core::ref_intel::active_for(&self.project.asset_references, &focus)
+            {
+                self.extract.ref_workspace_notes = active.notes.clone();
+            }
+            self.studio.state.stage = Stage::Create;
+            self.studio.state.create_animate = true;
+            self.open_reference_workspace();
+            self.status = format!(
+                "Opened the saved creation. Restored reference comparison for {focus}."
+            );
+            if recovered > 0 {
+                self.studio.state.notice = format!(
+                    "Rewired {recovered} reference(s) from a previous session id onto the saved sprite. Save again to keep that mapping."
+                );
+            } else {
+                self.studio.state.notice =
+                    "Saved reference restored. AI stays off until a credential and an explicit send."
+                        .into();
+            }
+            return;
+        }
+
+        self.present_saved_goomba();
+    }
+
     pub(crate) fn present_saved_goomba(&mut self) {
         let Some(sprite) = self
             .project
@@ -2676,6 +2792,11 @@ impl NestApp {
             })
             .map(|sprite| sprite.id.clone())
         else {
+            // Non-Goomba project: stay on UnMaker Home with selection if any.
+            self.workspace = studio::Workspace::Unmaker;
+            if self.studio.state.selected.is_none() {
+                self.studio.state.stage = Stage::Home;
+            }
             return;
         };
         let Some(set) = self
@@ -2697,6 +2818,7 @@ impl NestApp {
         self.studio.state.stage = Stage::Create;
         self.studio.state.create_animate = true;
         self.studio.state.tool = None;
+        self.studio.state.selected = Some(sprite.clone());
         self.sprite_id = Some(sprite);
         self.set_id = Some(set_id);
         self.clip_id = clip_id;
@@ -2709,6 +2831,17 @@ impl NestApp {
             return;
         }
         self.studio.r2_env_applied = true;
+        // R4.1 shot harness: independent pane zooms without clicking the sliders.
+        if let Ok(z) = std::env::var("NESTICLES_REF_ZOOM") {
+            if let Ok(v) = z.parse::<f32>() {
+                self.extract.ref_pane_zoom = nesticles_core::ref_intel::zoom_clamped(v);
+            }
+        }
+        if let Ok(z) = std::env::var("NESTICLES_RECON_ZOOM") {
+            if let Ok(v) = z.parse::<f32>() {
+                self.extract.recon_pane_zoom = nesticles_core::ref_intel::zoom_clamped(v);
+            }
+        }
         if let Ok(pose) = std::env::var("NESTICLES_R2_POSE") {
             if pose == "walk" || pose == "defeat" {
                 self.studio.state.preview_pose = pose;

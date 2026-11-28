@@ -14,13 +14,59 @@ impl NestApp {
     pub(crate) fn open_reference_workspace(&mut self) {
         if self.studio.state.selected.is_none() {
             self.studio.state.notice =
-                "Select a Discover or Review card before opening its reference workspace.".into();
+                "Select a Discover or Review card, or open a saved creation that includes a sprite, before opening its reference workspace.".into();
             return;
         }
         self.studio.state.tool = Some(super::unmaker::StudioTool::Reference);
         // Keep the notice short so compact laptop clients still see both images.
-        self.studio.state.notice =
-            "AI stays off until a credential and an explicit send.".into();
+        if self.studio.state.notice.is_empty()
+            || self.studio.state.notice.starts_with("AI stays off")
+            || self
+                .studio
+                .state
+                .notice
+                .starts_with("Select a Discover")
+        {
+            self.studio.state.notice =
+                "AI stays off until a credential and an explicit send.".into();
+        }
+    }
+
+    /// Prefer a durable project sprite id when associating from an ephemeral
+    /// Discover candidate that already has a published reconstruction.
+    fn association_asset_id(&self, selected: &str) -> String {
+        if self.project.sprites.iter().any(|sprite| sprite.id == selected)
+            || self.project.assets.iter().any(|asset| asset.id == selected)
+        {
+            return selected.to_string();
+        }
+        let is_goomba_candidate = self
+            .extract
+            .session
+            .as_ref()
+            .and_then(|session| {
+                session
+                    .candidates
+                    .iter()
+                    .find(|candidate| candidate.id == selected)
+            })
+            .is_some_and(|candidate| candidate.character_id == "goomba");
+        let published = self
+            .project
+            .sprites
+            .iter()
+            .find(|sprite| {
+                sprite
+                    .tags
+                    .iter()
+                    .any(|tag| tag == nesticles_core::reconstruct::TAG)
+            })
+            .map(|sprite| sprite.id.as_str());
+        if is_goomba_candidate {
+            ref_intel::stable_association_asset_id(selected, published)
+        } else {
+            selected.to_string()
+        }
     }
 
     pub(crate) fn reference_workspace_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -55,41 +101,47 @@ impl NestApp {
 
         self.reference_import_row(ui, &asset_id);
 
-        // Comparison early so laptop and compact clients see both images.
+        // Independent zooms: each pane owns its magnification. Raising zoom must
+        // change that pane's rendered size (scroll when larger than the panel).
         ui.horizontal_wrapped(|ui| {
-            ui.label("Zoom");
-            let mut zoom = self.extract.ref_compare_zoom;
+            ui.label("Reference zoom");
+            let mut zoom = self.extract.ref_pane_zoom;
             if ui
                 .add(egui::Slider::new(&mut zoom, 1.0..=24.0).logarithmic(true))
                 .changed()
             {
-                self.extract.ref_compare_zoom = ref_intel::zoom_clamped(zoom);
+                self.extract.ref_pane_zoom = ref_intel::zoom_clamped(zoom);
             }
-            if design::soft_button(ui, "Reset zoom").clicked() {
-                self.extract.ref_compare_zoom = 8.0;
+            if design::soft_button(ui, "Reset ref").clicked() {
+                self.extract.ref_pane_zoom = 8.0;
+            }
+            ui.separator();
+            ui.label("Reconstruction zoom");
+            let mut zoom = self.extract.recon_pane_zoom;
+            if ui
+                .add(egui::Slider::new(&mut zoom, 1.0..=24.0).logarithmic(true))
+                .changed()
+            {
+                self.extract.recon_pane_zoom = ref_intel::zoom_clamped(zoom);
+            }
+            if design::soft_button(ui, "Reset recon").clicked() {
+                self.extract.recon_pane_zoom = 8.0;
             }
         });
         let available = ui.available_width();
         let side_by_side = ref_intel::layout_side_by_side(available);
-        if side_by_side {
-            ui.columns(2, |cols| {
-                cols[0].label(RichText::new("Reference").strong());
-                self.paint_active_reference(&mut cols[0], ctx, &asset_id);
-                cols[1].label(RichText::new("Reconstruction").strong());
-                self.paint_reconstruction_panel(&mut cols[1], ctx, &asset_id);
-            });
-        } else {
+        if !side_by_side {
             ui.label(
                 RichText::new("Compact layout — panels stack so controls stay reachable.")
                     .size(12.0),
             );
-            ui.columns(2, |cols| {
-                cols[0].label(RichText::new("Reference").strong());
-                self.paint_active_reference(&mut cols[0], ctx, &asset_id);
-                cols[1].label(RichText::new("Reconstruction").strong());
-                self.paint_reconstruction_panel(&mut cols[1], ctx, &asset_id);
-            });
         }
+        ui.columns(2, |cols| {
+            cols[0].label(RichText::new("Reference").strong());
+            self.paint_active_reference(&mut cols[0], ctx, &asset_id);
+            cols[1].label(RichText::new("Reconstruction").strong());
+            self.paint_reconstruction_panel(&mut cols[1], ctx, &asset_id);
+        });
 
         ui.separator();
         ui.label("Notes for this association");
@@ -239,30 +291,23 @@ impl NestApp {
         match load_reference_rgba(&item) {
             Ok((w, h, rgba)) => {
                 self.ensure_assoc_tex(ctx, &item.id, w, h, &rgba);
-                let zoom = self.extract.ref_compare_zoom;
+                let zoom = self.extract.ref_pane_zoom;
+                let (dw, dh) = ref_intel::compare_display_size(w, h, zoom);
+                let pane_w = ui.available_width().min(360.0).max(64.0);
+                let pane_h = 280.0;
                 if let Some(tex) = &self.extract.ref_assoc_tex {
-                    let max_w = ui.available_width().min(360.0).max(64.0);
-                    let max_h = 280.0;
-                    let (dw, dh) = ResponsiveLayout::preview_fit(
-                        max_w,
-                        max_h,
-                        (w as f32) * (zoom / 8.0).max(0.25),
-                        (h as f32) * (zoom / 8.0).max(0.25),
-                    );
-                    // Nearest-neighbor for NES-like inspection.
-                    ui.add(
-                        egui::Image::from_texture(tex)
-                            .fit_to_exact_size(Vec2::new(dw, dh))
-                            .maintain_aspect_ratio(true),
-                    );
+                    // Nearest-neighbor; scroll when zoom exceeds the pane so the
+                    // size change stays visible (do not re-fit away the zoom).
+                    self.paint_zoomed_texture(ui, tex, dw, dh, pane_w, pane_h, "r41-ref-zoom");
                 }
                 ui.label(format!(
-                    "{}  {}  {}×{}  {}",
+                    "{}  {}  {}×{}  {}  zoom×{:.0}",
                     item.title,
                     item.confidence.label(),
                     item.width,
                     item.height,
-                    item.source_kind.label()
+                    item.source_kind.label(),
+                    zoom
                 ));
                 if !item.notes.is_empty() {
                     ui.label(&item.notes);
@@ -298,23 +343,17 @@ impl NestApp {
                 ));
                 self.extract.recon_compare_tex_id = Some(key);
             }
-            let zoom = self.extract.ref_compare_zoom;
-            let max_w = ui.available_width().min(360.0).max(64.0);
-            let max_h = 280.0;
-            let (dw, dh) = ResponsiveLayout::preview_fit(
-                max_w,
-                max_h,
-                (w as f32) * (zoom / 8.0).max(0.25),
-                (h as f32) * (zoom / 8.0).max(0.25),
-            );
+            let zoom = self.extract.recon_pane_zoom;
+            let (dw, dh) = ref_intel::compare_display_size(w, h, zoom);
+            let pane_w = ui.available_width().min(360.0).max(64.0);
+            let pane_h = 280.0;
             if let Some(tex) = &self.extract.recon_compare_tex {
-                ui.add(
-                    egui::Image::from_texture(tex)
-                        .fit_to_exact_size(Vec2::new(dw, dh))
-                        .maintain_aspect_ratio(true),
-                );
+                self.paint_zoomed_texture(ui, tex, dw, dh, pane_w, pane_h, "r41-recon-zoom");
             }
-            ui.label(format!("Reconstruction {w}×{h} (nearest-neighbor)"));
+            ui.label(format!(
+                "Reconstruction {w}×{h} (nearest-neighbor)  zoom×{:.0}",
+                zoom
+            ));
             design::status_chip(ui, "Review colors only — palette unverified");
             return;
         }
@@ -335,6 +374,34 @@ impl NestApp {
             Color32::from_rgb(90, 100, 120),
         );
         ui.label("Mario, Luigi, and other unresolved rows stay placeholders until verified evidence exists.");
+    }
+
+    /// Draw a compare texture at an exact zoomed size. Scroll when it exceeds the pane
+    /// instead of shrinking it back with preview_fit (that hid reference zoom).
+    fn paint_zoomed_texture(
+        &self,
+        ui: &mut egui::Ui,
+        tex: &egui::TextureHandle,
+        dw: f32,
+        dh: f32,
+        pane_w: f32,
+        pane_h: f32,
+        scroll_id: &str,
+    ) {
+        let image = egui::Image::from_texture(tex)
+            .fit_to_exact_size(Vec2::new(dw, dh))
+            .maintain_aspect_ratio(true);
+        if ref_intel::compare_needs_scroll(dw, dh, pane_w, pane_h) {
+            egui::ScrollArea::both()
+                .id_salt(scroll_id)
+                .max_width(pane_w)
+                .max_height(pane_h)
+                .show(ui, |ui| {
+                    ui.add(image);
+                });
+        } else {
+            ui.add(image);
+        }
     }
 
     fn ensure_assoc_tex(
@@ -395,34 +462,57 @@ impl NestApp {
     }
 
     fn reconstruction_rgba(&mut self, asset_id: &str) -> Option<(u32, u32, Vec<u8>)> {
-        let session = self.extract.session.clone()?;
-        // Match the selected candidate, or fall back to the Goomba reconstruction when
-        // the owner opened compare from that card's workspace.
-        let is_goomba = session
-            .candidates
-            .iter()
-            .any(|c| c.id == asset_id && c.character_id == "goomba");
-        let any_goomba = session
-            .candidates
-            .iter()
-            .any(|c| c.character_id == "goomba");
-        if !is_goomba && !(any_goomba && asset_id.contains("goomba")) {
-            return None;
+        // Prefer a live session assembly when the cartridge is still open.
+        if let Some(session) = self.extract.session.clone() {
+            let is_goomba = session
+                .candidates
+                .iter()
+                .any(|c| c.id == asset_id && c.character_id == "goomba");
+            let any_goomba = session
+                .candidates
+                .iter()
+                .any(|c| c.character_id == "goomba");
+            if is_goomba || (any_goomba && asset_id.contains("goomba")) {
+                if let Some(assembly) = self.assemble_goomba(&session) {
+                    let pose = if self.studio.state.preview_pose.is_empty() {
+                        "walk".to_string()
+                    } else {
+                        self.studio.state.preview_pose.clone()
+                    };
+                    if let Some(frame) = nesticles_core::reconstruct::pose_frame(
+                        &assembly,
+                        &pose,
+                        self.studio.state.preview_elapsed,
+                    )
+                    .map(|(_, frame)| frame)
+                    .or_else(|| assembly.frames.first())
+                    {
+                        return Some((frame.w, frame.h, frame.rgba.clone()));
+                    }
+                }
+            }
         }
-        let assembly = self.assemble_goomba(&session)?;
-        let pose = if self.studio.state.preview_pose.is_empty() {
-            "walk".to_string()
-        } else {
-            self.studio.state.preview_pose.clone()
-        };
-        let frame = nesticles_core::reconstruct::pose_frame(
-            &assembly,
-            &pose,
-            self.studio.state.preview_elapsed,
-        )
-        .map(|(_, frame)| frame)
-        .or_else(|| assembly.frames.first())?;
-        Some((frame.w, frame.h, frame.rgba.clone()))
+
+        // After Save → Open a Saved Creation there is no extraction session.
+        // Composite the durable project sprite so Reference compare still works.
+        let sprite = self
+            .project
+            .sprites
+            .iter()
+            .find(|sprite| sprite.id == asset_id)
+            .or_else(|| {
+                self.project.sprites.iter().find(|sprite| {
+                    sprite
+                        .tags
+                        .iter()
+                        .any(|tag| tag == nesticles_core::reconstruct::TAG)
+                        && (asset_id.contains("goomba")
+                            || self.studio.state.selected.as_deref() == Some(asset_id))
+                })
+            })?;
+        let frame = sprite.frames.first()?;
+        let image = nesticles_core::composite(sprite, frame, &self.project).ok()?;
+        Some((image.w, image.h, image.rgba))
     }
 
     fn reference_ai_panel(&mut self, ui: &mut egui::Ui, asset_id: &str) {
@@ -633,9 +723,10 @@ impl NestApp {
             return;
         };
         let path_str = path.to_string_lossy().to_string();
+        let bind_id = self.association_asset_id(asset_id);
         match std::fs::read(&path) {
             Ok(bytes) => match ref_intel::reference_from_local(
-                asset_id,
+                &bind_id,
                 path.file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("Local reference"),
@@ -649,7 +740,7 @@ impl NestApp {
                         .project
                         .asset_references
                         .iter_mut()
-                        .filter(|r| r.asset_id == asset_id)
+                        .filter(|r| r.asset_id == bind_id)
                     {
                         existing.active = false;
                     }
@@ -658,8 +749,15 @@ impl NestApp {
                     self.extract.ref_assoc_tex = None;
                     self.extract.ref_assoc_tex_id = None;
                     self.dirty = true;
-                    self.studio.state.notice =
-                        "Local reference associated and embedded in the project file.".into();
+                    if bind_id != asset_id {
+                        self.studio.state.selected = Some(bind_id.clone());
+                        self.studio.state.notice = format!(
+                            "Local reference associated to saved sprite {bind_id} (not the temporary Discover id) and embedded in the project file."
+                        );
+                    } else {
+                        self.studio.state.notice =
+                            "Local reference associated and embedded in the project file.".into();
+                    }
                 }
                 Err(err) => self.studio.state.notice = err,
             },
@@ -677,7 +775,8 @@ impl NestApp {
         }
         // Reuse the existing async fetch; association happens when bytes arrive
         // if NESTICLES binds the pending asset id.
-        self.extract.pending_ref_asset_id = Some(asset_id.to_string());
+        let bind_id = self.association_asset_id(asset_id);
+        self.extract.pending_ref_asset_id = Some(bind_id);
         self.start_direct_image_reference();
     }
 
@@ -701,6 +800,7 @@ impl NestApp {
                 self.project.asset_references.push(item);
                 self.extract.ref_assoc_tex = None;
                 self.dirty = true;
+                self.studio.state.selected = Some(asset_id);
                 self.studio.state.notice =
                     "URL reference associated. It is observed evidence, not an approved extract."
                         .into();

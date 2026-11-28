@@ -61,8 +61,10 @@ pub struct ExtractUi {
     pub fail_note: String,
     pub export_hold: bool,
     pub prompt: String,
-    /// R4 compare zoom (1–24). Default matches Review NES cell zoom scale.
-    pub ref_compare_zoom: f32,
+    /// R4.1 independent reference-pane zoom (1–24). Magnification in screen px/image px.
+    pub ref_pane_zoom: f32,
+    /// R4.1 independent reconstruction-pane zoom (1–24).
+    pub recon_pane_zoom: f32,
     pub ref_workspace_notes: String,
     pub ai_payload_confirmed: bool,
     pub ai_review_text: String,
@@ -121,7 +123,8 @@ impl Default for ExtractUi {
             fail_note: String::new(),
             export_hold: false,
             prompt: String::new(),
-            ref_compare_zoom: 8.0,
+            ref_pane_zoom: 8.0,
+            recon_pane_zoom: 8.0,
             ref_workspace_notes: String::new(),
             ai_payload_confirmed: false,
             ai_review_text: String::new(),

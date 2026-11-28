@@ -1,7 +1,7 @@
 # Milestone status
 
 Recorded November 18, 2026, from the owner's acceptance of R2 and R2.3.
-Updated **2026-11-28** (America/Chicago) after R4 reference intelligence implementation. R3.1.1 is owner-approved for progression; physical 4K / independent mouse acceptance evidence is not invented.
+Updated **2026-11-28** (America/Chicago) after R4.1 reference zoom + saved-creation restore correction. R3.1.1 is owner-approved for progression; physical 4K / independent mouse acceptance evidence is not invented.
 
 | Milestone | Status |
 | --- | --- |
@@ -12,7 +12,7 @@ Updated **2026-11-28** (America/Chicago) after R4 reference intelligence impleme
 | R3 — Intelligent issue resolution and local learning | **Owner-accepted on 2026-11-24** (session date of the acceptance instruction). Covers completed R3 functionality including evidence-backed Investigate suggestions (Slice 3) and decision persistence. Acceptance does **not** claim that previously unverified mouse-driven actions were independently re-tested in that acceptance moment. |
 | R3.1 — Responsive UI and resolution independence | **Implemented**; owner visual acceptance failed. See R3.1.1. |
 | R3.1.1 — Responsive UI correction | **Correction implemented** on `cursor/r31-responsive-ui-9ff8`. **Owner-approved for progression** into R4 (2026-11-28 assignment). Approval does **not** invent physical 4K GUI tests or independently automated mouse acceptance that was never recorded. Framebuffer evidence remains under `docs/handoffs/evidence/r311-preview/`. |
-| R4 — Reference intelligence and AI integration | **Implemented** on `cursor/r4-reference-intelligence` (stacked on R3.1.1 tip). See `docs/roadmaps/R4_REFERENCE_INTELLIGENCE.md`. **Not owner-accepted.** |
+| R4 — Reference intelligence and AI integration | **Implemented**; **owner acceptance failed** on reference zoom + Save→Open restore. **R4.1 correction implemented** on the same branch/PR. See `docs/roadmaps/R4_REFERENCE_INTELLIGENCE.md`. Owner re-acceptance pending. |
 | R5 and later functional milestones | Not accepted. Not authorized. |
 | Historical Phase 9.1 | Not accepted. |
 | Historical Phases 10–20 | Suspended. |

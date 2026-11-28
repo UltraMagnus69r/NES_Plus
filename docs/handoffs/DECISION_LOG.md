@@ -129,3 +129,13 @@
 - Rationale: Matches the owner's R4 assignment and keeps honesty about what GUI evidence exists.
 - Consequences: Milestone docs and handoffs distinguish progression approval from unverified mouse/4K passes. R4 owner acceptance remains a separate gate.
 - Status: Accepted by the owner (progression). R4 product acceptance still pending.
+
+## D-014 — Reference associations use durable sprite ids
+
+- Date: 2026-11-28
+- Problem: R4 associated references to ephemeral Discover `candidate-*` ids. Save wrote the bytes, but Home → Open a Saved Creation lost the session, so the association looked missing. Separately, compare zoom ran through `preview_fit`, which hid reference magnification for larger images.
+- Alternatives: Persist the whole extraction session. Keep candidate ids and rebuild Discover cards on open. Leave zoom as shared fit-to-panel.
+- Decision: Prefer the published project sprite id when associating. Approve & Save rewires candidate→sprite before write. Open recovers orphan session ids onto the reconstructed sprite and restores UnMaker Reference compare. Independent pane zooms use `native × zoom` with scroll — no `preview_fit` re-clamp on the compare panes. Home → Open a Saved Creation remains the Nesticles project JSON path (same file Save writes); it is not a second creation format.
+- Rationale: Matches owner R4.1 defects without inventing a second project schema or mutating owner saved files during investigation.
+- Consequences: Older projects without `asset_references` still open. Projects saved with only candidate ids are recovered on open when a tagged Goomba sprite exists. Owner re-acceptance of R4/R4.1 is still required. R5 stays unauthorized.
+- Status: Implemented on `cursor/r4-reference-intelligence`. Owner acceptance pending.
