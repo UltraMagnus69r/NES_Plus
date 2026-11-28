@@ -1,6 +1,7 @@
 # Milestone status
 
 Recorded November 18, 2026, from the owner's acceptance of R2 and R2.3.
+Updated **2026-11-27** (America/Chicago) after R3.1.1 responsive correction implementation (owner acceptance still pending).
 
 | Milestone | Status |
 | --- | --- |
@@ -8,14 +9,16 @@ Recorded November 18, 2026, from the owner's acceptance of R2 and R2.3.
 | R1 — UnMaker studio foundation | Unchanged by this decision. The studio shell is in the product. This record does not add a new R1 acceptance mark. |
 | R2 — Goomba reconstruction | Accepted by the owner on November 18, 2026. |
 | R2.3 — Design Language 2.0 | Accepted by the owner on November 18, 2026. |
-| R3 — Intelligent issue resolution and local learning | Authorized and in progress. Decisions persist on `Project.issue_decisions`. Slice 3 adds deterministic evidence-backed suggestions on Investigate and IssueCard. The milestone is not complete and is not owner-accepted. |
+| R3 — Intelligent issue resolution and local learning | **Owner-accepted on 2026-11-24** (session date of the acceptance instruction). Covers completed R3 functionality including evidence-backed Investigate suggestions (Slice 3) and decision persistence. Acceptance does **not** claim that previously unverified mouse-driven actions were independently re-tested in that acceptance moment. |
+| R3.1 — Responsive UI and resolution independence | **Implemented**; owner visual acceptance failed. See R3.1.1. |
+| R3.1.1 — Responsive UI correction | **Correction implemented** on `cursor/r31-responsive-ui-9ff8` (density densification, gallery fit, filter wrap, shell/Maker rail fixes, Discover reconstruction-preview follow-up 2026-11-28, framebuffer evidence). **Not owner-accepted.** See `docs/roadmaps/R3_1_RESPONSIVE_UI.md`. |
 | R4 and later functional milestones | Not accepted. Not started as roadmap work. |
 | Historical Phase 9.1 | Not accepted. |
 | Historical Phases 10–20 | Suspended. |
 
 ## Visual labels are not roadmap numbers
 
-R4, R5, R6, and R6.1 on the launch scripts and UI notes are visual build labels on the R2.3 architecture. Roadmap R6 is still "Gameplay content, physics, and behavior authoring" and is not accepted. The accepted presentation baseline is R6.1. Do not roll it back and do not open another visual direction in place of R3.
+R4, R5, R6, and R6.1 on the launch scripts and UI notes are visual build labels on the R2.3 architecture. Roadmap R4 remains unauthorized. The accepted presentation baseline is R6.1. Do not roll it back and do not open another visual direction in place of R3.1.
 
 ## What acceptance does not verify
 
@@ -24,7 +27,10 @@ R4, R5, R6, and R6.1 on the launch scripts and UI notes are visual build labels 
 - Drag-to-resize, save/reopen of a resized course, and Bazzite launch were reported by the visual handoff. This acceptance session does not repeat those as new passes unless a command in the session report says so.
 - Review colors remain a review palette.
 - Mario and Luigi stay unresolved.
+- R3 owner acceptance does not, by itself, convert earlier launch-only GUI evidence into a mouse-driven pass.
 
 ## Accepted presentation
 
 UnMaker Lab and Maker Engine are two workspaces in one decorated native window. The chrome includes the glossy rounded controls, selected and default icons, scenic backgrounds, the Discover gallery and inspector, the Maker parts browser and tool sidebar, an empty course rather than a sample level, and the existing NES cell grid. `ui_assets` embeds those images and can read replacements from `~/Desktop/Nesticle/Assets` without overwriting files already there. The Maker wallpaper is decoration. It is not written into course cells.
+
+R3.1 adapts density and panel layout across display sizes while preserving this Design Language 2.0 presentation.

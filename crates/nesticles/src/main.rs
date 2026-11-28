@@ -1,10 +1,11 @@
 mod audio_out;
 mod design;
-mod openai;
 mod export_game;
 mod icon;
 mod keys;
 mod net;
+mod openai;
+mod responsive;
 mod studio;
 
 include!(concat!(env!("OUT_DIR"), "/player_embed.rs"));

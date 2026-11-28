@@ -7,6 +7,8 @@ Machines:
 
 Repository: https://github.com/UltraMagnus69r/NES_Plus
 
+Standing up Nesticles on a **brand-new** Fedora laptop (first clone, branch tip, Godot, ROM, PR stack): see [NEW_FEDORA_LAPTOP.md](NEW_FEDORA_LAPTOP.md).
+
 All Nesticles development, building, and application testing happens through Cursor on these local seats. Cloud agent checkouts, including user `ubuntu` and `/agent/repos/NES_Plus`, are not development machines. Stop.
 
 When GitHub is ahead of the local checkout and the worktree is clean, update **this exact directory** with a fast-forward pull. Never create another clone or worktree to receive the update. Never discard local work merely to match GitHub.

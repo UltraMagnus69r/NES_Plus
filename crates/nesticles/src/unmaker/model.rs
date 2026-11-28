@@ -252,6 +252,9 @@ pub struct StudioState {
     pub preview_pose: String,
     pub preview_playing: bool,
     pub preview_elapsed: u32,
+    /// Compact Discover reconstruction preview (drawer / window). Ignored when the
+    /// side inspector fits; kept across resize so selection and open/close survive.
+    pub discover_preview_open: bool,
 }
 
 impl Default for StudioState {
@@ -275,6 +278,7 @@ impl Default for StudioState {
             preview_pose: "walk".into(),
             preview_playing: false,
             preview_elapsed: 0,
+            discover_preview_open: false,
         }
     }
 }

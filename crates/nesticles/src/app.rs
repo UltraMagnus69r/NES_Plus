@@ -2,10 +2,10 @@
 mod anim_ui;
 #[path = "pipeline_ui.rs"]
 mod pipeline_ui;
-#[path = "unmaker/mod.rs"]
-mod unmaker;
 #[path = "ui_assets.rs"]
 mod ui_assets;
+#[path = "unmaker/mod.rs"]
+mod unmaker;
 
 use crate::audio_out;
 use crate::export_game;
@@ -1446,30 +1446,47 @@ impl NestApp {
             // background with a fake grid. The actual tile grid appears when
             // the user creates a course.
             let available = ui.available_size();
-            let well = Vec2::new(
-                available.x.max(240.0),
-                available.y.max(320.0),
-            );
+            let well = Vec2::new(available.x.max(240.0), available.y.max(320.0));
             let (rect, _) = ui.allocate_exact_size(well, Sense::hover());
-            ui.painter().rect_filled(rect, 22.0, Color32::from_rgb(247, 251, 255));
-            ui.painter().rect_stroke(rect, 22.0,
+            ui.painter()
+                .rect_filled(rect, 22.0, Color32::from_rgb(247, 251, 255));
+            ui.painter().rect_stroke(
+                rect,
+                22.0,
                 egui::Stroke::new(2.0_f32, studio::unmaker_line()),
-                egui::StrokeKind::Inside);
+                egui::StrokeKind::Inside,
+            );
             let cx = rect.center().x;
             let cy = rect.center().y;
-            ui.painter().text(Pos2::new(cx, cy - 50.0),
-                egui::Align2::CENTER_CENTER, "Your course canvas is empty",
-                egui::FontId::proportional(25.0), studio::unmaker_ink());
-            ui.painter().text(Pos2::new(cx, cy - 15.0),
-                egui::Align2::CENTER_CENTER, "New course creates a blank 16×16-pixel NES tile grid.",
-                egui::FontId::proportional(15.0), studio::caption());
-            let button_rect = Rect::from_center_size(
-                Pos2::new(cx, cy + 38.0), Vec2::new(170.0, 45.0));
+            ui.painter().text(
+                Pos2::new(cx, cy - 50.0),
+                egui::Align2::CENTER_CENTER,
+                "Your course canvas is empty",
+                egui::FontId::proportional(25.0),
+                studio::unmaker_ink(),
+            );
+            ui.painter().text(
+                Pos2::new(cx, cy - 15.0),
+                egui::Align2::CENTER_CENTER,
+                "New course creates a blank 16×16-pixel NES tile grid.",
+                egui::FontId::proportional(15.0),
+                studio::caption(),
+            );
+            let button_rect =
+                Rect::from_center_size(Pos2::new(cx, cy + 38.0), Vec2::new(170.0, 45.0));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
             if crate::design::capsule_button(
-                &mut child, "New course", None, 170.0, 45.0,
+                &mut child,
+                "New course",
+                None,
+                170.0,
+                45.0,
                 crate::design::CapsuleTone::Blue,
-            ).clicked() { self.add_course(); }
+            )
+            .clicked()
+            {
+                self.add_course();
+            }
             return;
         }
         // One grid cell = one 16×16 NES tile, drawn at 2×.
@@ -1481,27 +1498,52 @@ impl NestApp {
         // another terrain cell, so dragging it never places or erases objects.
         let (outer, _) = ui.allocate_exact_size(size + Vec2::splat(33.0), Sense::hover());
         let rect = Rect::from_min_size(outer.min, size);
-        let response = ui.interact(rect, ui.id().with("course-tile-interaction"), Sense::click_and_drag());
+        let response = ui.interact(
+            rect,
+            ui.id().with("course-tile-interaction"),
+            Sense::click_and_drag(),
+        );
         let painter = ui.painter_at(outer);
-        let grab = Rect::from_center_size(rect.right_bottom() + Vec2::new(11.0, 11.0), Vec2::splat(23.0));
-        let resize = ui.interact(grab, ui.id().with("course-resize-handle"), Sense::click_and_drag())
+        let grab = Rect::from_center_size(
+            rect.right_bottom() + Vec2::new(11.0, 11.0),
+            Vec2::splat(23.0),
+        );
+        let resize = ui
+            .interact(
+                grab,
+                ui.id().with("course-resize-handle"),
+                Sense::click_and_drag(),
+            )
             .on_hover_text("Drag to resize the course in whole 16×16 NES tiles");
-        painter.rect_filled(grab, 7.0,
+        painter.rect_filled(
+            grab,
+            7.0,
             if resize.hovered() || resize.dragged() {
                 Color32::from_rgb(22, 130, 253)
             } else {
                 Color32::from_rgb(251, 254, 255)
-            });
-        painter.rect_stroke(grab, 7.0,
+            },
+        );
+        painter.rect_stroke(
+            grab,
+            7.0,
             egui::Stroke::new(1.8_f32, studio::apple_blue()),
-            egui::StrokeKind::Inside);
+            egui::StrokeKind::Inside,
+        );
         for offset in [7.0_f32, 12.0, 17.0] {
             painter.line_segment(
-                [Pos2::new(grab.right() - offset - 4.0, grab.bottom() - 3.0),
-                 Pos2::new(grab.right() - 3.0, grab.bottom() - offset - 4.0)],
-                egui::Stroke::new(1.2_f32,
-                    if resize.hovered() || resize.dragged() { Color32::WHITE }
-                    else { studio::apple_blue() }),
+                [
+                    Pos2::new(grab.right() - offset - 4.0, grab.bottom() - 3.0),
+                    Pos2::new(grab.right() - 3.0, grab.bottom() - offset - 4.0),
+                ],
+                egui::Stroke::new(
+                    1.2_f32,
+                    if resize.hovered() || resize.dragged() {
+                        Color32::WHITE
+                    } else {
+                        studio::apple_blue()
+                    },
+                ),
             );
         }
         if resize.dragged() {
@@ -1517,8 +1559,12 @@ impl NestApp {
                     min_w = min_w.max(entrance.x.max(0) as u32 + 1);
                     min_h = min_h.max(entrance.y.max(0) as u32 + 1);
                 }
-                for tr in self.project.transitions.iter()
-                    .filter(|tr| tr.source_level_id == level.id) {
+                for tr in self
+                    .project
+                    .transitions
+                    .iter()
+                    .filter(|tr| tr.source_level_id == level.id)
+                {
                     min_w = min_w.max(tr.source_x.max(0) as u32 + 1);
                     min_h = min_h.max(tr.source_y.max(0) as u32 + 1);
                 }
@@ -1539,9 +1585,12 @@ impl NestApp {
         painter.rect_filled(rect, 17.0, sky);
         // Native 16×16 tile grid: no background photograph, pre-filled
         // terrain, ground decoration, or cream border around the course.
-        painter.rect_stroke(rect, 17.0,
+        painter.rect_stroke(
+            rect,
+            17.0,
             egui::Stroke::new(2.0_f32, Color32::from_rgb(221, 237, 255)),
-            egui::StrokeKind::Inside);
+            egui::StrokeKind::Inside,
+        );
         // Do not render decorative wallpaper inside the editable level. A
         // course starts with empty cells and a sky color chosen by the user.
         let luma = sky.r() as u16 + sky.g() as u16 + sky.b() as u16;
@@ -1592,12 +1641,18 @@ impl NestApp {
             Vec2::splat(cell - 1.0),
         );
         if !level.cells.is_empty() || level.player_blueprint_id.is_some() {
-            painter.rect_stroke(pr, 6.0,
+            painter.rect_stroke(
+                pr,
+                6.0,
                 egui::Stroke::new(2.0_f32, Color32::WHITE),
-                egui::StrokeKind::Inside);
-            painter.rect_stroke(pr.shrink(2.0), 4.0,
+                egui::StrokeKind::Inside,
+            );
+            painter.rect_stroke(
+                pr.shrink(2.0),
+                4.0,
                 egui::Stroke::new(2.0_f32, studio::nesticles_red()),
-                egui::StrokeKind::Inside);
+                egui::StrokeKind::Inside,
+            );
         }
         if self.edit_placement {
             if let Some((x, y)) = self.placement_pick {
@@ -1691,7 +1746,11 @@ impl NestApp {
                     Vec2::splat(cell - 1.0),
                 );
                 if self.terrain_brush.is_some() || self.paint_asset.is_some() {
-                    if let Some(id) = self.paint_asset.clone().filter(|_| self.terrain_brush.is_none()) {
+                    if let Some(id) = self
+                        .paint_asset
+                        .clone()
+                        .filter(|_| self.terrain_brush.is_none())
+                    {
                         if let Some(tex) = self.textures.get(&id) {
                             painter.image(
                                 tex.id(),
@@ -3416,7 +3475,9 @@ impl NestApp {
                     self.status = "This course uses that Player Blueprint.".into();
                 }
             }
-            if assigned.is_some() && crate::design::soft_button(ui, "Clear course assignment").clicked() {
+            if assigned.is_some()
+                && crate::design::soft_button(ui, "Clear course assignment").clicked()
+            {
                 self.project.levels[self.level_sel].player_blueprint_id = None;
                 self.dirty = true;
                 self.status =
@@ -3803,8 +3864,10 @@ impl NestApp {
         let Some(level) = self.project.level(&play.level_id) else {
             return;
         };
-        let surface_w = ui.available_width().clamp(320.0, 1920.0);
-        let surface_h = (ui.clip_rect().height() - 150.0).clamp(180.0, 1080.0);
+        // Fit the play surface to the live client area (no hard 1920×1080 cap).
+        let surface_w = ui.available_width().max(320.0);
+        let surface_h =
+            (ui.clip_rect().height() - 150.0).clamp(180.0, ui.available_height().max(180.0));
         let scale = play_surface_scale(surface_w, surface_h, sim.level_w, sim.level_h);
         let view = Vec2::new(surface_w, surface_h);
         let sky = level.sky.clone();
@@ -5147,10 +5210,18 @@ impl NestApp {
             return;
         };
         self.startup_frames = 8;
+        let monitor_size = [monitor.x, monitor.y];
+        let outer_size = [outer.width(), outer.height()];
+        let clamped = studio::clamped_inner_size(outer_size, monitor_size);
+        if (clamped[0] - outer_size[0]).abs() > 1.0 || (clamped[1] - outer_size[1]).abs() > 1.0 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(
+                clamped[0], clamped[1],
+            )));
+        }
         if let Some([x, y]) = studio::restored_origin(
             [outer.min.x, outer.min.y],
-            [outer.width(), outer.height()],
-            [monitor.x, monitor.y],
+            [clamped[0], clamped[1]],
+            monitor_size,
         ) {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
         }
@@ -5357,10 +5428,23 @@ impl NestApp {
             return;
         }
         self.shot_wait = self.shot_wait.saturating_add(1);
+        // Request maximize / resize early, then wait several frames so KDE/Wayland
+        // can apply the geometry before the framebuffer is captured.
         if self.shot_wait == 1 && std::env::var("NESTICLES_MAX").ok().as_deref() == Some("1") {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
-        if self.shot_wait == 1 {
+        if self.shot_wait == 2 {
+            if let Ok(spec) = std::env::var("NESTICLES_INNER") {
+                if let Some((w, h)) = spec.split_once('x') {
+                    if let (Ok(w), Ok(h)) = (w.parse::<f32>(), h.parse::<f32>()) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(w, h)));
+                    }
+                }
+            }
+        }
+        if self.shot_wait == 3 || self.shot_wait == 8 {
+            // Re-assert the requested inner size; some compositors ignore the first.
             if let Ok(spec) = std::env::var("NESTICLES_INNER") {
                 if let Some((w, h)) = spec.split_once('x') {
                     if let (Ok(w), Ok(h)) = (w.parse::<f32>(), h.parse::<f32>()) {
@@ -5369,10 +5453,12 @@ impl NestApp {
                 }
             }
         }
-        if self.shot_wait == 4 {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
-                egui::UserData::default(),
-            ));
+        if self.shot_wait == 18 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        // Keep painting while waiting for the compositor to apply geometry.
+        if self.shot_wait < 40 {
+            ctx.request_repaint();
         }
     }
 
@@ -5380,6 +5466,7 @@ impl NestApp {
     /// independent overlays could overlap the canvas and one another whenever
     /// the viewport or font scale changed. Fixed panels participate in layout.
     fn maker_shell(&mut self, ctx: &egui::Context) {
+        let layout = crate::responsive::ResponsiveLayout::from_context(ctx);
         egui::TopBottomPanel::bottom("dock")
             .exact_height(studio::BOTTOM_H)
             .frame(navy_frame())
@@ -5387,7 +5474,15 @@ impl NestApp {
 
         if self.drawer_open {
             egui::TopBottomPanel::bottom("drawer")
-                .exact_height(280.0)
+                .exact_height(
+                    if matches!(layout.density(), crate::responsive::LayoutMode::Compact) {
+                        180.0
+                    } else if matches!(layout.density(), crate::responsive::LayoutMode::Medium) {
+                        220.0
+                    } else {
+                        280.0
+                    },
+                )
                 .resizable(true)
                 .frame(paper_frame())
                 .show(ctx, |ui| {
@@ -5398,8 +5493,13 @@ impl NestApp {
         // Compact, single-purpose parts strip. No oversized floating card:
         // the browser grows to the width of the viewport and never obscures
         // the tile canvas below it.
+        let parts_h = match layout.density() {
+            crate::responsive::LayoutMode::Compact => 88.0,
+            crate::responsive::LayoutMode::Medium => 100.0,
+            _ => 112.0,
+        };
         egui::TopBottomPanel::top("maker-parts-strip")
-            .exact_height(112.0)
+            .exact_height(parts_h)
             .frame(
                 egui::Frame::NONE
                     .fill(Color32::from_rgb(232, 243, 255))
@@ -5408,26 +5508,52 @@ impl NestApp {
             )
             .show(ctx, |ui| {
                 ui.horizontal_top(|ui| {
-                    if ui.available_width() >= 1030.0 {
+                    if layout.width >= 1030.0 {
                         ui.allocate_ui_with_layout(
-                            Vec2::new(238.0, 93.0),
+                            Vec2::new(238.0, parts_h - 16.0),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 if self.project.levels.is_empty() {
-                                    ui.label(RichText::new("No course yet")
-                                        .size(18.0).strong().color(studio::unmaker_ink()));
-                                    if crate::design::capsule_button(ui, "New course", None,
-                                        150.0, 37.0, crate::design::CapsuleTone::Yellow)
-                                        .clicked() { self.add_course(); }
+                                    ui.label(
+                                        RichText::new("No course yet")
+                                            .size(18.0)
+                                            .strong()
+                                            .color(studio::unmaker_ink()),
+                                    );
+                                    if crate::design::capsule_button(
+                                        ui,
+                                        "New course",
+                                        None,
+                                        150.0,
+                                        37.0,
+                                        crate::design::CapsuleTone::Yellow,
+                                    )
+                                    .clicked()
+                                    {
+                                        self.add_course();
+                                    }
                                 } else {
-                                    let course = &self.project.levels[self.level_sel.min(self.project.levels.len() - 1)];
-                                    ui.label(RichText::new(&course.name).size(18.0).strong()
-                                        .color(studio::unmaker_ink()));
-                                    ui.label(RichText::new(format!("{} × {} tiles · 16px each",
-                                            course.w, course.h))
-                                        .size(13.0).color(studio::caption()));
-                                    ui.label(RichText::new("Drag the grid's ↘ corner to resize")
-                                        .size(12.0).color(studio::caption()));
+                                    let course = &self.project.levels
+                                        [self.level_sel.min(self.project.levels.len() - 1)];
+                                    ui.label(
+                                        RichText::new(&course.name)
+                                            .size(18.0)
+                                            .strong()
+                                            .color(studio::unmaker_ink()),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{} × {} tiles · 16px each",
+                                            course.w, course.h
+                                        ))
+                                        .size(13.0)
+                                        .color(studio::caption()),
+                                    );
+                                    ui.label(
+                                        RichText::new("Drag the grid's ↘ corner to resize")
+                                            .size(12.0)
+                                            .color(studio::caption()),
+                                    );
                                 }
                             },
                         );
@@ -5442,13 +5568,22 @@ impl NestApp {
                                     for group in studio::PART_GROUPS {
                                         let on = self.maker_group == group;
                                         let key = group.to_lowercase();
-                                        let width = (group.len() as f32 * 8.0 + 52.0).clamp(80.0, 126.0);
+                                        let width =
+                                            (group.len() as f32 * 8.0 + 52.0).clamp(80.0, 126.0);
                                         if crate::design::capsule_button(
-                                            ui, group, self.ui_assets.filter(&key, on),
-                                            width, 35.0,
-                                            if on { crate::design::CapsuleTone::Blue }
-                                            else { crate::design::CapsuleTone::White },
-                                        ).clicked() {
+                                            ui,
+                                            group,
+                                            self.ui_assets.filter(&key, on),
+                                            width,
+                                            35.0,
+                                            if on {
+                                                crate::design::CapsuleTone::Blue
+                                            } else {
+                                                crate::design::CapsuleTone::White
+                                            },
+                                        )
+                                        .clicked()
+                                        {
                                             self.maker_group = group.to_string();
                                         }
                                     }
@@ -5464,27 +5599,41 @@ impl NestApp {
         // Tool buttons always remain in the same column and never float over
         // an editor viewport. The game-style picker belongs to this sidebar.
         egui::SidePanel::right("maker-tools")
-            .exact_width(212.0)
+            .exact_width(layout.maker_tools_width())
             .resizable(false)
             .frame(
                 egui::Frame::NONE
                     .fill(Color32::from_rgb(235, 244, 255))
                     .inner_margin(egui::Margin::symmetric(11, 12))
-                    .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line()))
+                    .stroke(egui::Stroke::new(1.0_f32, studio::unmaker_line())),
             )
             .show(ctx, |ui| {
                 let backdrop = ui.max_rect();
                 // The compiled-in tools picture was removed. It had no
                 // redistribution record. The panel fill below is the control
                 // surface. paint_cover returns false when that key is absent.
-                if self.ui_assets.paint_cover(ui.painter(), "backgrounds/maker-tools", backdrop, 0.5, 0.4) {
-                    ui.painter().rect_filled(backdrop, 0.0, Color32::from_white_alpha(98));
+                if self.ui_assets.paint_cover(
+                    ui.painter(),
+                    "backgrounds/maker-tools",
+                    backdrop,
+                    0.5,
+                    0.4,
+                ) {
+                    ui.painter()
+                        .rect_filled(backdrop, 0.0, Color32::from_white_alpha(98));
                 }
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("⚒  Tools")
-                        .size(21.0).strong().color(studio::unmaker_ink()));
+                    let compact =
+                        matches!(layout.density(), crate::responsive::LayoutMode::Compact);
+                    ui.label(
+                        RichText::new(if compact { "Tools" } else { "⚒  Tools" })
+                            .size(if compact { 16.0 } else { 20.0 })
+                            .strong()
+                            .color(studio::unmaker_ink()),
+                    );
                     ui.separator();
-                    let controls_height = (ui.available_height() - 110.0).max(170.0);
+                    let style_reserve = if compact { 80.0 } else { 104.0 };
+                    let controls_height = (ui.available_height() - style_reserve).max(140.0);
                     egui::ScrollArea::vertical()
                         .id_salt("maker-tools-fixed")
                         .auto_shrink([false, false])
@@ -5507,12 +5656,20 @@ impl NestApp {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(Color32::from_rgb(226, 241, 255)).inner_margin(12.0))
+            .frame(
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(226, 241, 255))
+                    .inner_margin(12.0),
+            )
             .show(ctx, |ui| {
                 let backdrop = ui.max_rect();
                 if !self.ui_assets.paint_cover_tinted(
-                    ui.painter(), "backgrounds/maker-wallpaper", backdrop,
-                    0.5, 0.52, Color32::from_white_alpha(108),
+                    ui.painter(),
+                    "backgrounds/maker-wallpaper",
+                    backdrop,
+                    0.5,
+                    0.52,
+                    Color32::from_white_alpha(108),
                 ) {
                     crate::design::paint_scenery(ui.painter(), backdrop, true);
                 }
@@ -5521,9 +5678,13 @@ impl NestApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         let viewport = ui.available_size();
-                        let (grid_w, grid_h) = self.project.levels.get(self.level_sel)
-                            .map(|level| (level.w as f32 * 32.0 + 34.0,
-                                          level.h as f32 * 32.0 + 34.0))
+                        let (grid_w, grid_h) = self
+                            .project
+                            .levels
+                            .get(self.level_sel)
+                            .map(|level| {
+                                (level.w as f32 * 32.0 + 34.0, level.h as f32 * 32.0 + 34.0)
+                            })
                             .unwrap_or((viewport.x - 24.0, viewport.y - 24.0));
                         let outer_w = viewport.x.max(grid_w + 24.0);
                         let outer_h = viewport.y.max(grid_h + 24.0);
@@ -5566,12 +5727,22 @@ impl NestApp {
 
     fn game_style_chooser(&mut self, ui: &mut egui::Ui) {
         let picker_width = ui.available_width().max(135.0);
-        ui.label(RichText::new("Game Style").size(13.0).strong().color(studio::caption()));
-        if crate::design::capsule_button(ui,
+        ui.label(
+            RichText::new("Game Style")
+                .size(13.0)
+                .strong()
+                .color(studio::caption()),
+        );
+        if crate::design::capsule_button(
+            ui,
             &format!("{}  ▾", self.game_style.label()),
             self.ui_assets.filter("players", false),
-            picker_width, 42.0,
-            crate::design::CapsuleTone::White).clicked() {
+            picker_width,
+            42.0,
+            crate::design::CapsuleTone::White,
+        )
+        .clicked()
+        {
             self.style_chooser_open = !self.style_chooser_open;
         }
         if self.style_chooser_open {
@@ -5579,23 +5750,39 @@ impl NestApp {
             for style in studio::GameStyle::all() {
                 let current = self.game_style == style;
                 if style.selectable() {
-                    if crate::design::capsule_button(ui, style.label(), None,
-                        picker_width, 40.0,
-                        if current { crate::design::CapsuleTone::Blue }
-                        else { crate::design::CapsuleTone::White }
-                    ).clicked() {
+                    if crate::design::capsule_button(
+                        ui,
+                        style.label(),
+                        None,
+                        picker_width,
+                        40.0,
+                        if current {
+                            crate::design::CapsuleTone::Blue
+                        } else {
+                            crate::design::CapsuleTone::White
+                        },
+                    )
+                    .clicked()
+                    {
                         self.game_style = style;
                         self.style_chooser_open = false;
                     }
                 } else {
                     ui.add_enabled_ui(false, |ui| {
-                        ui.add(egui::Button::new(style.label())
-                            .min_size(Vec2::new(picker_width, 38.0)));
-                    }).response.on_hover_text(style.detail());
+                        ui.add(
+                            egui::Button::new(style.label())
+                                .min_size(Vec2::new(picker_width, 38.0)),
+                        );
+                    })
+                    .response
+                    .on_hover_text(style.detail());
                 }
             }
-            ui.label(RichText::new("Only Classic 8-bit is currently implemented.")
-                .size(12.0).color(studio::caption()));
+            ui.label(
+                RichText::new("Only Classic 8-bit is currently implemented.")
+                    .size(12.0)
+                    .color(studio::caption()),
+            );
         }
     }
 
@@ -5611,9 +5798,17 @@ impl NestApp {
                             .size(16.0),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if crate::design::capsule_button(ui, "Edit", None,
-                            160.0, 48.0, crate::design::CapsuleTone::Green)
-                            .on_hover_text("Return to the editor (F5)").clicked() {
+                        if crate::design::capsule_button(
+                            ui,
+                            "Edit",
+                            None,
+                            160.0,
+                            48.0,
+                            crate::design::CapsuleTone::Green,
+                        )
+                        .on_hover_text("Return to the editor (F5)")
+                        .clicked()
+                        {
                             self.toggle_play();
                         }
                     });
@@ -5771,9 +5966,14 @@ impl NestApp {
                 Color32::WHITE,
             );
         } else if !asset_id.is_empty() {
-            ui.painter().rect_filled(rect.shrink(18.0), 6.0, studio::unmaker_line());
+            ui.painter()
+                .rect_filled(rect.shrink(18.0), 6.0, studio::unmaker_line());
         }
-        let stroke = if selected { studio::nesticles_red() } else { studio::unmaker_line() };
+        let stroke = if selected {
+            studio::nesticles_red()
+        } else {
+            studio::unmaker_line()
+        };
         ui.painter().rect_stroke(
             rect,
             14.0,
@@ -5817,16 +6017,24 @@ impl NestApp {
         };
         // Place keeps its saturated brick artwork on its yellow selected pill.
         let icon_selected = selected && name != "Paint";
-        let icon = if icon_name.is_empty() { None }
-                   else { self.ui_assets.tool(icon_name, icon_selected) };
+        let icon = if icon_name.is_empty() {
+            None
+        } else {
+            self.ui_assets.tool(icon_name, icon_selected)
+        };
+        // Fit the tools sidebar — a fixed 161pt capsule overflowed Compact/Medium rails.
+        let button_w = ui.available_width().clamp(100.0, 168.0);
         if enabled {
-            crate::design::capsule_button(ui, label, icon, 161.0, studio::TOOL, tone)
-                .on_hover_text(tip).clicked()
+            crate::design::capsule_button(ui, label, icon, button_w, studio::TOOL, tone)
+                .on_hover_text(tip)
+                .clicked()
         } else {
             ui.add_enabled_ui(false, |ui| {
-                crate::design::capsule_button(ui, label, icon, 161.0, studio::TOOL, tone)
-                    .on_hover_text(tip).clicked()
-            }).inner
+                crate::design::capsule_button(ui, label, icon, button_w, studio::TOOL, tone)
+                    .on_hover_text(tip)
+                    .clicked()
+            })
+            .inner
         }
     }
 
@@ -5895,22 +6103,37 @@ impl NestApp {
             })
             .unwrap_or_else(|| "Nothing selected".into());
         ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(format!("{tool}  ·  {object}  ·  100%"))
-                        .color(studio::unmaker_ink())
-                        .size(16.0),
-                );
+            ui.label(
+                RichText::new(format!("{tool}  ·  {object}  ·  100%"))
+                    .color(studio::unmaker_ink())
+                    .size(16.0),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::design::capsule_button(ui, "▶ PLAY", None,
-                    153.0, 48.0, crate::design::CapsuleTone::Red)
-                    .on_hover_text("Play this course (F5)").clicked() {
+                if crate::design::capsule_button(
+                    ui,
+                    "▶ PLAY",
+                    None,
+                    153.0,
+                    48.0,
+                    crate::design::CapsuleTone::Red,
+                )
+                .on_hover_text("Play this course (F5)")
+                .clicked()
+                {
                     self.toggle_play();
                 }
                 ui.add_space(13.0);
-                if crate::design::capsule_button(ui, "More ▾", None,
-                    99.0, 44.0, crate::design::CapsuleTone::White)
-                    .on_hover_text("Course settings, blueprints, and terrain slots")
-                    .clicked() {
+                if crate::design::capsule_button(
+                    ui,
+                    "More ▾",
+                    None,
+                    99.0,
+                    44.0,
+                    crate::design::CapsuleTone::White,
+                )
+                .on_hover_text("Course settings, blueprints, and terrain slots")
+                .clicked()
+                {
                     self.drawer_open = !self.drawer_open;
                 }
             });
@@ -6319,10 +6542,18 @@ fn install_theme(ctx: &egui::Context) {
     ctx.style_mut(|style| {
         style.spacing.button_padding = Vec2::new(13.0, 8.0);
         style.spacing.item_spacing = Vec2::new(8.0, 8.0);
-        style.text_styles.insert(egui::TextStyle::Body, FontId::proportional(16.0));
-        style.text_styles.insert(egui::TextStyle::Button, FontId::proportional(16.0));
-        style.text_styles.insert(egui::TextStyle::Small, FontId::proportional(13.0));
-        style.text_styles.insert(egui::TextStyle::Heading, FontId::proportional(23.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, FontId::proportional(16.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, FontId::proportional(16.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Small, FontId::proportional(13.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, FontId::proportional(23.0));
     });
 }
 
