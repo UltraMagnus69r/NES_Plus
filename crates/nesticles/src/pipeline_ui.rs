@@ -61,6 +61,19 @@ pub struct ExtractUi {
     pub fail_note: String,
     pub export_hold: bool,
     pub prompt: String,
+    /// R4.1 independent reference-pane zoom (1–24). Magnification in screen px/image px.
+    pub ref_pane_zoom: f32,
+    /// R4.1 independent reconstruction-pane zoom (1–24).
+    pub recon_pane_zoom: f32,
+    pub ref_workspace_notes: String,
+    pub ai_payload_confirmed: bool,
+    pub ai_review_text: String,
+    pub ref_assoc_tex: Option<egui::TextureHandle>,
+    pub ref_assoc_tex_id: Option<String>,
+    pub recon_compare_tex: Option<egui::TextureHandle>,
+    pub recon_compare_tex_id: Option<String>,
+    /// When set, a successful direct-image fetch associates to this asset id.
+    pub pending_ref_asset_id: Option<String>,
 }
 
 impl Default for ExtractUi {
@@ -110,6 +123,16 @@ impl Default for ExtractUi {
             fail_note: String::new(),
             export_hold: false,
             prompt: String::new(),
+            ref_pane_zoom: 8.0,
+            recon_pane_zoom: 8.0,
+            ref_workspace_notes: String::new(),
+            ai_payload_confirmed: false,
+            ai_review_text: String::new(),
+            ref_assoc_tex: None,
+            ref_assoc_tex_id: None,
+            recon_compare_tex: None,
+            recon_compare_tex_id: None,
+            pending_ref_asset_id: None,
         }
     }
 }
@@ -688,11 +711,12 @@ impl NestApp {
                         category: "Other".into(),
                         class: RefClass::Custom,
                         page_url: url.clone(),
-                        image_url: url,
+                        image_url: url.clone(),
                     };
                     self.extract.ref_items.push(item);
                     let index = self.extract.ref_items.len() - 1;
-                    self.accept_reference_bytes(index, bytes);
+                    self.accept_reference_bytes(index, bytes.clone());
+                    self.maybe_associate_fetched_reference(&url, &bytes);
                     done = true;
                 }
                 RefEvent::Failed { detail } => {
@@ -1239,14 +1263,41 @@ impl NestApp {
     }
 
     fn analyze_reference(&mut self) {
+        // Providers screen still offers analysis, but R4 gates require credential,
+        // confirmation of payload, and an explicit second send. Results are suggestions.
+        use nesticles_core::ref_intel::{describe_ai_payload, gate_ai_send, AiSendRequest};
         if !self.extract.ai_extract {
             self.status = "AI extraction is off.".into();
             return;
         }
+        let image_len = self.extract.last_reference.len();
         if self.extract.ask_images && !self.extract.consent_send {
             self.extract.consent_send = true;
-            self.status =
-                "Press Analyze again to send the reference image. The ROM is not included.".into();
+            self.extract.ai_payload_confirmed = false;
+            let preview = AiSendRequest {
+                has_credential: !self.extract.openai_key.trim().is_empty(),
+                user_confirmed: false,
+                explicit_send: true,
+                image_bytes: image_len,
+                notes: String::new(),
+                model: self.extract.vision_model.clone(),
+            };
+            self.status = format!(
+                "Confirm payload, then press Analyze again. {}. The ROM is not included.",
+                describe_ai_payload(&preview)
+            );
+            return;
+        }
+        let req = AiSendRequest {
+            has_credential: !self.extract.openai_key.trim().is_empty(),
+            user_confirmed: self.extract.consent_send || self.extract.ai_payload_confirmed,
+            explicit_send: true,
+            image_bytes: image_len,
+            notes: String::new(),
+            model: self.extract.vision_model.clone(),
+        };
+        if let Err(block) = gate_ai_send(&req) {
+            self.status = block.message().into();
             return;
         }
         if self.extract.requests_used >= self.extract.request_limit {
@@ -1260,6 +1311,13 @@ impl NestApp {
             .map(|b| b.starts_with(b"\x89PNG"))
             .unwrap_or(false)
         {
+            if std::env::var("NESTICLES_AI_MOCK").ok().as_deref() == Some("1") {
+                self.extract.requests_used += 1;
+                self.status =
+                    "Mock vision suggestion recorded. It is not approved and did not write SpriteDef."
+                        .into();
+                return;
+            }
             match openai::analyze_image(
                 &self.extract.openai_key,
                 &self.extract.vision_model,
@@ -1279,13 +1337,13 @@ impl NestApp {
                                 session.candidates.push(candidate);
                             }
                             self.status =
-                                "Vision proposal is in the review queue. It is not approved."
+                                "Vision proposal is in the review queue. It is not approved. R3 decisions were not overridden."
                                     .into();
                         }
-                        Err(err) => self.status = err,
+                        Err(err) => self.status = openai::redact(&err, &self.extract.openai_key),
                     }
                 }
-                Err(err) => self.status = err,
+                Err(err) => self.status = openai::redact(&err, &self.extract.openai_key),
             }
         } else {
             self.status = "Provide a PNG reference. HTML was not sent to the model, and the ROM was not attached.".into();

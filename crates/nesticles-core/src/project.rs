@@ -477,6 +477,13 @@ pub struct Project {
     /// A decision is not a sprite, a blueprint, or a verified ROM finding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub issue_decisions: Vec<crate::issues::Decision>,
+    /// R4 references associated with stable asset ids. Old projects omit this.
+    /// Embedded images live in the owner's project file, not in GitHub fixtures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_references: Vec<crate::ref_intel::AssetReference>,
+    /// Optional AI assist review records. Suggestions only; never auto-applied.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ai_assist_records: Vec<crate::ref_intel::AiAssistRecord>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -509,6 +516,8 @@ impl Project {
             anim_sets: Vec::new(),
             behaviors: Vec::new(),
             issue_decisions: Vec::new(),
+            asset_references: Vec::new(),
+            ai_assist_records: Vec::new(),
         }
     }
 

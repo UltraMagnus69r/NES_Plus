@@ -25,6 +25,7 @@ pub mod pngutil;
 pub mod project;
 pub mod reconstruct;
 pub mod reference;
+pub mod ref_intel;
 pub mod terrain;
 pub mod tools;
 pub mod transition;
