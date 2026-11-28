@@ -9,6 +9,10 @@
 //!   keep desktop chrome that clips Discover and Maker.
 //! - Gallery card widths never clamp above the width that actually fits.
 //! - Inspector visibility and shell chrome helpers use density, not raw mode.
+//! - Discover side inspector width never exceeds the remaining content rectangle
+//!   after gallery floor + gap; otherwise compact preview mode is used.
+//! - Compact Discover keeps an explicit View Preview control rather than burying
+//!   the inspector under a full-height gallery.
 
 use eframe::egui::Context;
 
@@ -205,19 +209,57 @@ impl ResponsiveLayout {
         }
     }
 
+    /// Explicit spacer between gallery and side inspector in `discover_stage`.
+    /// Production zeroes `item_spacing.x` so this is the only horizontal gap.
+    pub const DISCOVER_SPLIT_GAP: f32 = 12.0;
+
+    /// Minimum usable side-inspector content width (after which compact wins).
+    pub const DISCOVER_INSPECTOR_MIN: f32 = 200.0;
+
     /// Width reserved for gallery when a side inspector is shown.
-    /// Guarantees gallery + gap + inspector ≤ content_width.
+    /// Guarantees gallery + gap + inspector ≤ content_width with non-negative
+    /// parts. Never inflates gallery past the remainder (that overflowed the
+    /// right edge of the inspector in earlier R3.1.1 builds).
     pub fn discover_split_widths(self, content_width: f32) -> Option<(f32, f32)> {
         if !self.show_discover_inspector(content_width) {
             return None;
         }
-        let inspector = self.discover_inspector_width().min(content_width * 0.38);
-        let gap = 12.0;
-        let gallery = (content_width - inspector - gap).max(self.gallery_fit(160.0).1);
+        let gap = Self::DISCOVER_SPLIT_GAP;
+        if content_width <= gap + Self::DISCOVER_INSPECTOR_MIN {
+            return None;
+        }
+        let gallery_floor = 280.0_f32.min(content_width * 0.45).max(160.0);
+        let preferred = self
+            .discover_inspector_width()
+            .min(content_width * 0.38)
+            .max(Self::DISCOVER_INSPECTOR_MIN);
+        let inspector = preferred.min(content_width - gap - gallery_floor);
+        if inspector + 0.5 < Self::DISCOVER_INSPECTOR_MIN {
+            return None;
+        }
+        let gallery = content_width - inspector - gap;
+        if gallery <= 0.0 || inspector <= 0.0 {
+            return None;
+        }
         if gallery + gap + inspector > content_width + 0.5 {
             return None;
         }
         Some((gallery, inspector))
+    }
+
+    /// True when Discover should offer the compact View Preview control.
+    pub fn discover_needs_compact_preview(self, content_width: f32) -> bool {
+        self.discover_split_widths(content_width).is_none()
+    }
+
+    /// Fit a sprite frame inside an inspector content box without breaking aspect.
+    pub fn preview_fit(max_w: f32, max_h: f32, frame_w: f32, frame_h: f32) -> (f32, f32) {
+        let max_w = max_w.max(1.0);
+        let max_h = max_h.max(1.0);
+        let fw = frame_w.max(1.0);
+        let fh = frame_h.max(1.0);
+        let zoom = (max_w / fw).min(max_h / fh).min(8.0);
+        (fw * zoom, fh * zoom)
     }
 
     pub fn maker_tools_width(self) -> f32 {
@@ -428,10 +470,118 @@ mod tests {
         let Some((gallery, inspector)) = layout.discover_split_widths(content) else {
             panic!("expected split on wide desktop");
         };
-        assert!(gallery + 12.0 + inspector <= content + 0.5);
+        assert!(gallery + ResponsiveLayout::DISCOVER_SPLIT_GAP + inspector <= content + 0.5);
         assert!(gallery >= 300.0);
+        assert!(inspector >= ResponsiveLayout::DISCOVER_INSPECTOR_MIN);
+        assert!(inspector <= layout.discover_inspector_width() + 0.5);
         let laptop = ResponsiveLayout::from_points(1366.0, 694.0, 1.0);
         assert!(laptop.discover_split_widths(1100.0).is_none());
+    }
+
+    #[test]
+    fn discover_inspector_max_width_never_exceeds_content() {
+        for content in [1000.0, 1100.0, 1400.0, 1600.0, 1800.0] {
+            let layout = ResponsiveLayout::from_points(1920.0, 1080.0, 1.0);
+            if let Some((gallery, inspector)) = layout.discover_split_widths(content) {
+                assert!(inspector <= content * 0.38 + 0.5);
+                assert!(inspector <= content - gallery);
+                assert!(gallery > 0.0 && inspector > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn discover_gallery_width_after_inspector_allocation() {
+        let layout = ResponsiveLayout::from_points(1920.0, 1080.0, 1.0);
+        let content = 1500.0;
+        let Some((gallery, inspector)) = layout.discover_split_widths(content) else {
+            panic!("expected side inspector");
+        };
+        assert!((gallery + ResponsiveLayout::DISCOVER_SPLIT_GAP + inspector - content).abs() < 0.75);
+        assert!(gallery >= 280.0);
+    }
+
+    #[test]
+    fn discover_transitions_to_compact_preview() {
+        for &(w, h, content) in &[
+            (800.0, 500.0, 700.0),
+            (980.0, 600.0, 860.0),
+            (1080.0, 620.0, 960.0),
+            (1366.0, 694.0, 1100.0),
+        ] {
+            let layout = ResponsiveLayout::from_points(w, h, 1.0);
+            assert!(
+                layout.discover_needs_compact_preview(content),
+                "expected compact preview at {w}x{h} content {content}"
+            );
+            assert!(layout.discover_split_widths(content).is_none());
+        }
+        let wide = ResponsiveLayout::from_points(1920.0, 1080.0, 1.0);
+        assert!(!wide.discover_needs_compact_preview(1400.0));
+        assert!(wide.discover_split_widths(1400.0).is_some());
+    }
+
+    #[test]
+    fn discover_compact_preview_accessible_policy() {
+        // Compact mode never claims a side inspector; View Preview must be used.
+        let compact = ResponsiveLayout::from_points(780.0, 600.0, 1.0);
+        assert!(compact.discover_needs_compact_preview(700.0));
+        assert_eq!(compact.discover_inspector_width(), 0.0);
+    }
+
+    #[test]
+    fn discover_selection_state_survives_resize_policy() {
+        // Policy identity across compact↔expanded: callers keep StudioState.selected
+        // and discover_preview_open; helpers only change placement.
+        let narrow = ResponsiveLayout::from_points(800.0, 500.0, 1.0);
+        let wide = ResponsiveLayout::from_points(1920.0, 1080.0, 1.0);
+        assert!(narrow.discover_needs_compact_preview(700.0));
+        assert!(!wide.discover_needs_compact_preview(1500.0));
+        // Re-entering compact still reports the compact path.
+        let again = ResponsiveLayout::from_points(980.0, 600.0, 1.0);
+        assert!(again.discover_needs_compact_preview(860.0));
+    }
+
+    #[test]
+    fn discover_preview_reopen_after_close_policy() {
+        // Closing the compact window only flips discover_preview_open; width policy
+        // must still report compact accessibility so the View Preview control returns.
+        let layout = ResponsiveLayout::from_points(900.0, 560.0, 1.0);
+        assert!(layout.discover_needs_compact_preview(780.0));
+        assert!(layout.discover_needs_compact_preview(780.0));
+    }
+
+    #[test]
+    fn preview_fit_preserves_aspect_ratio() {
+        let (w, h) = ResponsiveLayout::preview_fit(200.0, 160.0, 16.0, 16.0);
+        assert!((w - h).abs() < 0.01);
+        assert!(w <= 200.0 + 0.01);
+        assert!(h <= 160.0 + 0.01);
+        let (w2, h2) = ResponsiveLayout::preview_fit(240.0, 100.0, 32.0, 16.0);
+        assert!((w2 / h2 - 2.0).abs() < 0.02);
+        assert!(w2 <= 240.0 + 0.01 && h2 <= 100.0 + 0.01);
+    }
+
+    #[test]
+    fn discover_split_never_negative_or_invalid() {
+        for content in [1.0, 50.0, 199.0, 400.0, 999.0, 1000.0, 1600.0] {
+            let layout = ResponsiveLayout::from_points(1920.0, 1080.0, 1.0);
+            if let Some((gallery, inspector)) = layout.discover_split_widths(content) {
+                assert!(gallery.is_finite() && inspector.is_finite());
+                assert!(gallery > 0.0 && inspector > 0.0);
+                assert!(gallery + ResponsiveLayout::DISCOVER_SPLIT_GAP + inspector <= content + 0.5);
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_compact_expanded_transitions_stable() {
+        for _ in 0..8 {
+            let c = ResponsiveLayout::from_points(800.0, 500.0, 1.0);
+            let e = ResponsiveLayout::from_points(1920.0, 1080.0, 1.0);
+            assert!(c.discover_needs_compact_preview(700.0));
+            assert!(e.discover_split_widths(1500.0).is_some());
+        }
     }
 
     #[test]

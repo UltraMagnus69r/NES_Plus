@@ -1,6 +1,6 @@
 # R3.1 / R3.1.1 — Responsive UI and resolution independence
 
-Status: **R3.1 implemented; R3.1.1 correction implemented** on branch `cursor/r31-responsive-ui-9ff8`. **Not owner-accepted.**
+Status: **R3.1 implemented; R3.1.1 correction implemented** (including **2026-11-28 Discover reconstruction-preview follow-up**) on branch `cursor/r31-responsive-ui-9ff8`. **Not owner-accepted.**
 
 R3 (intelligent issue resolution) was owner-accepted on **2026-11-24**. R3.1 is a supplemental usability milestone between R3 and R4. Owner visual acceptance of R3.1 failed (clipping, overflow, weak reflow). **R3.1.1** is the corrective implementation. R4 remains unauthorized.
 
@@ -106,20 +106,47 @@ Framebuffer `NESTICLES_SHOT` captures under `docs/handoffs/evidence/r311-respons
 | `restored-review-1366x694.png` | 1366×694 | Review issue panel |
 | `maximized-discover.png` / `maximized-maker.png` / `maximized-home.png` | 1920×1006 | Current Fedora panel maximized client (1920×1080 panel @ scale 1) |
 
-1920×1080 / 2560×1440 / 3840×2160 layout math covered by Expanded/Standard helpers. Physical 4K GUI **UNVERIFIED** on this machine (no 4K panel). SMB1 authentic gallery art **BLOCKED** (owner ROM absent); Discover evidence used the synthetic fixture ROM for layout only.
+1920×1080 / 2560×1440 / 3840×2160 layout math covered by Expanded/Standard helpers. Physical 4K GUI **UNVERIFIED** on this machine (no 4K panel).
+
+### Discover preview follow-up evidence (2026-11-28)
+
+Framebuffer captures under `docs/handoffs/evidence/r311-preview/` (local owner SMB1 dump used for Goomba reconstruction layout only; ROM not committed):
+
+| File | Measured size | Notes |
+| --- | --- | --- |
+| `narrow-800x500-selected-closed.png` | 800×500 | Goomba selected; **View Preview** visible |
+| `narrow-800x500-preview-open.png` | 800×500 | Reconstruction preview window open |
+| `restored-980x600-preview-open.png` | 980×600 | Compact preview |
+| `restored-1080x620-preview-open.png` | 1080×620 | Compact preview |
+| `laptop-1366x694-preview-open.png` | 1366×694 | Compact preview on densified laptop client |
+| `wide-1920x1080-side-inspector.png` | 1920×1080 | Side inspector fully inside client |
+| `wide-1920x1080-mario-placeholder.png` | 1920×1080 | Unresolved Mario placeholder inspector |
+| `maximized-discover-goomba.png` | 1920×1006 | Maximized Fedora client |
 
 ## Known limitations
 
 - Compact nav uses icon-only capsules; labels move to hover text.
-- Discover inspector as a drawer on compact/laptop density is scrollable, not a second workspace.
+- Compact Discover uses an explicit **View Preview** control plus a constrained Reconstruction preview window (not a buried CollapsingHeader under a full-height gallery).
+- Side inspector width is allocated only when gallery + gap + inspector fit the content rectangle; child widgets clamp to that width (no soft-shadow overflow).
 - No pixel-perfect screenshot golden tests (intentionally).
 - Owner mouse acceptance on the laptop display is still required.
 - Maker Fill / Inspect / Undo / Redo may sit below the tools scroll fold on short clients (reachable by scroll).
+- Compact preview body scrolls when the window is shorter than the full inspector.
+- Physical 4K GUI still **UNVERIFIED** on this 1920×1080 panel.
 - R4 not started.
+
+## Discover reconstruction-preview follow-up (2026-11-28)
+
+Owner-reported after the first R3.1.1 correction:
+
+1. **Selected preview disappeared** on smaller restored windows (gallery kept selection chrome; no accessible replacement for the side inspector).
+2. **Side inspector clipped horizontally** when shown (right edge / header control past the client).
+
+Confirmed causes and fixes live in `responsive::discover_split_widths` / `discover_needs_compact_preview` and `unmaker/view.rs` Discover stage. Framebuffer evidence: `docs/handoffs/evidence/r311-preview/`.
 
 ## Acceptance distinction
 
 - **R3**: owner-accepted (functionality).
 - **R3.1**: implemented; visual acceptance failed.
-- **R3.1.1**: correction implemented + automated tests + framebuffer GUI evidence; **owner acceptance pending**.
+- **R3.1.1**: correction implemented + Discover preview follow-up + automated tests + framebuffer GUI evidence; **owner acceptance pending**.
 - **R4**: not authorized.

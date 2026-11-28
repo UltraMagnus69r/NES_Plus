@@ -1231,24 +1231,62 @@ impl NestApp {
                 .desired_width(search_w)
                 .min_size(Vec2::new(search_w.min(200.0), 36.0)),
         );
+        // Compact path: gallery previously consumed all remaining height and
+        // buried a CollapsingHeader. Keep an explicit View Preview control.
+        let width = ui.available_width();
+        let compact = layout.discover_needs_compact_preview(width);
+        if compact && self.studio.state.selected.is_some() {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let open = self.studio.state.discover_preview_open;
+                let label = if open {
+                    "Hide Preview"
+                } else {
+                    "View Preview"
+                };
+                if design::capsule_button(
+                    ui,
+                    label,
+                    None,
+                    if open { 132.0 } else { 128.0 },
+                    36.0,
+                    design::CapsuleTone::Blue,
+                )
+                .clicked()
+                {
+                    self.studio.state.discover_preview_open = !open;
+                }
+                ui.label(
+                    RichText::new("Selected asset preview")
+                        .size(13.0)
+                        .color(studio::caption()),
+                );
+            });
+        }
         ui.add_space(8.0);
         let width = ui.available_width();
         if let Some((gallery_w, inspector_w)) = layout.discover_split_widths(width) {
             ui.horizontal_top(|ui| {
+                // Only the explicit DISCOVER_SPLIT_GAP spacer counts — default
+                // item_spacing previously pushed the inspector past the right edge.
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.allocate_ui_with_layout(
                     Vec2::new(gallery_w, ui.available_height()),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| self.discover_gallery(ui, ctx, &session, layout),
                 );
-                ui.add_space(12.0);
+                ui.add_space(ResponsiveLayout::DISCOVER_SPLIT_GAP);
                 ui.allocate_ui_with_layout(
                     Vec2::new(inspector_w, ui.available_height()),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
+                        ui.set_max_width(inspector_w);
+                        ui.set_clip_rect(ui.max_rect());
                         egui::ScrollArea::vertical()
                             .id_salt("discover-inspector-scroll")
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
+                                ui.set_max_width(inspector_w);
                                 self.discover_inspector(ui, ctx, &session, inspector_w)
                             });
                     },
@@ -1256,22 +1294,51 @@ impl NestApp {
             });
         } else {
             self.discover_gallery(ui, ctx, &session, layout);
-            if self.studio.state.selected.is_some() {
-                ui.add_space(8.0);
-                egui::CollapsingHeader::new("Selected asset")
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        let drawer_h = ui.available_height().min(260.0).max(140.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("discover-inspector-drawer")
-                            .max_height(drawer_h)
-                            .show(ui, |ui| {
-                                let drawer_w = ui.available_width();
-                                self.discover_inspector(ui, ctx, &session, drawer_w);
-                            });
-                    });
+            if self.studio.state.discover_preview_open && self.studio.state.selected.is_some() {
+                self.discover_compact_preview_window(ctx, &session, layout);
             }
         }
+    }
+
+    /// Compact reconstruction preview as a constrained window so the gallery
+    /// keeps its height. Same inspector body as the side panel.
+    fn discover_compact_preview_window(
+        &mut self,
+        ctx: &egui::Context,
+        session: &nesticles_core::pipeline::ExtractionSession,
+        layout: ResponsiveLayout,
+    ) {
+        let screen = ctx.screen_rect();
+        let max_w = (screen.width() * 0.92)
+            .min(420.0)
+            .max(240.0)
+            .min(screen.width().max(240.0));
+        // Leave room for the window chrome; prefer a tall default so Walk/Defeat
+        // and Open in Review are not clipped on short laptop clients.
+        let max_h = (screen.height() * 0.86)
+            .min(560.0)
+            .max(260.0)
+            .min(screen.height().max(260.0));
+        let default_h = (max_h * 0.92).clamp(300.0, 520.0);
+        let mut open = self.studio.state.discover_preview_open;
+        egui::Window::new("Reconstruction preview")
+            .id(egui::Id::new("discover-reconstruction-preview"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .constrain(true)
+            .default_size(Vec2::new(max_w.min(360.0), default_h))
+            .min_size(Vec2::new(240.0, 260.0))
+            .max_size(Vec2::new(max_w, max_h))
+            .show(ctx, |ui| {
+                let drawer_w = ui.available_width().min(max_w).max(1.0);
+                ui.set_max_width(drawer_w);
+                // One scroll owner (discover_inspector). A nested ScrollArea here
+                // clipped pose capsules on short restored windows.
+                self.discover_inspector(ui, ctx, session, drawer_w);
+                let _ = layout;
+            });
+        self.studio.state.discover_preview_open = open;
     }
 
     fn discover_filter_buttons(
@@ -1482,6 +1549,8 @@ impl NestApp {
                 let response = ui.interact(inner.response.rect, card_id, Sense::click());
                 if response.clicked() {
                     self.studio.state.selected = Some(item.id.clone());
+                    // Compact Discover has no side inspector; open the shared preview.
+                    self.studio.state.discover_preview_open = true;
                 }
                 if response.double_clicked() {
                     self.open_candidate_in_review(session, &item.id);
@@ -1498,15 +1567,25 @@ impl NestApp {
         session: &nesticles_core::pipeline::ExtractionSession,
         allocated_width: f32,
     ) {
-        let frame = design::floating_frame(studio::unmaker_paper());
+        // No soft_shadow here: blur/offset painted past the parent clip and made
+        // the right edge look truncated even when the panel itself fit.
+        let frame = egui::Frame::NONE
+            .fill(studio::unmaker_paper())
+            .corner_radius(CornerRadius::same(22))
+            .inner_margin(12.0)
+            .stroke(Stroke::new(1.0_f32, studio::unmaker_line()));
         frame.show(ui, |ui| {
-            // Respect the parent allocation — never force INSPECTOR_W (360).
-            let inner_w = (allocated_width - 16.0).clamp(120.0, allocated_width.max(120.0));
+            let inner_w = allocated_width.min(ui.available_width()).max(1.0);
+            ui.set_width(inner_w);
             ui.set_max_width(inner_w);
+            ui.set_clip_rect(ui.max_rect());
             egui::ScrollArea::vertical()
                 .id_salt("discover-inspector")
                 .max_height(ui.available_height().max(160.0))
-                .show(ui, |ui| self.discover_inspector_body(ui, ctx, session));
+                .show(ui, |ui| {
+                    ui.set_max_width(inner_w);
+                    self.discover_inspector_body(ui, ctx, session)
+                });
         });
     }
 
@@ -1535,26 +1614,37 @@ impl NestApp {
         let card = gallery_card(&item, is_goomba, discovery.as_ref());
 
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new(&card.title)
-                    .size(27.0)
-                    .strong()
-                    .color(studio::unmaker_ink()),
+            let close_w = 40.0;
+            let title_budget = (ui.available_width() - close_w - 8.0).max(40.0);
+            ui.allocate_ui_with_layout(
+                Vec2::new(title_budget, 34.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_max_width(title_budget);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&card.title)
+                                .size(24.0)
+                                .strong()
+                                .color(studio::unmaker_ink()),
+                        )
+                        .truncate(),
+                    );
+                },
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::design::capsule_button(
-                    ui,
-                    "✕",
-                    None,
-                    38.0,
-                    34.0,
-                    crate::design::CapsuleTone::White,
-                )
-                .clicked()
-                {
-                    self.studio.state.selected = None;
-                }
-            });
+            if crate::design::capsule_button(
+                ui,
+                "✕",
+                None,
+                close_w,
+                34.0,
+                crate::design::CapsuleTone::White,
+            )
+            .clicked()
+            {
+                self.studio.state.selected = None;
+                self.studio.state.discover_preview_open = false;
+            }
         });
         design::status_chip(ui, &card.status);
         ui.add_space(6.0);
@@ -1572,14 +1662,14 @@ impl NestApp {
         if let Some(assembly) = reconstructed.as_ref() {
             self.compact_discover_preview(ui, ctx, assembly);
             ui.add_space(8.0);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Form").strong().size(16.0));
-                ui.add_space(14.0);
+                ui.add_space(8.0);
                 egui::Frame::NONE
                     .fill(Color32::from_rgb(249, 251, 255))
                     .corner_radius(CornerRadius::same(17))
                     .stroke(Stroke::new(1.0_f32, studio::unmaker_line()))
-                    .inner_margin(egui::Margin::symmetric(16, 7))
+                    .inner_margin(egui::Margin::symmetric(12, 6))
                     .show(ui, |ui| {
                         ui.label("Default");
                     });
@@ -1594,7 +1684,11 @@ impl NestApp {
             }
             ui.horizontal_wrapped(|ui| {
                 let available = ui.available_width().max(1.0);
-                let width = ((available - 9.0) / 2.0).clamp(88.0, available);
+                let gap = 8.0;
+                let cols = if available >= 176.0 { 2.0 } else { 1.0 };
+                let width = ((available - gap * (cols - 1.0)) / cols)
+                    .min(available)
+                    .max(1.0);
                 for pose in &poses {
                     let active = self.studio.state.preview_pose == *pose;
                     if design::capsule_button(
@@ -1639,7 +1733,7 @@ impl NestApp {
             ui.add_space(5.0);
             design::status_chip(ui, "Review colors only — palette unverified");
         } else {
-            let preview_w = ui.available_width().clamp(120.0, 280.0);
+            let preview_w = ui.available_width().min(280.0).max(1.0);
             let (rect, _) =
                 ui.allocate_exact_size(Vec2::new(preview_w, preview_w.min(160.0)), Sense::hover());
             checker(ui.painter(), rect);
@@ -1651,9 +1745,7 @@ impl NestApp {
             }
         }
         ui.add_space(12.0);
-        let width = ui
-            .available_width()
-            .clamp(120.0, ui.available_width().max(120.0));
+        let width = ui.available_width().max(1.0);
         if design::capsule_button(
             ui,
             "Open in Review",
@@ -1682,8 +1774,10 @@ impl NestApp {
         let Some((index, frame)) = frame_and_idx else {
             return;
         };
-        let preview_w = ui.available_width().clamp(120.0, 280.0);
-        let size = Vec2::new(preview_w, preview_w.min(180.0));
+        // Never force a min width larger than the inspector content rectangle.
+        let preview_w = ui.available_width().min(280.0).max(1.0);
+        let preview_h = preview_w.min(180.0);
+        let size = Vec2::new(preview_w, preview_h);
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         ui.painter()
             .rect_filled(rect, 20.0, Color32::from_rgb(249, 251, 255));
@@ -1697,10 +1791,9 @@ impl NestApp {
         );
         let max_h = (size.y - 24.0).max(1.0);
         let max_w = (size.x - 24.0).max(1.0);
-        let zoom = (max_w / frame.w as f32)
-            .min(max_h / frame.h as f32)
-            .min(8.0);
-        let draw_size = Vec2::new(frame.w as f32 * zoom, frame.h as f32 * zoom);
+        let (dw, dh) =
+            ResponsiveLayout::preview_fit(max_w, max_h, frame.w as f32, frame.h as f32);
+        let draw_size = Vec2::new(dw, dh);
         let dst = Rect::from_center_size(rect.center(), draw_size);
         let key = format!(
             "discover-compact-{:?}-{}-{}",
@@ -3016,9 +3109,20 @@ impl NestApp {
             return;
         }
         self.select_named("Goomba");
-        if tour == "goomba" || tour == "preview" {
+        if tour == "goomba" || tour == "preview" || tour == "mario" {
+            if tour == "mario" {
+                self.select_named("Mario");
+            }
             self.studio.state.stage = Stage::Discover;
             self.studio.state.zoom = 12.0;
+            // Keep the selected card on-screen in short restored windows.
+            if tour != "mario" {
+                self.studio.state.filter = Some(Group::Enemies);
+                self.studio.state.gallery_query = "Goomba".into();
+            }
+            // Default open for shot evidence; NESTICLES_DISCOVER_PREVIEW=0 forces closed.
+            self.studio.state.discover_preview_open =
+                std::env::var("NESTICLES_DISCOVER_PREVIEW").ok().as_deref() != Some("0");
             return;
         }
         if tour == "review" {
@@ -3052,6 +3156,14 @@ impl NestApp {
             .find(|candidate| candidate.name == name)
         {
             self.studio.state.selected = Some(candidate.id.clone());
+            self.studio.state.evidence_index = 0;
+            return;
+        }
+        // Unmatched cartridges still list coverage rows (id `row:Name`) with no
+        // candidate. Discover selection must work for those cards too.
+        let items = gallery_items(&session.candidates, &session.coverage);
+        if let Some(item) = items.iter().find(|item| item.name == name) {
+            self.studio.state.selected = Some(item.id.clone());
             self.studio.state.evidence_index = 0;
         }
     }
