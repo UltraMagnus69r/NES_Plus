@@ -349,6 +349,8 @@ pub fn demo_project() -> Project {
         anim_sets: Vec::new(),
         behaviors: Vec::new(),
         issue_decisions: Vec::new(),
+        asset_references: Vec::new(),
+        ai_assist_records: Vec::new(),
     }
 }
 

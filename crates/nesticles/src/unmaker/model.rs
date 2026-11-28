@@ -168,6 +168,8 @@ pub enum StudioTool {
     Providers,
     Behavior,
     Guide,
+    /// R4 side-by-side reference compare for the selected asset.
+    Reference,
 }
 
 impl StudioTool {
@@ -182,6 +184,7 @@ impl StudioTool {
             Self::Providers => "AI providers",
             Self::Behavior => "Behavior graph",
             Self::Guide => "Guide",
+            Self::Reference => "Reference compare",
         }
     }
 
@@ -208,6 +211,9 @@ impl StudioTool {
                 "Existing behavior graph. Patrol and jump labels are not a second physics model."
             }
             Self::Guide => "Short explanations of the workshop. They do not change the cartridge.",
+            Self::Reference => {
+                "Reference beside reconstruction. AI runs only with a credential and an explicit send."
+            }
         }
     }
 
@@ -222,6 +228,7 @@ impl StudioTool {
             "providers" | "ai" => Some(Self::Providers),
             "behavior" => Some(Self::Behavior),
             "guide" => Some(Self::Guide),
+            "reference" | "compare" | "ref" => Some(Self::Reference),
             "assemble" | "animate" => None,
             _ => None,
         }
@@ -1292,5 +1299,13 @@ mod tests {
         assert_eq!(card.status, failed);
         assert!(!card.status.contains("Reconstructed"));
         assert_ne!(card.open_label, approve_label("Goomba"));
+    }
+
+    #[test]
+    fn r4_reference_tool_is_selectable_without_sending_ai() {
+        assert_eq!(StudioTool::parse("reference"), Some(StudioTool::Reference));
+        assert_eq!(StudioTool::parse("compare"), Some(StudioTool::Reference));
+        assert!(StudioTool::Reference.note().contains("explicit send"));
+        assert!(StudioTool::Providers.note().contains("unless you send"));
     }
 }

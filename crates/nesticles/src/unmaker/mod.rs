@@ -7,5 +7,5 @@
 mod model;
 mod view;
 
-pub use model::Stage;
+pub use model::{Stage, StudioTool};
 pub use view::StudioUi;

@@ -525,4 +525,34 @@ mod tests {
             ApiStatus::InvalidCredentials
         );
     }
+
+    #[test]
+    fn r4_analyze_without_key_does_not_invent_success() {
+        let err = analyze_image("", "gpt-4.1-mini", b"\x89PNG\r\n\x1a\n").unwrap_err();
+        assert!(!err.contains("sk-"));
+        assert_eq!(err, ApiStatus::InvalidCredentials.label());
+    }
+
+    #[test]
+    fn r4_gate_helpers_match_openai_credential_policy() {
+        use nesticles_core::ref_intel::{gate_ai_send, AiSendRequest};
+        let blocked = gate_ai_send(&AiSendRequest {
+            has_credential: false,
+            user_confirmed: true,
+            explicit_send: true,
+            image_bytes: 32,
+            notes: String::new(),
+            model: DEFAULT_VISION.into(),
+        });
+        assert!(blocked.is_err());
+        let open = gate_ai_send(&AiSendRequest {
+            has_credential: true,
+            user_confirmed: true,
+            explicit_send: true,
+            image_bytes: 32,
+            notes: "compare silhouette".into(),
+            model: DEFAULT_VISION.into(),
+        });
+        assert!(open.is_ok());
+    }
 }

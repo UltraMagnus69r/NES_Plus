@@ -1648,6 +1648,21 @@ impl NestApp {
         });
         design::status_chip(ui, &card.status);
         ui.add_space(6.0);
+        let width_early = ui.available_width().max(1.0);
+        if design::capsule_button(
+            ui,
+            "Open reference",
+            None,
+            width_early,
+            44.0,
+            design::CapsuleTone::Blue,
+        )
+        .on_hover_text("Compare a reference beside this reconstruction. AI stays optional.")
+        .clicked()
+        {
+            self.open_reference_workspace();
+        }
+        ui.add_space(6.0);
 
         let reconstructed = if let Some(Ok(found)) = discovery.as_ref() {
             if found.candidate_id == item.id {
@@ -1760,7 +1775,7 @@ impl NestApp {
         }
     }
 
-    fn compact_discover_preview(
+    pub(crate) fn compact_discover_preview(
         &mut self,
         ui: &mut egui::Ui,
         ctx: &egui::Context,
@@ -2038,6 +2053,7 @@ impl NestApp {
     }
 
     fn embedded_tool(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, tool: StudioTool) {
+        let layout = ResponsiveLayout::from_context(ctx);
         if design::capsule_button(ui, "Back", None, 120.0, 43.0, design::CapsuleTone::White)
             .on_hover_text("Return to this stage.")
             .clicked()
@@ -2045,9 +2061,25 @@ impl NestApp {
             self.studio.state.tool = None;
             return;
         }
-        ui.label(RichText::new(tool.label()).size(28.0));
-        ui.label(tool.note());
-        ui.separator();
+        // R4 compare needs vertical room for both images; keep the tool chrome short
+        // on compact / short laptop clients so the pair is reachable without clipping.
+        let compact_ref = tool == StudioTool::Reference
+            && matches!(
+                layout.density(),
+                crate::responsive::LayoutMode::Compact
+            );
+        if !compact_ref {
+            ui.label(RichText::new(tool.label()).size(28.0));
+            ui.label(tool.note());
+            ui.separator();
+        } else {
+            ui.label(
+                RichText::new(tool.label())
+                    .size(20.0)
+                    .strong()
+                    .color(studio::unmaker_ink()),
+            );
+        }
         match tool {
             StudioTool::Tiles => {
                 self.reference_banner(ui);
@@ -2063,6 +2095,7 @@ impl NestApp {
             StudioTool::Providers => self.providers_view(ui),
             StudioTool::Behavior => self.behavior_view(ui),
             StudioTool::Guide => self.guide(ui),
+            StudioTool::Reference => self.reference_workspace_view(ui, ctx),
         }
     }
 
@@ -2397,6 +2430,10 @@ impl NestApp {
                     self.draw_assembly(ui, ctx, &assembly);
                 }
                 self.source_evidence(ui, session, candidate);
+                if crate::design::soft_button(ui, "Open reference workspace").clicked() {
+                    self.studio.state.selected = Some(candidate.id.clone());
+                    self.open_reference_workspace();
+                }
                 if crate::design::soft_button(ui, "Return to Discover").clicked() {
                     self.studio.state.stage = Stage::Discover;
                     self.studio.state.show_manual = false;
@@ -2471,7 +2508,7 @@ impl NestApp {
         self.studio.state.show_manual = false;
     }
 
-    fn assemble_goomba(
+    pub(crate) fn assemble_goomba(
         &self,
         session: &nesticles_core::pipeline::ExtractionSession,
     ) -> Option<nesticles_core::reconstruct::Assembly> {
@@ -2522,7 +2559,7 @@ impl NestApp {
         );
     }
 
-    fn goomba_discovery(
+    pub(crate) fn goomba_discovery(
         &self,
         session: &nesticles_core::pipeline::ExtractionSession,
     ) -> Option<Result<super::model::GoombaDiscovery, String>> {
@@ -3133,6 +3170,31 @@ impl NestApp {
                 }
             }
             self.studio.state.stage = Stage::Review;
+            return;
+        }
+        if tour == "r4" || tour == "compare" {
+            // Gallery selection already ran above; open the R4 reference workspace.
+            self.studio.state.stage = Stage::Discover;
+            self.studio.state.filter = Some(Group::Enemies);
+            self.studio.state.gallery_query = "Goomba".into();
+            self.studio.state.zoom = 12.0;
+            if let Ok(path) = std::env::var("NESTICLES_R4_REF_IMAGE") {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    if let Some(id) = self.studio.state.selected.clone() {
+                        if let Ok(mut item) = nesticles_core::ref_intel::reference_from_local(
+                            &id,
+                            "Tour reference",
+                            &path,
+                            &bytes,
+                            true,
+                        ) {
+                            item.active = true;
+                            self.project.asset_references.push(item);
+                        }
+                    }
+                }
+            }
+            self.open_reference_workspace();
         }
     }
 

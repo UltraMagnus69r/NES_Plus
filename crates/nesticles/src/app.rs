@@ -2,6 +2,8 @@
 mod anim_ui;
 #[path = "pipeline_ui.rs"]
 mod pipeline_ui;
+#[path = "reference_ui.rs"]
+mod reference_ui;
 #[path = "ui_assets.rs"]
 mod ui_assets;
 #[path = "unmaker/mod.rs"]

@@ -119,3 +119,13 @@
 - Rationale: Matches `nesticles_core::godot::toolchain` and keeps the binary out of GitHub.
 - Consequences: Machines without 4.7.2 still fail the three Godot proofs closed. Bazzite must install its own matching editor when those proofs are required there.
 - Status: Accepted by the owner. In force.
+
+## D-013 — R3.1.1 progression unlocks Roadmap R4
+
+- Date: 2026-11-28
+- Problem: R3.1.1 correction was implemented with framebuffer evidence, but owner visual acceptance of every mouse/4K claim had not been re-proven. Functional R4 was blocked until progression was authorized.
+- Alternatives: Wait for a full mouse/4K re-acceptance pass before any R4 work. Mark R3.1.1 fully accepted from automation alone.
+- Decision: The owner approved progression past R3.1.1 into Roadmap R4. Record R3.1.1 as **owner-approved for progression**. Do not invent mouse-driven or physical 4K evidence that was never recorded. Implement R4 reference intelligence (reference beside reconstruction; AI only with credential + explicit send). Do not start R5+.
+- Rationale: Matches the owner's R4 assignment and keeps honesty about what GUI evidence exists.
+- Consequences: Milestone docs and handoffs distinguish progression approval from unverified mouse/4K passes. R4 owner acceptance remains a separate gate.
+- Status: Accepted by the owner (progression). R4 product acceptance still pending.
